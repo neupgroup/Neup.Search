@@ -2,23 +2,13 @@
 
 import Link from "next/link"
 import Image from "next/image"
-import { getSiteById, getPagesForSite, crawlSite, summarizeSiteAction, cancelCrawl, deletePagesForSite } from "@/app/manage/sites/actions"
+import { getSiteById, getPagesForSite } from "@/app/manage/sites/actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { notFound } from "next/navigation"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton } from "./client"
 
 export default async function SiteDetailPage({ params, searchParams }: { params: { siteId: string }, searchParams: { [key: string]: string | string[] | undefined } }) {
   const startAfter = searchParams.startAfter as string | undefined;
@@ -52,54 +42,14 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           </div>
           <div className="flex flex-col gap-2 items-end shrink-0">
              <div className="flex gap-2">
-                <form action={async () => {
-                    "use server"
-                    await crawlSite(site.id, site.url)
-                }}>
-                <Button type="submit" disabled={site.status === "Crawling"}>
-                    {site.status === "Crawling" ? "Crawling..." : "Recrawl Site"}
-                </Button>
-                </form>
+                <RecrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
                 {site.status === "Crawling" && (
-                    <form action={async () => {
-                        "use server"
-                        await cancelCrawl(site.id)
-                    }}>
-                        <Button type="submit" variant="destructive">Cancel Crawl</Button>
-                    </form>
+                   <CancelCrawlButton siteId={site.id} />
                 )}
              </div>
              <div className="flex gap-2">
-                <form action={async () => {
-                    "use server"
-                    await summarizeSiteAction(site.id, site.url)
-                }}>
-                <Button type="submit" variant="outline">
-                    Update Summary
-                </Button>
-                </form>
-                 <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                        <Button variant="destructive" className="bg-red-700 hover:bg-red-800">Delete All Pages</Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                        <AlertDialogHeader>
-                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This action cannot be undone. This will permanently delete all indexed pages for <strong>{site.name || site.url}</strong> from your database.
-                        </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                         <form action={async () => {
-                            "use server"
-                            await deletePagesForSite(site.id)
-                         }}>
-                            <AlertDialogAction type="submit">Continue</AlertDialogAction>
-                        </form>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
+                <UpdateSummaryButton siteId={site.id} siteUrl={site.url} />
+                <DeletePagesButton siteId={site.id} siteName={site.name || site.url} />
              </div>
           </div>
         </CardHeader>
