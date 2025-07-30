@@ -11,16 +11,24 @@ import { MoreHorizontal, PlusCircle, Search } from "lucide-react"
 import { getSites, crawlSite, type Site } from "./actions"
 
 function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl: string, isCrawling: boolean }) {
+  const handleCrawl = async (event: React.MouseEvent) => {
+    if (isCrawling) {
+      event.preventDefault();
+    }
+  };
+
   return (
     <form action={async () => {
       'use server'
-      await crawlSite(siteId, siteUrl)
+      if (!isCrawling) {
+        await crawlSite(siteId, siteUrl)
+      }
     }}>
-      <button type="submit" className="w-full text-left" disabled={isCrawling}>
-        <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={isCrawling}>
+      <DropdownMenuItem onSelect={(e) => e.preventDefault()} asChild>
+          <button type="submit" className="w-full text-left" disabled={isCrawling} onClick={handleCrawl}>
             {isCrawling ? 'Crawling...' : 'Recrawl'}
-        </DropdownMenuItem>
-      </button>
+          </button>
+      </DropdownMenuItem>
     </form>
   )
 }
