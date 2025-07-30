@@ -4,7 +4,7 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where, endAt, startAt } from "firebase/firestore"
+import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where, endAt, startAt,getCountFromServer } from "firebase/firestore"
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
@@ -297,5 +297,36 @@ export async function getPagesForSite(siteId: string, startAfterDocId?: string):
     } catch (error) {
         console.error("Error fetching pages for site: ", error);
         return { pages: [], lastVisibleId: null, firstVisibleId: null };
+    }
+}
+
+export async function getDashboardStats() {
+    try {
+        const sitesCollection = collection(db, "sites");
+        const pagesCollection = collection(db, "pages");
+
+        const totalSitesSnapshot = await getCountFromServer(sitesCollection);
+        const totalPagesSnapshot = await getCountFromServer(pagesCollection);
+
+        const activeCrawlsQuery = query(sitesCollection, where("status", "==", "Crawling"));
+        const activeCrawlsSnapshot = await getCountFromServer(activeCrawlsQuery);
+        
+        const errorCrawlsQuery = query(sitesCollection, where("status", "==", "Error"));
+        const errorCrawlsSnapshot = await getCountFromServer(errorCrawlsQuery);
+
+        return {
+            totalSites: totalSitesSnapshot.data().count,
+            totalPages: totalPagesSnapshot.data().count,
+            activeCrawls: activeCrawlsSnapshot.data().count,
+            crawlErrors: errorCrawlsSnapshot.data().count,
+        }
+    } catch (error) {
+        console.error("Error fetching dashboard stats: ", error);
+        return {
+            totalSites: 0,
+            totalPages: 0,
+            activeCrawls: 0,
+            crawlErrors: 0,
+        };
     }
 }
