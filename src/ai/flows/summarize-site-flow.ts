@@ -1,3 +1,4 @@
+
 'use server';
 /**
  * @fileOverview An AI agent that summarizes a website.
@@ -10,6 +11,7 @@
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 import * as cheerio from 'cheerio';
+import { logError } from '@/lib/logging';
 
 const SummarizeSiteInputSchema = z.object({
   url: z.string().url().describe('The URL of the website to summarize.'),
@@ -53,7 +55,7 @@ async function getPageContent(url: string) {
             logoUrl,
         };
     } catch (error) {
-        console.error("Error fetching page content:", error);
+        await logError({error, url}, 'summarizeSite_getPageContent');
         return null;
     }
 }

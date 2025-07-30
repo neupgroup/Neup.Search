@@ -3,6 +3,7 @@
 
 import { collection, getDocs, Timestamp, query, orderBy, getDoc, doc, limit, startAfter, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
+import { logError } from "@/lib/logging"
 
 export type Page = {
   id: string;
@@ -73,7 +74,7 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
             lastVisibleId: lastVisible ? lastVisible.id : null,
         }
     } catch (error) {
-        console.error("Error fetching pages: ", error);
+        await logError(error, "getPages");
         return { pages: [], lastVisibleId: null };
     }
 }

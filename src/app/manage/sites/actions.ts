@@ -10,6 +10,7 @@ import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
 import type { Page, PaginatedPages } from "../pages/actions"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
+import { logError } from "@/lib/logging"
 
 const SiteSchema = z.object({
   url: z.string().url({ message: "Please enter a valid URL." }),
@@ -68,14 +69,14 @@ export async function addSite(prevState: any, formData: FormData) {
     });
     siteId = docRef.id;
   } catch (error) {
-    console.error("Error adding document: ", error)
+    await logError(error, "addSite");
     return {
       errors: { _server: ["Could not add site. Please try again."] },
     }
   }
   
   // Trigger summarization asynchronously (don't block the redirect)
-  summarizeSiteAction(siteId, siteUrl).catch(console.error);
+  summarizeSiteAction(siteId, siteUrl).catch((e) => logError(e, "summarizeSiteAction_async"));
 
   revalidatePath("/manage/sites")
   redirect("/manage/sites")
@@ -97,7 +98,7 @@ export async function summarizeSiteAction(siteId: string, siteUrl: string) {
         });
 
     } catch (error) {
-        console.error(`Error summarizing site ${siteId}:`, error);
+        await logError(error, "summarizeSiteAction");
         await updateDoc(siteRef, { 
             currentlyCrawling: "Failed to summarize site.",
             status: "Error",
@@ -156,7 +157,7 @@ export async function getSites(search?: string, startAfterDocId?: string): Promi
             lastVisibleId: lastVisible ? lastVisible.id : null,
         }
     } catch (error) {
-        console.error("Error fetching sites: ", error);
+        await logError(error, "getSites");
         return { sites: [], lastVisibleId: null };
     }
 }
@@ -177,7 +178,7 @@ async function getRobotsTxt(siteUrl: string): Promise<string | null> {
         }
         return null;
     } catch (error) {
-        console.error(`Could not fetch robots.txt for ${siteUrl}:`, error);
+        await logError({ error, siteUrl }, `getRobotsTxt`);
         return null;
     }
 }
@@ -227,7 +228,7 @@ async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
 
         return urls;
     } catch (error) {
-        console.error(`Error parsing sitemap ${sitemapUrl}:`, error);
+        await logError({ error, sitemapUrl }, `getSitemapUrls`);
         return [];
     }
 }
@@ -366,6 +367,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 });
 
             } catch (fetchError) {
+                await logError({ error: fetchError, currentUrl }, 'crawlSite_fetch');
                 console.warn(`Skipping ${currentUrl}: Error during fetch - ${fetchError}`);
             }
             
@@ -398,7 +400,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
         });
 
     } catch (error: any) {
-        console.error("Error crawling site: ", error);
+        await logError(error, "crawlSite");
         await updateDoc(siteRef, { status: "Error", currentlyCrawling: `Crawl failed: ${error.message}` });
     } finally {
         revalidatePath(`/manage/sites/${siteId}`);
@@ -429,7 +431,7 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
             summary: data.summary || null,
         };
     } catch (error) {
-        console.error("Error fetching site: ", error);
+        await logError(error, "getSiteById");
         return null;
     }
 }
@@ -475,7 +477,7 @@ export async function getPagesForSite(siteId: string, startAfterDocId?: string):
         }
 
     } catch (error) {
-        console.error("Error fetching pages for site: ", error);
+        await logError(error, "getPagesForSite");
         return { pages: [], lastVisibleId: null, firstVisibleId: null };
     }
 }
@@ -501,7 +503,7 @@ export async function getDashboardStats() {
             crawlErrors: errorCrawlsSnapshot.data().count,
         }
     } catch (error) {
-        console.error("Error fetching dashboard stats: ", error);
+        await logError(error, "getDashboardStats");
         return {
             totalSites: 0,
             totalPages: 0,
@@ -519,8 +521,7 @@ export async function cancelCrawl(siteId: string) {
         revalidatePath(`/manage/sites/${siteId}`);
         revalidatePath("/manage/sites");
     } catch (error) {
-        console.error(`Error cancelling crawl for site ${siteId}:`, error);
-        // Optionally handle the error, e.g., by returning an error message
+        await logError(error, `cancelCrawl`);
     }
 }
 
@@ -529,6 +530,10 @@ export async function deletePagesForSite(siteId: string) {
         const pagesCollection = collection(db, "pages");
         const q = query(pagesCollection, where("siteId", "==", siteId));
         const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return;
+        }
 
         const batch = writeBatch(db);
         snapshot.docs.forEach(doc => {
@@ -543,6 +548,6 @@ export async function deletePagesForSite(siteId: string) {
         revalidatePath("/manage/pages");
 
     } catch (error) {
-        console.error(`Error deleting pages for site ${siteId}:`, error);
+        await logError(error, `deletePagesForSite`);
     }
 }

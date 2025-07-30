@@ -11,6 +11,7 @@ import {
   Users,
   LineChart,
   Globe,
+  AlertTriangle,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -34,8 +35,9 @@ export default function ManageLayout({
 
   const navLinks = [
     { href: "/manage", label: "Dashboard", icon: Home },
-    { href: "/manage/sites", label: "Crawled Sites", icon: Globe, badge: 5 },
+    { href: "/manage/sites", label: "Crawled Sites", icon: Globe },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
+    { href: "/manage/system/error", label: "System Errors", icon: AlertTriangle },
     { href: "#", label: "Indexing", icon: Package },
     { href: "#", label: "Users", icon: Users },
     { href: "#", label: "Analytics", icon: LineChart },
@@ -62,7 +64,7 @@ export default function ManageLayout({
                   href={link.href}
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary",
-                    pathname === link.href && "bg-muted text-primary"
+                    (pathname === link.href || (link.href !== "/manage" && pathname.startsWith(link.href))) && "bg-muted text-primary"
                   )}
                 >
                   <link.icon className="h-4 w-4" />

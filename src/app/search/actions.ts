@@ -5,6 +5,7 @@
 import { answerQuestion } from "@/ai/flows/answer-question"
 import { collection, query, where, limit, getDocs } from "firebase/firestore"
 import { db } from "@/lib/firebase"
+import { logError } from "@/lib/logging";
 
 export type SearchResult = {
   title: string;
@@ -107,7 +108,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
 
     return results.map(item => item.result).slice(0, 20);
   } catch (error) {
-    console.error("Error fetching search results:", error);
+    await logError(error, "getSearchResults");
     return [];
   }
 }
@@ -134,7 +135,7 @@ export async function generateAnswer(query: string) {
     })
     return { answer, error: null }
   } catch (e: any) {
-    console.error("Error generating answer:", e)
+    await logError(e, "generateAnswer");
     return { answer: null, error: "Sorry, I couldn't generate an answer at this time. The AI may be offline. Please try again later." }
   }
 }
