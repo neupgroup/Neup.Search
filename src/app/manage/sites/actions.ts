@@ -87,68 +87,69 @@ export async function getSites(): Promise<Site[]> {
 // Helper function to introduce a delay
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function getPageTitle(html: string): Promise<string> {
-    const $ = cheerio.load(html);
-    return $('title').text() || '';
-}
-
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
     let crawledUrls = new Set<string>();
+    let externalLinks = new Set<string>();
+    const urlQueue = [siteUrl];
+    const domain = new URL(siteUrl).hostname;
     let pagesProcessed = 0;
 
     try {
-        // 1. Set status to "Crawling"
         await updateDoc(siteRef, { status: "Crawling", currentlyCrawling: "Starting..." });
         revalidatePath("/manage/sites");
-        
-        // 2. Fetch and parse the homepage
-        await updateDoc(siteRef, { currentlyCrawling: `Fetching ${siteUrl}...`});
-        revalidatePath("/manage/sites");
 
-        const response = await fetch(siteUrl, { headers: { 'User-Agent': 'NeupBot/1.0' } });
-        if (!response.ok) {
-            throw new Error(`Failed to fetch ${siteUrl}. Status: ${response.status}`);
-        }
-        const html = await response.text();
-        const $ = cheerio.load(html);
-
-        // 3. Extract links
-        const links: string[] = [];
-        const domain = new URL(siteUrl).hostname;
-
-        $('a').each((i, link) => {
-            const href = $(link).attr('href');
-            if (href) {
-                try {
-                    const absoluteUrl = new URL(href, siteUrl).toString();
-                    const linkDomain = new URL(absoluteUrl).hostname;
-                    // Only crawl links on the same domain and avoid duplicates
-                    if (linkDomain === domain && !crawledUrls.has(absoluteUrl)) {
-                       links.push(absoluteUrl);
-                       crawledUrls.add(absoluteUrl);
-                    }
-                } catch (e) {
-                    // Ignore invalid URLs
-                }
+        while (urlQueue.length > 0) {
+            const currentUrl = urlQueue.shift()!;
+            if (crawledUrls.has(currentUrl)) {
+                continue;
             }
-        });
-        
-        const uniqueLinks = [...crawledUrls]; // Use the Set to get unique links
 
-        // 4. Batch write discovered pages to Firestore
-        const batch = writeBatch(db);
-        const pagesCollection = collection(db, "pages");
-
-        for (const url of uniqueLinks) {
-            pagesProcessed++;
             await updateDoc(siteRef, { 
-                currentlyCrawling: `Indexing ${url}`,
+                currentlyCrawling: `Crawling ${currentUrl}`,
                 pagesCrawled: pagesProcessed,
             });
             revalidatePath("/manage/sites");
-            
-            const newPageRef = doc(pagesCollection); // Create a new doc with a generated ID
+
+            crawledUrls.add(currentUrl);
+            pagesProcessed++;
+
+            const response = await fetch(currentUrl, { headers: { 'User-Agent': 'NeupBot/1.0' } });
+            if (!response.ok) {
+                console.warn(`Skipping ${currentUrl}: Failed to fetch (status: ${response.status})`);
+                continue;
+            }
+
+            const html = await response.text();
+            const $ = cheerio.load(html);
+
+            $('a').each((i, link) => {
+                const href = $(link).attr('href');
+                if (href) {
+                    try {
+                        const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0]; // Remove fragment
+                        const linkDomain = new URL(absoluteUrl).hostname;
+
+                        if (linkDomain === domain) {
+                            if (!crawledUrls.has(absoluteUrl) && !urlQueue.includes(absoluteUrl)) {
+                                urlQueue.push(absoluteUrl);
+                            }
+                        } else {
+                            externalLinks.add(absoluteUrl);
+                        }
+                    } catch (e) {
+                        // Ignore invalid URLs
+                    }
+                }
+            });
+            await sleep(100); // Be respectful to the server
+        }
+
+        // Batch write discovered pages to Firestore
+        const batch = writeBatch(db);
+        const pagesCollection = collection(db, "pages");
+        crawledUrls.forEach(url => {
+            const newPageRef = doc(pagesCollection);
             batch.set(newPageRef, {
                 url: url,
                 siteId: siteId,
@@ -157,19 +158,27 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 lastIndexed: Timestamp.now(),
                 createdAt: Timestamp.now(),
             });
-
-            if (pagesProcessed % 10 === 0) {
-                 await sleep(200); // Small delay to show progress and avoid rate-limiting
-            }
-        }
+        });
+        
+        // You could store external links for later crawling
+        const externalLinksCollection = collection(db, "externalLinks");
+        externalLinks.forEach(link => {
+            const newLinkRef = doc(externalLinksCollection);
+            batch.set(newLinkRef, {
+                url: link,
+                sourceSiteId: siteId,
+                sourceSiteUrl: siteUrl,
+                status: "Pending",
+                createdAt: Timestamp.now(),
+            });
+        });
 
         await batch.commit();
 
-        // 5. Finalize the crawl
         await updateDoc(siteRef, { 
             status: "Active",
             lastCrawled: Timestamp.now(),
-            pagesCrawled: uniqueLinks.length,
+            pagesCrawled: crawledUrls.size,
             currentlyCrawling: "Crawl complete."
         });
 
