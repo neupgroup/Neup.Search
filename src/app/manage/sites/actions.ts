@@ -4,7 +4,7 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where, endAt, startAt,getCountFromServer } from "firebase/firestore"
+import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where, endAt, startAt,getCountFromServer, deleteDoc } from "firebase/firestore"
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
@@ -266,6 +266,14 @@ export async function crawlSite(siteId: string, siteUrl: string) {
         }
 
         while (urlQueue.length > 0) {
+            // Check for cancellation
+            const currentSiteDoc = await getDoc(siteRef);
+            if (currentSiteDoc.data()?.status !== "Crawling") {
+                console.log("Crawl cancelled by user.");
+                await updateDoc(siteRef, { currentlyCrawling: "Crawl cancelled." });
+                break; 
+            }
+            
             const currentUrl = urlQueue.shift()!;
             
             if (crawledUrls.has(currentUrl) || disallow.some(regex => regex.test(new URL(currentUrl).pathname))) {
@@ -500,5 +508,41 @@ export async function getDashboardStats() {
             activeCrawls: 0,
             crawlErrors: 0,
         };
+    }
+}
+
+
+export async function cancelCrawl(siteId: string) {
+    try {
+        const siteRef = doc(db, "sites", siteId);
+        await updateDoc(siteRef, { status: "Active", currentlyCrawling: "Crawl cancelled by user." });
+        revalidatePath(`/manage/sites/${siteId}`);
+        revalidatePath("/manage/sites");
+    } catch (error) {
+        console.error(`Error cancelling crawl for site ${siteId}:`, error);
+        // Optionally handle the error, e.g., by returning an error message
+    }
+}
+
+export async function deletePagesForSite(siteId: string) {
+    try {
+        const pagesCollection = collection(db, "pages");
+        const q = query(pagesCollection, where("siteId", "==", siteId));
+        const snapshot = await getDocs(q);
+
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+
+        const siteRef = doc(db, "sites", siteId);
+        await updateDoc(siteRef, { pagesCrawled: 0, lastCrawled: null });
+
+        revalidatePath(`/manage/sites/${siteId}`);
+        revalidatePath("/manage/pages");
+
+    } catch (error) {
+        console.error(`Error deleting pages for site ${siteId}:`, error);
     }
 }
