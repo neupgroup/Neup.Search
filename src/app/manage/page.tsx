@@ -39,7 +39,7 @@ export default function ManagePage() {
                     <p className="text-xs text-muted-foreground">
                     2 running, 1 scheduled
                     </p>
-                </C  ardContent>
+                </CardContent>
             </Card>
             <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

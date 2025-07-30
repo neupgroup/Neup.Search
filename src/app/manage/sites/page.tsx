@@ -1,4 +1,6 @@
 
+
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -32,10 +34,12 @@ export default function ManageSitesPage() {
                     className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[336px]"
                 />
             </div>
-            <Button>
-                <PlusCircle className="h-4 w-4 mr-2" />
-                Add New Site
-            </Button>
+            <Link href="/manage/sites/new">
+                <Button>
+                    <PlusCircle className="h-4 w-4 mr-2" />
+                    Add New Site
+                </Button>
+            </Link>
         </div>
       </CardHeader>
       <CardContent>
