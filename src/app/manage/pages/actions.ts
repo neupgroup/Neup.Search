@@ -12,6 +12,7 @@ export type Page = {
   status: "Indexed" | "Error" | "Pending";
   lastIndexed: string | null;
   createdAt: Date;
+  description?: string;
 }
 
 export type PaginatedPages = {
@@ -57,6 +58,7 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
                 id: doc.id,
                 url: data.url,
                 title: data.title || 'No title',
+                description: data.description || 'No description',
                 siteUrl: data.siteUrl,
                 status: data.status,
                 lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
@@ -75,5 +77,3 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
         return { pages: [], lastVisibleId: null };
     }
 }
-
-    

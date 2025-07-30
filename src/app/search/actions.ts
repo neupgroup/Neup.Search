@@ -10,43 +10,51 @@ export type SearchResult = {
   title: string;
   url: string;
   snippet: string;
+  description?: string;
 };
 
-function getSnippet(content: string, query: string): string {
+function getSnippet(content: string, description: string, query: string): string {
   const lowerContent = content.toLowerCase();
   const lowerQuery = query.toLowerCase();
-  const index = lowerContent.indexOf(lowerQuery);
+  let index = -1;
+  let textToSearch = content;
 
-  if (index === -1) {
-    return content.substring(0, 200) + "...";
+  // Prefer description for snippet if it contains the query
+  if(description && description.toLowerCase().includes(lowerQuery)) {
+    index = description.toLowerCase().indexOf(lowerQuery);
+    textToSearch = description;
+  } else {
+    index = lowerContent.indexOf(lowerQuery);
   }
 
-  const start = Math.max(0, index - 50);
-  const end = Math.min(content.length, index + query.length + 150);
+  if (index === -1) {
+    return (description || content).substring(0, 200) + "...";
+  }
+
+  const start = Math.max(0, index - 75);
+  const end = Math.min(textToSearch.length, index + query.length + 75);
   
-  let snippet = content.substring(start, end);
+  let snippet = textToSearch.substring(start, end);
 
   if (start > 0) {
     snippet = "..." + snippet;
   }
-  if (end < content.length) {
+  if (end < textToSearch.length) {
     snippet = snippet + "...";
   }
 
-  // Highlight the query term
   const regex = new RegExp(`(${query})`, 'gi');
   snippet = snippet.replace(regex, '<mark>$1</mark>');
 
   return snippet;
 }
 
+
 async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
   if (!searchQuery) {
     return [];
   }
   try {
-    // This is still not a full-text search. For production, use a dedicated
-    // search service like Algolia, Typesense, or Elasticsearch.
     const pagesCollection = collection(db, "pages");
     const q = query(pagesCollection, limit(1000)); 
     const querySnapshot = await getDocs(q);
@@ -59,6 +67,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
       const content = data.content || "";
       const url = data.url || "";
       const title = data.title || url;
+      const description = data.description || "";
 
       const lowerContent = content.toLowerCase();
       const lowerUrl = url.toLowerCase();
@@ -68,7 +77,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
       let matchFound = false;
 
       if (lowerTitle.includes(lowercasedQuery)) {
-        score += 5; // Higher score for title match
+        score += 5; 
         matchFound = true;
       }
       if (lowerContent.includes(lowercasedQuery)) {
@@ -76,7 +85,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
         matchFound = true;
       }
        if (lowerUrl.includes(lowercasedQuery)) {
-        score += 2; // Score for URL match
+        score += 2;
         matchFound = true;
       }
 
@@ -87,16 +96,16 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
           result: {
             title: title,
             url: url,
-            snippet: getSnippet(content, searchQuery),
+            snippet: getSnippet(content, description, searchQuery),
+            description: description,
           }
         });
       }
     });
 
-    // Sort by score descending
     results.sort((a, b) => b.score - a.score);
 
-    return results.map(item => item.result).slice(0, 20); // Return top 20 results
+    return results.map(item => item.result).slice(0, 20);
   } catch (error) {
     console.error("Error fetching search results:", error);
     return [];
@@ -129,4 +138,3 @@ export async function generateAnswer(query: string) {
     return { answer: null, error: "Sorry, I couldn't generate an answer at this time. The AI may be offline. Please try again later." }
   }
 }
-    

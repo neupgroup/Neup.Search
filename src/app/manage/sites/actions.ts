@@ -123,21 +123,110 @@ export async function getSites(search?: string, startAfterDocId?: string): Promi
 // Helper function to introduce a delay
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const userAgent = "NeupBot/1.0 (+https://neupsearch.com/bot)";
+
+// --- Robots.txt and Sitemap Parsing ---
+async function getRobotsTxt(siteUrl: string): Promise<string | null> {
+    try {
+        const robotsUrl = new URL("/robots.txt", siteUrl);
+        const response = await fetch(robotsUrl.toString(), { headers: { 'User-Agent': userAgent } });
+        if (response.ok) {
+            return await response.text();
+        }
+        return null;
+    } catch (error) {
+        console.error(`Could not fetch robots.txt for ${siteUrl}:`, error);
+        return null;
+    }
+}
+
+function parseRobotsTxt(robotsTxt: string): { sitemaps: string[], disallow: RegExp[] } {
+    const sitemaps: string[] = [];
+    const disallow: RegExp[] = [];
+    let isOurBot = false;
+
+    robotsTxt.split('\n').forEach(line => {
+        const [key, value] = line.split(':').map(s => s.trim());
+        
+        if (key.toLowerCase() === 'user-agent') {
+            isOurBot = value === '*' || value === userAgent;
+        } else if (isOurBot && key.toLowerCase() === 'sitemap') {
+            sitemaps.push(value);
+        } else if (isOurBot && key.toLowerCase() === 'disallow') {
+            if (value) {
+                // Convert glob to regex
+                const regex = new RegExp('^' + value.replace(/\*/g, '.*').replace(/\//g, '\\/'));
+                disallow.push(regex);
+            }
+        }
+    });
+
+    return { sitemaps, disallow };
+}
+
+async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
+    try {
+        const response = await fetch(sitemapUrl, { headers: { 'User-Agent': userAgent } });
+        if (!response.ok) return [];
+
+        const xml = await response.text();
+        const $ = cheerio.load(xml, { xmlMode: true });
+        const urls: string[] = [];
+
+        $('url > loc').each((i, el) => {
+            urls.push($(el).text());
+        });
+        
+        // Handle nested sitemaps
+        const nestedSitemaps = $('sitemap > loc').map((i, el) => $(el).text()).get();
+        for (const nestedSitemap of nestedSitemaps) {
+            urls.push(...await getSitemapUrls(nestedSitemap));
+        }
+
+        return urls;
+    } catch (error) {
+        console.error(`Error parsing sitemap ${sitemapUrl}:`, error);
+        return [];
+    }
+}
+// --- End of Robots.txt and Sitemap Parsing ---
+
+
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
-    let crawledUrls = new Map<string, {title: string, content: string}>();
+    let crawledUrls = new Set<string>();
     let externalSites = new Set<string>();
-    const urlQueue = [siteUrl];
     const domain = new URL(siteUrl).hostname;
     let pagesProcessed = 0;
-
+    
     try {
-        await updateDoc(siteRef, { status: "Crawling", currentlyCrawling: "Starting..." });
-        revalidatePath("/manage/sites");
+        await updateDoc(siteRef, { status: "Crawling", currentlyCrawling: "Fetching robots.txt..." });
+        revalidatePath(`/manage/sites/${siteId}`);
+
+        const robotsTxt = await getRobotsTxt(siteUrl);
+        const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] };
+
+        const urlQueue: string[] = [];
+
+        // Prioritize sitemap URLs
+        if (sitemaps.length > 0) {
+            await updateDoc(siteRef, { currentlyCrawling: `Found ${sitemaps.length} sitemaps. Parsing...` });
+            revalidatePath(`/manage/sites/${siteId}`);
+            for (const sitemapUrl of sitemaps) {
+                const sitemapUrls = await getSitemapUrls(sitemapUrl);
+                urlQueue.push(...sitemapUrls);
+            }
+        }
+        
+        // Add base URL if queue is empty
+        if (urlQueue.length === 0) {
+            urlQueue.push(siteUrl);
+        }
 
         while (urlQueue.length > 0) {
             const currentUrl = urlQueue.shift()!;
-            if (crawledUrls.has(currentUrl)) {
+            
+            if (crawledUrls.has(currentUrl) || disallow.some(regex => regex.test(new URL(currentUrl).pathname))) {
                 continue;
             }
 
@@ -145,24 +234,66 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 currentlyCrawling: `Crawling ${currentUrl}`,
                 pagesCrawled: pagesProcessed,
             });
-            revalidatePath("/manage/sites");
+            revalidatePath(`/manage/sites/${siteId}`);
             
             try {
-                const response = await fetch(currentUrl, { headers: { 'User-Agent': 'NeupBot/1.0' } });
-                if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) {
+                const response = await fetch(currentUrl, { headers: { 'User-Agent': userAgent } });
+                const contentType = response.headers.get('content-type');
+                
+                if (!response.ok || !contentType?.includes('text/html')) {
                     console.warn(`Skipping ${currentUrl}: Not an HTML page or failed to fetch (status: ${response.status})`);
                     continue;
                 }
-
+                
+                crawledUrls.add(currentUrl);
                 const html = await response.text();
                 const $ = cheerio.load(html);
 
-                const title = $('title').text() || $('h1').first().text();
-                const content = $('body').text().replace(/\s\s+/g, ' ').trim();
+                // --- Comprehensive Data Extraction ---
+                const pageData = {
+                    title: $('title').text() || $('h1').first().text(),
+                    description: $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || "",
+                    keywords: $('meta[name="keywords"]').attr('content') || "",
+                    content: $('body').text().replace(/\s\s+/g, ' ').trim(),
+                    bodyHtml: $('body').html() || "",
+                    url: currentUrl,
+                    siteId,
+                    siteUrl,
+                    status: "Indexed",
+                    lastIndexed: Timestamp.now(),
+                    createdAt: Timestamp.now(),
+                    httpHeaders: Object.fromEntries(response.headers.entries()),
+                    canonicalUrl: $('link[rel="canonical"]').attr('href'),
+                    lang: $('html').attr('lang'),
+                    openGraph: {
+                        title: $('meta[property="og:title"]').attr('content'),
+                        type: $('meta[property="og:type"]').attr('content'),
+                        image: $('meta[property="og:image"]').attr('content'),
+                        url: $('meta[property="og:url"]').attr('content'),
+                    },
+                    images: $('img').map((i, el) => ({ src: $(el).attr('src'), alt: $(el).attr('alt') })).get().filter(img => img.src),
+                    videos: $('video').map((i, el) => $(el).attr('src')).get().filter(src => src),
+                    audios: $('audio').map((i, el) => $(el).attr('src')).get().filter(src => src),
+                };
 
-                crawledUrls.set(currentUrl, { title, content });
+                // Add to batch for Firestore
+                const pagesCollection = collection(db, "pages");
+                const pageQuery = query(pagesCollection, where("url", "==", currentUrl), limit(1));
+                const existingPageSnapshot = await getDocs(pageQuery);
+
+                const batch = writeBatch(db);
+                if (existingPageSnapshot.empty) {
+                    const newPageRef = doc(pagesCollection);
+                    batch.set(newPageRef, pageData);
+                } else {
+                    const pageDocRef = existingPageSnapshot.docs[0].ref;
+                    batch.update(pageDocRef, pageData);
+                }
+                await batch.commit();
+
                 pagesProcessed++;
 
+                // Link discovery
                 $('a').each((i, link) => {
                     const href = $(link).attr('href');
                     if (href) {
@@ -183,6 +314,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                         }
                     }
                 });
+
             } catch (fetchError) {
                 console.warn(`Skipping ${currentUrl}: Error during fetch - ${fetchError}`);
             }
@@ -190,23 +322,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             await sleep(100); 
         }
 
-        const pagesBatch = writeBatch(db);
-        const pagesCollection = collection(db, "pages");
-        crawledUrls.forEach(({ title, content }, url) => {
-            const newPageRef = doc(pagesCollection);
-            pagesBatch.set(newPageRef, {
-                url: url,
-                title: title,
-                content: content,
-                siteId: siteId,
-                siteUrl: siteUrl,
-                status: "Indexed",
-                lastIndexed: Timestamp.now(),
-                createdAt: Timestamp.now(),
-            });
-        });
-        await pagesBatch.commit();
-        
+        // Discover and add new external sites
         const sitesCollection = collection(db, "sites");
         for (const newSiteUrl of externalSites) {
             const q = query(sitesCollection, where("url", "==", newSiteUrl), limit(1));
@@ -284,14 +400,16 @@ export async function getPagesForSite(siteId: string, startAfterDocId?: string):
 
         const pagesList = pageSnapshot.docs.map(doc => {
             const data = doc.data();
-            return {
+            const page: Page = {
                 id: doc.id,
                 url: data.url,
+                title: data.title || 'No title',
                 siteUrl: data.siteUrl,
                 status: data.status,
                 lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
                 createdAt: (data.createdAt as Timestamp).toDate(),
             };
+            return page;
         });
         
         const firstVisible = pageSnapshot.docs[0];
@@ -339,5 +457,3 @@ export async function getDashboardStats() {
         };
     }
 }
-
-    

@@ -62,7 +62,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
               <p>{site.createdAt.toLocaleDateString()}</p>
             </div>
           </div>
-          {(site.status === "Crawling" || site.currentlyCrawling) && (
+          {(site.status === "Crawling" || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
              <div className="mt-4 text-sm">
                 <p className="font-semibold">Current Activity</p>
                 <p className="text-muted-foreground break-all">{site.currentlyCrawling}</p>
@@ -101,7 +101,10 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
               )}
               {pages.map((page) => (
                 <TableRow key={page.id}>
-                  <TableCell className="font-medium break-all">{page.url}</TableCell>
+                  <TableCell className="font-medium break-all">
+                    <div className="font-bold">{page.title}</div>
+                    <div className="text-xs text-muted-foreground">{page.url}</div>
+                  </TableCell>
                   <TableCell>
                     <Badge variant={page.status === 'Indexed' ? 'default' : 'destructive'}>
                       {page.status}
