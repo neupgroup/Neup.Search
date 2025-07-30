@@ -8,7 +8,22 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, PlusCircle, Search } from "lucide-react"
-import { getSites, type Site } from "./actions"
+import { getSites, crawlSite, type Site } from "./actions"
+
+function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl: string, isCrawling: boolean }) {
+  return (
+    <form action={async () => {
+      'use server'
+      await crawlSite(siteId, siteUrl)
+    }}>
+      <button type="submit" className="w-full text-left" disabled={isCrawling}>
+        <DropdownMenuItem onSelect={(e) => e.preventDefault()} disabled={isCrawling}>
+            {isCrawling ? 'Crawling...' : 'Recrawl'}
+        </DropdownMenuItem>
+      </button>
+    </form>
+  )
+}
 
 export default async function ManageSitesPage() {
   const crawledSites: Site[] = await getSites();
@@ -54,7 +69,7 @@ export default async function ManageSitesPage() {
               <TableRow key={site.id}>
                 <TableCell className="font-medium">
                   <div>{site.url}</div>
-                  {(site.status === 'Active') && (
+                  {(site.status === 'Active' || site.status === 'Crawling') && (
                     <div className="text-xs text-muted-foreground mt-1">
                       [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
                     </div>
@@ -63,6 +78,7 @@ export default async function ManageSitesPage() {
                 <TableCell>
                   <Badge variant={
                       site.status === 'Active' ? 'default' 
+                      : site.status === 'Crawling' ? 'default'
                       : site.status === 'Pending' ? 'outline'
                       : site.status === 'Paused' ? 'secondary' 
                       : 'destructive'
@@ -80,7 +96,7 @@ export default async function ManageSitesPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>Recrawl</DropdownMenuItem>
+                       <CrawlButton siteId={site.id} siteUrl={site.url} isCrawling={site.status === 'Crawling'} />
                       <DropdownMenuItem>Pause</DropdownMenuItem>
                       <DropdownMenuItem>View Logs</DropdownMenuItem>
                       <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
