@@ -4,7 +4,7 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter } from "firebase/firestore"
+import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where } from "firebase/firestore"
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
@@ -108,7 +108,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
     let crawledUrls = new Set<string>();
-    let externalLinks = new Set<string>();
+    let externalSites = new Set<string>();
     const urlQueue = [siteUrl];
     const domain = new URL(siteUrl).hostname;
     let pagesProcessed = 0;
@@ -145,30 +145,30 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 const href = $(link).attr('href');
                 if (href) {
                     try {
-                        const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0]; // Remove fragment
-                        const linkDomain = new URL(absoluteUrl).hostname;
+                        const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
+                        const linkHostname = new URL(absoluteUrl).hostname;
 
-                        if (linkDomain === domain) {
+                        if (linkHostname === domain) {
                             if (!crawledUrls.has(absoluteUrl) && !urlQueue.includes(absoluteUrl)) {
                                 urlQueue.push(absoluteUrl);
                             }
                         } else {
-                            externalLinks.add(absoluteUrl);
+                            const rootUrl = new URL(absoluteUrl).origin;
+                            externalSites.add(rootUrl);
                         }
                     } catch (e) {
                         // Ignore invalid URLs
                     }
                 }
             });
-            await sleep(100); // Be respectful to the server
+            await sleep(100); 
         }
 
-        // Batch write discovered pages to Firestore
-        const batch = writeBatch(db);
+        const pagesBatch = writeBatch(db);
         const pagesCollection = collection(db, "pages");
         crawledUrls.forEach(url => {
             const newPageRef = doc(pagesCollection);
-            batch.set(newPageRef, {
+            pagesBatch.set(newPageRef, {
                 url: url,
                 siteId: siteId,
                 siteUrl: siteUrl,
@@ -177,21 +177,24 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 createdAt: Timestamp.now(),
             });
         });
+        await pagesBatch.commit();
         
-        // You could store external links for later crawling
-        const externalLinksCollection = collection(db, "externalLinks");
-        externalLinks.forEach(link => {
-            const newLinkRef = doc(externalLinksCollection);
-            batch.set(newLinkRef, {
-                url: link,
-                sourceSiteId: siteId,
-                sourceSiteUrl: siteUrl,
-                status: "Pending",
-                createdAt: Timestamp.now(),
-            });
-        });
-
-        await batch.commit();
+        const sitesCollection = collection(db, "sites");
+        for (const newSiteUrl of externalSites) {
+            const q = query(sitesCollection, where("url", "==", newSiteUrl), limit(1));
+            const existingSiteSnapshot = await getDocs(q);
+            if (existingSiteSnapshot.empty) {
+                await addDoc(sitesCollection, {
+                    url: newSiteUrl,
+                    description: `Discovered from ${siteUrl}`,
+                    status: "Pending",
+                    createdAt: Timestamp.now(),
+                    lastCrawled: null,
+                    pagesCrawled: 0,
+                    currentlyCrawling: "",
+                });
+            }
+        }
 
         await updateDoc(siteRef, { 
             status: "Active",
