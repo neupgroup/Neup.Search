@@ -1,9 +1,10 @@
 
+
 "use server"
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch } from "firebase/firestore"
+import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc } from "firebase/firestore"
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
@@ -15,7 +16,7 @@ const SiteSchema = z.object({
 
 export type Site = {
   id: string;
-  url: string;
+  url:string;
   description: string;
   status: "Pending" | "Active" | "Paused" | "Error" | "Crawling";
   lastCrawled: string | null;
@@ -86,9 +87,15 @@ export async function getSites(): Promise<Site[]> {
 // Helper function to introduce a delay
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+async function getPageTitle(html: string): Promise<string> {
+    const $ = cheerio.load(html);
+    return $('title').text() || '';
+}
+
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
     let crawledUrls = new Set<string>();
+    let pagesProcessed = 0;
 
     try {
         // 1. Set status to "Crawling"
@@ -99,7 +106,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
         await updateDoc(siteRef, { currentlyCrawling: `Fetching ${siteUrl}...`});
         revalidatePath("/manage/sites");
 
-        const response = await fetch(siteUrl);
+        const response = await fetch(siteUrl, { headers: { 'User-Agent': 'NeupBot/1.0' } });
         if (!response.ok) {
             throw new Error(`Failed to fetch ${siteUrl}. Status: ${response.status}`);
         }
@@ -108,14 +115,18 @@ export async function crawlSite(siteId: string, siteUrl: string) {
 
         // 3. Extract links
         const links: string[] = [];
+        const domain = new URL(siteUrl).hostname;
+
         $('a').each((i, link) => {
             const href = $(link).attr('href');
             if (href) {
                 try {
                     const absoluteUrl = new URL(href, siteUrl).toString();
-                    // Only crawl links on the same domain
-                    if (absoluteUrl.startsWith(siteUrl)) {
+                    const linkDomain = new URL(absoluteUrl).hostname;
+                    // Only crawl links on the same domain and avoid duplicates
+                    if (linkDomain === domain && !crawledUrls.has(absoluteUrl)) {
                        links.push(absoluteUrl);
+                       crawledUrls.add(absoluteUrl);
                     }
                 } catch (e) {
                     // Ignore invalid URLs
@@ -123,35 +134,33 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             }
         });
         
-        const uniqueLinks = [...new Set(links)]; // Remove duplicates
+        const uniqueLinks = [...crawledUrls]; // Use the Set to get unique links
 
         // 4. Batch write discovered pages to Firestore
         const batch = writeBatch(db);
-        for (let i = 0; i < uniqueLinks.length; i++) {
-            const url = uniqueLinks[i];
-            
-            // Avoid re-crawling the same URL in this run
-            if(crawledUrls.has(url)) continue;
-            crawledUrls.add(url);
+        const pagesCollection = collection(db, "pages");
 
+        for (const url of uniqueLinks) {
+            pagesProcessed++;
             await updateDoc(siteRef, { 
                 currentlyCrawling: `Indexing ${url}`,
-                pagesCrawled: i + 1,
+                pagesCrawled: pagesProcessed,
             });
-
-            // Add page to the 'pages' collection
-            const newPageRef = doc(collection(db, "pages"));
+            revalidatePath("/manage/sites");
+            
+            const newPageRef = doc(pagesCollection); // Create a new doc with a generated ID
             batch.set(newPageRef, {
                 url: url,
+                siteId: siteId,
                 siteUrl: siteUrl,
                 status: "Indexed",
                 lastIndexed: Timestamp.now(),
                 createdAt: Timestamp.now(),
             });
 
-            revalidatePath("/manage/sites");
-            revalidatePath("/manage/pages");
-            await sleep(100); // Small delay to show progress
+            if (pagesProcessed % 10 === 0) {
+                 await sleep(200); // Small delay to show progress and avoid rate-limiting
+            }
         }
 
         await batch.commit();
@@ -169,5 +178,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
         await updateDoc(siteRef, { status: "Error", currentlyCrawling: `Crawl failed: ${error.message}` });
     } finally {
         revalidatePath("/manage/sites");
+        revalidatePath("/manage/pages");
     }
 }
