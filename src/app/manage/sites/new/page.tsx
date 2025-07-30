@@ -1,7 +1,8 @@
 
 "use client"
 
-import { useFormState, useFormStatus } from "react-dom"
+import { useActionState } from "react"
+import { useFormStatus } from "react-dom"
 import { addSite } from "@/app/manage/sites/actions"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,7 +28,7 @@ function SubmitButton() {
 
 export default function AddNewSitePage() {
   const initialState = { errors: {} };
-  const [state, dispatch] = useFormState(addSite, initialState);
+  const [state, dispatch] = useActionState(addSite, initialState);
 
   return (
     <div className="flex min-h-screen w-full flex-col">
