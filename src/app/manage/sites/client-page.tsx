@@ -4,13 +4,14 @@
 import Link from "next/link"
 import { useTransition } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, PlusCircle, Search } from "lucide-react"
 import { crawlSite, type Site } from "./actions"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
 
 function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl: string, isCrawling: boolean }) {
   const [isPending, startTransition] = useTransition();
@@ -38,7 +39,28 @@ function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl:
   )
 }
 
-export default function ManageSitesClientPage({ sites }: { sites: Site[] }) {
+export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites: Site[], lastVisibleId: string | null }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentPage = Number(searchParams.get('page')) || 1;
+
+  const handleNextPage = () => {
+    if (lastVisibleId) {
+      const params = new URLSearchParams(searchParams);
+      params.set('page', String(currentPage + 1));
+      params.set('startAfter', lastVisibleId);
+      router.push(`${pathname}?${params.toString()}`);
+    }
+  };
+
+  const handlePreviousPage = () => {
+    // This simple implementation goes back to the base URL,
+    // effectively going to page 1. A more complex implementation
+    // would be needed to track previous page cursors.
+    router.push(pathname);
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -131,6 +153,12 @@ export default function ManageSitesClientPage({ sites }: { sites: Site[] }) {
           </TableBody>
         </Table>
       </CardContent>
+      <CardFooter>
+        <div className="flex justify-end gap-2 w-full">
+            <Button onClick={handlePreviousPage} disabled={currentPage <= 1}>Previous</Button>
+            <Button onClick={handleNextPage} disabled={!lastVisibleId || sites.length < 20}>Next</Button>
+        </div>
+      </CardFooter>
     </Card>
   )
 }
