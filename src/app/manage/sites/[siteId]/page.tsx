@@ -1,6 +1,7 @@
 
 import Link from "next/link"
-import { getSiteById, getPagesForSite, crawlSite } from "@/app/manage/sites/actions"
+import Image from "next/image"
+import { getSiteById, getPagesForSite, crawlSite, summarizeSiteAction } from "@/app/manage/sites/actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -21,19 +22,40 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
   return (
     <div className="grid gap-6">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-2xl">{site.url}</CardTitle>
-            <CardDescription>{site.description}</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            {site.logoUrl && (
+              <Image 
+                src={site.logoUrl} 
+                alt={`${site.name || site.url} logo`} 
+                width={64} 
+                height={64} 
+                className="rounded-md border"
+              />
+            )}
+            <div>
+              <CardTitle className="text-2xl">{site.name || site.url}</CardTitle>
+              <CardDescription>{site.summary || "No summary available."}</CardDescription>
+            </div>
           </div>
-           <form action={async () => {
-              "use server"
-              await crawlSite(site.id, site.url)
-           }}>
-             <Button type="submit" disabled={site.status === "Crawling"}>
-              {site.status === "Crawling" ? "Crawling..." : "Recrawl Site"}
-            </Button>
-           </form>
+          <div className="flex flex-col gap-2 items-end shrink-0">
+             <form action={async () => {
+                "use server"
+                await crawlSite(site.id, site.url)
+             }}>
+               <Button type="submit" disabled={site.status === "Crawling"}>
+                {site.status === "Crawling" ? "Crawling..." : "Recrawl Site"}
+              </Button>
+             </form>
+             <form action={async () => {
+                "use server"
+                await summarizeSiteAction(site.id, site.url)
+             }}>
+              <Button type="submit" variant="outline">
+                Update Summary
+              </Button>
+             </form>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">

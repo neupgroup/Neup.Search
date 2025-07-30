@@ -9,6 +9,7 @@ import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
 import type { Page, PaginatedPages } from "../pages/actions"
+import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 
 const SiteSchema = z.object({
   url: z.string().url({ message: "Please enter a valid URL." }),
@@ -24,6 +25,9 @@ export type Site = {
   createdAt: Date;
   pagesCrawled?: number;
   currentlyCrawling?: string;
+  name?: string;
+  summary?: string;
+  logoUrl?: string;
 }
 
 export type PaginatedSites = {
@@ -49,26 +53,61 @@ export async function addSite(prevState: any, formData: FormData) {
     }
   }
 
+  let siteId: string;
+  const siteUrl = validatedFields.data.url;
+
   try {
-    await addDoc(collection(db, "sites"), {
-      url: validatedFields.data.url,
+    const docRef = await addDoc(collection(db, "sites"), {
+      url: siteUrl,
       description: validatedFields.data.description,
       status: "Pending",
       createdAt: Timestamp.now(),
       lastCrawled: null,
       pagesCrawled: 0,
-      currentlyCrawling: "",
-    })
+      currentlyCrawling: "Summarizing site...",
+    });
+    siteId = docRef.id;
   } catch (error) {
     console.error("Error adding document: ", error)
     return {
       errors: { _server: ["Could not add site. Please try again."] },
     }
   }
+  
+  // Trigger summarization asynchronously (don't block the redirect)
+  summarizeSiteAction(siteId, siteUrl).catch(console.error);
 
   revalidatePath("/manage/sites")
   redirect("/manage/sites")
 }
+
+export async function summarizeSiteAction(siteId: string, siteUrl: string) {
+    const siteRef = doc(db, "sites", siteId);
+    try {
+        await updateDoc(siteRef, { currentlyCrawling: "Summarizing site..." });
+        revalidatePath(`/manage/sites/${siteId}`);
+
+        const summaryData = await summarizeSite({ url: siteUrl });
+        
+        await updateDoc(siteRef, {
+            name: summaryData.name,
+            summary: summaryData.summary,
+            logoUrl: summaryData.logoUrl,
+            currentlyCrawling: "",
+        });
+
+    } catch (error) {
+        console.error(`Error summarizing site ${siteId}:`, error);
+        await updateDoc(siteRef, { 
+            currentlyCrawling: "Failed to summarize site.",
+            status: "Error",
+        });
+    } finally {
+        revalidatePath(`/manage/sites/${siteId}`);
+        revalidatePath("/manage/sites");
+    }
+}
+
 
 export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
     try {
@@ -104,6 +143,9 @@ export async function getSites(search?: string, startAfterDocId?: string): Promi
                 createdAt: (data.createdAt as Timestamp).toDate(),
                 pagesCrawled: data.pagesCrawled || 0,
                 currentlyCrawling: data.currentlyCrawling || null,
+                name: data.name || null,
+                logoUrl: data.logoUrl || null,
+                summary: data.summary || null,
             };
         });
 
@@ -374,6 +416,9 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
             createdAt: (data.createdAt as Timestamp).toDate(),
             pagesCrawled: data.pagesCrawled || 0,
             currentlyCrawling: data.currentlyCrawling || null,
+            name: data.name || null,
+            logoUrl: data.logoUrl || null,
+            summary: data.summary || null,
         };
     } catch (error) {
         console.error("Error fetching site: ", error);

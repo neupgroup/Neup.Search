@@ -1,7 +1,9 @@
 
+
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { useTransition, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -58,7 +60,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
   }, 300);
 
   useEffect(() => {
-    const isCrawling = sites.some(site => site.status === 'Crawling');
+    const isCrawling = sites.some(site => site.status === 'Crawling' || site.currentlyCrawling === 'Summarizing site...');
     if (isCrawling) {
       const interval = setInterval(() => {
         router.refresh();
@@ -132,19 +134,32 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
             {sites.map((site) => (
               <TableRow key={site.id}>
                 <TableCell className="font-medium">
-                  <Link href={`/manage/sites/${site.id}`} className="hover:underline">
-                    <div>{site.url}</div>
+                  <Link href={`/manage/sites/${site.id}`} className="hover:underline flex items-center gap-3">
+                     {site.logoUrl ? (
+                      <Image 
+                        src={site.logoUrl} 
+                        alt={`${site.name || site.url} logo`} 
+                        width={24} 
+                        height={24} 
+                        className="rounded-sm"
+                      />
+                    ) : (
+                      <div className="w-6 h-6 bg-muted rounded-sm" />
+                    )}
+                    <div>
+                      <div>{site.name || site.url}</div>
+                      {(site.status === 'Crawling' || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          [pages crawled: {site.pagesCrawled ?? 0} | currently: {site.currentlyCrawling ?? 'N/A'}]
+                        </div>
+                      )}
+                       {site.status === 'Error' && site.currentlyCrawling && (
+                         <div className="text-xs text-destructive mt-1">
+                            {site.currentlyCrawling}
+                        </div>
+                       )}
+                    </div>
                   </Link>
-                  {(site.status === 'Crawling' || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
-                    </div>
-                  )}
-                   {site.status === 'Error' && site.currentlyCrawling && (
-                     <div className="text-xs text-destructive mt-1">
-                        {site.currentlyCrawling}
-                    </div>
-                   )}
                 </TableCell>
                 <TableCell>
                   <Badge variant={
