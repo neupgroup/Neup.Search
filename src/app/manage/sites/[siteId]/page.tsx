@@ -1,6 +1,6 @@
 
 import Link from "next/link"
-import { getSiteById, getPagesForSite } from "@/app/manage/sites/actions"
+import { getSiteById, getPagesForSite, crawlSite } from "@/app/manage/sites/actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -15,7 +15,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
     notFound()
   }
   
-  const { pages, lastVisibleId, firstVisibleId } = await getPagesForSite(params.siteId, startAfter)
+  const { pages, lastVisibleId } = await getPagesForSite(params.siteId, startAfter)
 
 
   return (
