@@ -16,26 +16,28 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
     return [];
   }
   try {
+    // Firestore doesn't have a native "contains" query, so we have to fetch all
+    // pages and filter them in code. This is not efficient for large datasets,
+    // but it works for this prototype. For a production app, you'd use a
+    // dedicated search service like Algolia or Typesense.
     const pagesCollection = collection(db, "pages");
-    const q = query(
-      pagesCollection,
-      where('url', '>=', searchQuery),
-      where('url', '<=', searchQuery + '\uf8ff'),
-      limit(10)
-    );
+    const q = query(pagesCollection, limit(1000)); // Get up to 1000 pages
 
     const querySnapshot = await getDocs(q);
     const results: SearchResult[] = [];
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      results.push({
-        // For now, we'll use the URL as the title and a placeholder snippet
-        title: data.url,
-        url: data.url,
-        snippet: `Content from ${data.url} would be displayed here.`,
-      });
+      if (data.url && data.url.toLowerCase().includes(searchQuery.toLowerCase())) {
+        results.push({
+          title: data.url, // Placeholder title
+          url: data.url,
+          snippet: `Content from ${data.url} would be displayed here.`, // Placeholder snippet
+        });
+      }
     });
-    return results;
+
+    // Return the top 10 results
+    return results.slice(0, 10);
   } catch (error) {
     console.error("Error fetching search results:", error);
     return [];
@@ -54,6 +56,9 @@ export async function generateAnswer(query: string) {
 
   try {
     const searchResults = await getSearchResults(query)
+    if (searchResults.length === 0) {
+        return { answer: "I couldn't find any information on that topic in the indexed pages.", error: null }
+    }
     const searchResultUrls = searchResults.map(r => `${r.title} (${r.url}): ${r.snippet}`);
     const { answer } = await answerQuestion({
       question: query,
@@ -65,4 +70,3 @@ export async function generateAnswer(query: string) {
     return { answer: null, error: "Sorry, I couldn't generate an answer at this time. The AI may be offline. Please try again later." }
   }
 }
-

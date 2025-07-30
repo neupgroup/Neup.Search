@@ -70,9 +70,10 @@ export default function SearchResultsTabs({ query, initialWebResults }: { query:
 
       <TabsContent value="web" className="space-y-6">
         {initialWebResults.length === 0 && (
-            <div className="text-center text-muted-foreground">
-                <p>No web results found for "{query}".</p>
-                <p>Try crawling some sites first.</p>
+            <div className="text-center text-muted-foreground py-12">
+                <p className="text-lg font-medium">No results found for "{query}".</p>
+                <p className="mt-2">Try checking your spelling or using different keywords.</p>
+                <p>You may also need to crawl more sites in the manage section.</p>
             </div>
         )}
         {initialWebResults.map((result, index) => (
