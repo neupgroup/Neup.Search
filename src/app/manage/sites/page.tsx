@@ -52,7 +52,14 @@ export default async function ManageSitesPage() {
           <TableBody>
             {crawledSites.map((site) => (
               <TableRow key={site.id}>
-                <TableCell className="font-medium">{site.url}</TableCell>
+                <TableCell className="font-medium">
+                  <div>{site.url}</div>
+                  {(site.status === 'Active') && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
+                    </div>
+                  )}
+                </TableCell>
                 <TableCell>
                   <Badge variant={
                       site.status === 'Active' ? 'default' 

@@ -1,3 +1,4 @@
+
 "use server"
 
 import { revalidatePath } from "next/cache"
@@ -18,6 +19,8 @@ export type Site = {
   status: "Pending" | "Active" | "Paused" | "Error";
   lastCrawled: string | null;
   createdAt: Date;
+  pagesCrawled?: number;
+  currentlyCrawling?: string;
 }
 
 export async function addSite(prevState: any, formData: FormData) {
@@ -39,6 +42,8 @@ export async function addSite(prevState: any, formData: FormData) {
       status: "Pending",
       createdAt: Timestamp.now(),
       lastCrawled: null,
+      pagesCrawled: 0,
+      currentlyCrawling: "",
     })
   } catch (error) {
     console.error("Error adding document: ", error)
@@ -65,6 +70,8 @@ export async function getSites(): Promise<Site[]> {
                 status: data.status,
                 lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
                 createdAt: (data.createdAt as Timestamp).toDate(),
+                pagesCrawled: data.pagesCrawled || 0,
+                currentlyCrawling: data.currentlyCrawling || null,
             };
         });
         return sitesList;
