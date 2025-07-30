@@ -4,7 +4,7 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where } from "firebase/firestore"
+import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where, endAt, startAt } from "firebase/firestore"
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
@@ -63,16 +63,26 @@ export async function addSite(prevState: any, formData: FormData) {
   redirect("/manage/sites")
 }
 
-export async function getSites(startAfterDocId?: string): Promise<PaginatedSites> {
+export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
     try {
         const sitesCollection = collection(db, "sites");
-        let q;
-        if (startAfterDocId) {
-            const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
-            q = query(sitesCollection, orderBy("createdAt", "desc"), startAfter(lastVisibleDoc), limit(20));
-        } else {
-            q = query(sitesCollection, orderBy("createdAt", "desc"), limit(20));
+        let queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
+
+        if (search) {
+             queryConstraints = [
+                orderBy("url"),
+                startAt(search),
+                endAt(search + '\uf8ff'),
+                limit(20)
+            ];
         }
+
+        if (startAfterDocId && !search) {
+            const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
+            queryConstraints.push(startAfter(lastVisibleDoc));
+        }
+
+        const q = query(sitesCollection, ...queryConstraints);
         
         const siteSnapshot = await getDocs(q);
         const sitesList = siteSnapshot.docs.map(doc => {

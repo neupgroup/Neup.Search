@@ -2,7 +2,7 @@
 "use client"
 
 import Link from "next/link"
-import { useTransition, useEffect } from "react"
+import { useTransition, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, PlusCircle, Search } from "lucide-react"
 import { crawlSite, type Site } from "./actions"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
+import { useDebouncedCallback } from "use-debounce"
 
 function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl: string, isCrawling: boolean }) {
   const [isPending, startTransition] = useTransition();
@@ -45,6 +46,17 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
   const searchParams = useSearchParams();
   const startAfter = searchParams.get('startAfter');
 
+  const handleSearch = useDebouncedCallback((term: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (term) {
+      params.set('q', term);
+    } else {
+      params.delete('q');
+    }
+    params.delete('startAfter'); // Reset pagination on new search
+    router.replace(`${pathname}?${params.toString()}`);
+  }, 300);
+
   useEffect(() => {
     const isCrawling = sites.some(site => site.status === 'Crawling');
     if (isCrawling) {
@@ -57,14 +69,18 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
   
   const handleNextPage = () => {
     if (lastVisibleId) {
-      router.push(`${pathname}?startAfter=${lastVisibleId}`);
+       const params = new URLSearchParams(searchParams);
+       params.set('startAfter', lastVisibleId);
+       router.push(`${pathname}?${params.toString()}`);
     }
   };
 
   const handlePreviousPage = () => {
-    // A full robust pagination would require storing previous cursors.
-    // For this implementation, we will just go back to the first page.
-    router.push(pathname);
+    // This simple version just goes back to the first page.
+    // A more robust implementation would store previous page cursors.
+    const params = new URLSearchParams(searchParams);
+    params.delete('startAfter');
+    router.push(`${pathname}?${params.toString()}`);
   };
 
   return (
@@ -81,6 +97,8 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
                     type="search"
                     placeholder="Search sites..."
                     className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[336px]"
+                    onChange={(e) => handleSearch(e.target.value)}
+                    defaultValue={searchParams.get('q') || ''}
                 />
             </div>
             <Link href="/manage/sites/new">
@@ -107,7 +125,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
              {sites.length === 0 && (
                 <TableRow>
                     <TableCell colSpan={4} className="h-24 text-center">
-                        No sites found. Add one to get started.
+                        No sites found.
                     </TableCell>
                 </TableRow>
             )}
@@ -115,7 +133,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
               <TableRow key={site.id}>
                 <TableCell className="font-medium">
                   <div>{site.url}</div>
-                  {(site.status === 'Crawling' || (site.status === 'Active' && site.lastCrawled !== 'Never')) && (
+                  {(site.status === 'Crawling' || site.currentlyCrawling) && (
                     <div className="text-xs text-muted-foreground mt-1">
                       [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
                     </div>

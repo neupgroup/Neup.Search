@@ -7,19 +7,20 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, Search } from "lucide-react"
-import { getPages, type Page } from "./actions"
+import { getPages } from "./actions"
 import Link from "next/link"
+import { SearchInput } from "@/components/search-input"
 
-function PageContent({startAfter}: {startAfter?: string}) {
+function PageContent({search, startAfter}: {search?: string, startAfter?: string}) {
     return (
         <Suspense fallback={<div>Loading pages...</div>}>
-            <PagesList startAfter={startAfter} />
+            <PagesList search={search} startAfter={startAfter} />
         </Suspense>
     )
 }
 
-async function PagesList({startAfter}: {startAfter?: string}) {
-    const { pages, lastVisibleId } = await getPages(startAfter);
+async function PagesList({search, startAfter}: {search?:string, startAfter?: string}) {
+    const { pages, lastVisibleId } = await getPages(search, startAfter);
 
     return (
         <Card>
@@ -31,10 +32,8 @@ async function PagesList({startAfter}: {startAfter?: string}) {
                 <div className="flex items-center justify-between pt-4">
                     <div className="relative flex-1 md:grow-0">
                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            type="search"
+                        <SearchInput 
                             placeholder="Search pages..."
-                            className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[336px]"
                         />
                     </div>
                 </div>
@@ -56,7 +55,7 @@ async function PagesList({startAfter}: {startAfter?: string}) {
                     {pages.length === 0 && (
                         <TableRow>
                             <TableCell colSpan={5} className="h-24 text-center">
-                                No pages found. Start by adding a site to be crawled.
+                                No pages found.
                             </TableCell>
                         </TableRow>
                     )}
@@ -96,7 +95,7 @@ async function PagesList({startAfter}: {startAfter?: string}) {
             </CardContent>
             <CardFooter>
                  <div className="flex justify-end gap-2 w-full">
-                    <Link href="/manage/pages">
+                    <Link href={`/manage/pages`}>
                         <Button variant="outline" disabled={!startAfter}>Previous</Button>
                     </Link>
                      <Link href={`/manage/pages?startAfter=${lastVisibleId}`}>
@@ -111,7 +110,8 @@ async function PagesList({startAfter}: {startAfter?: string}) {
 
 export default async function ManagePagesPage({ searchParams }: { searchParams: { [key: string]: string | string[] | undefined } }) {
   const startAfter = searchParams.startAfter as string | undefined;
+  const search = searchParams.q as string | undefined;
   return (
-    <PageContent startAfter={startAfter} />
+    <PageContent search={search} startAfter={startAfter} />
   )
 }
