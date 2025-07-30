@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch } from "firebase/firestore"
 import { z } from "zod"
+import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
 
 const SiteSchema = z.object({
@@ -87,37 +88,61 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
+    let crawledUrls = new Set<string>();
 
     try {
         // 1. Set status to "Crawling"
         await updateDoc(siteRef, { status: "Crawling", currentlyCrawling: "Starting..." });
         revalidatePath("/manage/sites");
-        await sleep(1000); // Give time for UI to update
+        
+        // 2. Fetch and parse the homepage
+        await updateDoc(siteRef, { currentlyCrawling: `Fetching ${siteUrl}...`});
+        revalidatePath("/manage/sites");
 
-        // 2. Simulate crawling a few pages
-        const dummyPages = [
-            '/',
-            '/about',
-            '/products',
-            '/contact',
-            '/blog/first-post',
-        ];
+        const response = await fetch(siteUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ${siteUrl}. Status: ${response.status}`);
+        }
+        const html = await response.text();
+        const $ = cheerio.load(html);
 
+        // 3. Extract links
+        const links: string[] = [];
+        $('a').each((i, link) => {
+            const href = $(link).attr('href');
+            if (href) {
+                try {
+                    const absoluteUrl = new URL(href, siteUrl).toString();
+                    // Only crawl links on the same domain
+                    if (absoluteUrl.startsWith(siteUrl)) {
+                       links.push(absoluteUrl);
+                    }
+                } catch (e) {
+                    // Ignore invalid URLs
+                }
+            }
+        });
+        
+        const uniqueLinks = [...new Set(links)]; // Remove duplicates
+
+        // 4. Batch write discovered pages to Firestore
         const batch = writeBatch(db);
-
-        for (let i = 0; i < dummyPages.length; i++) {
-            const pagePath = dummyPages[i];
-            const fullUrl = `${siteUrl}${pagePath}`;
+        for (let i = 0; i < uniqueLinks.length; i++) {
+            const url = uniqueLinks[i];
             
+            // Avoid re-crawling the same URL in this run
+            if(crawledUrls.has(url)) continue;
+            crawledUrls.add(url);
+
             await updateDoc(siteRef, { 
-                currentlyCrawling: fullUrl,
+                currentlyCrawling: `Indexing ${url}`,
                 pagesCrawled: i + 1,
             });
 
             // Add page to the 'pages' collection
             const newPageRef = doc(collection(db, "pages"));
             batch.set(newPageRef, {
-                url: fullUrl,
+                url: url,
                 siteUrl: siteUrl,
                 status: "Indexed",
                 lastIndexed: Timestamp.now(),
@@ -125,23 +150,23 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             });
 
             revalidatePath("/manage/sites");
-            revalidatePath("/manage/pages"); // Revalidate pages too
-            await sleep(1500); // Simulate time taken to crawl a page
+            revalidatePath("/manage/pages");
+            await sleep(100); // Small delay to show progress
         }
 
-        // Commit all the new pages at once
         await batch.commit();
 
-        // 3. Finalize the crawl
+        // 5. Finalize the crawl
         await updateDoc(siteRef, { 
             status: "Active",
             lastCrawled: Timestamp.now(),
+            pagesCrawled: uniqueLinks.length,
             currentlyCrawling: "Crawl complete."
         });
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error crawling site: ", error);
-        await updateDoc(siteRef, { status: "Error", currentlyCrawling: "Crawl failed." });
+        await updateDoc(siteRef, { status: "Error", currentlyCrawling: `Crawl failed: ${error.message}` });
     } finally {
         revalidatePath("/manage/sites");
     }
