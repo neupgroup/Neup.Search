@@ -8,6 +8,7 @@ import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy,
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
+import type { Page } from "../pages/actions"
 
 const SiteSchema = z.object({
   url: z.string().url({ message: "Please enter a valid URL." }),
@@ -221,5 +222,52 @@ export async function crawlSite(siteId: string, siteUrl: string) {
     } finally {
         revalidatePath("/manage/sites");
         revalidatePath("/manage/pages");
+    }
+}
+
+
+export async function getSiteById(siteId: string): Promise<Site | null> {
+    try {
+        const siteDoc = await getDoc(doc(db, "sites", siteId));
+        if (!siteDoc.exists()) {
+            return null;
+        }
+        const data = siteDoc.data();
+        return {
+            id: siteDoc.id,
+            url: data.url,
+            description: data.description,
+            status: data.status,
+            lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
+            createdAt: (data.createdAt as Timestamp).toDate(),
+            pagesCrawled: data.pagesCrawled || 0,
+            currentlyCrawling: data.currentlyCrawling || null,
+        };
+    } catch (error) {
+        console.error("Error fetching site: ", error);
+        return null;
+    }
+}
+
+export async function getPagesForSite(siteId: string): Promise<Page[]> {
+    try {
+        const pagesCollection = collection(db, "pages");
+        const q = query(pagesCollection, where("siteId", "==", siteId), orderBy("createdAt", "desc"));
+        const pageSnapshot = await getDocs(q);
+
+        return pageSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                url: data.url,
+                siteUrl: data.siteUrl,
+                status: data.status,
+                lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
+                createdAt: (data.createdAt as Timestamp).toDate(),
+            };
+        });
+    } catch (error) {
+        console.error("Error fetching pages for site: ", error);
+        return [];
     }
 }

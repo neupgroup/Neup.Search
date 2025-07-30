@@ -132,8 +132,10 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
             {sites.map((site) => (
               <TableRow key={site.id}>
                 <TableCell className="font-medium">
-                  <div>{site.url}</div>
-                  {(site.status === 'Crawling' || site.currentlyCrawling) && (
+                  <Link href={`/manage/sites/${site.id}`} className="hover:underline">
+                    <div>{site.url}</div>
+                  </Link>
+                  {(site.status === 'Crawling' || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
                     <div className="text-xs text-muted-foreground mt-1">
                       [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
                     </div>
