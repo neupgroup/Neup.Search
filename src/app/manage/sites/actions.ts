@@ -238,7 +238,6 @@ async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
     let crawledUrls = new Set<string>();
-    let externalSites = new Set<string>();
     const domain = new URL(siteUrl).hostname;
     let pagesProcessed = 0;
     
@@ -300,9 +299,11 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 const html = await response.text();
                 const $ = cheerio.load(html);
 
+                const pageTitle = $('title').text() || $('h1').first().text();
+
                 // --- Comprehensive Data Extraction ---
                 const pageData = {
-                    title: $('title').text() || $('h1').first().text(),
+                    title: pageTitle,
                     description: $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || "",
                     keywords: $('meta[name="keywords"]').attr('content') || "",
                     content: $('body').text().replace(/\s\s+/g, ' ').trim(),
@@ -344,27 +345,34 @@ export async function crawlSite(siteId: string, siteUrl: string) {
 
                 pagesProcessed++;
 
-                // Link discovery
-                $('a').each((i, link) => {
-                    const href = $(link).attr('href');
-                    if (href) {
+                // Link discovery and backlink creation
+                const linksCollection = collection(db, "links");
+                for (const link of $('a').toArray()) {
+                     const href = $(link).attr('href');
+                     if (href) {
                         try {
                             const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
                             const linkHostname = new URL(absoluteUrl).hostname;
+                            
+                            // Log the link relationship
+                            const linkDocRef = doc(linksCollection);
+                            batch.set(linkDocRef, {
+                                sourceUrl: currentUrl,
+                                sourceTitle: pageTitle,
+                                targetUrl: absoluteUrl
+                            });
 
                             if (linkHostname === domain) {
                                 if (!crawledUrls.has(absoluteUrl) && !urlQueue.includes(absoluteUrl)) {
                                     urlQueue.push(absoluteUrl);
                                 }
-                            } else {
-                                const rootUrl = new URL(absoluteUrl).origin;
-                                externalSites.add(rootUrl);
-                            }
+                            } 
                         } catch (e) {
                             // Ignore invalid URLs
                         }
                     }
-                });
+                }
+                await batch.commit();
 
             } catch (fetchError) {
                 await logError({ error: fetchError, currentUrl }, 'crawlSite_fetch');
@@ -372,24 +380,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             }
             
             await sleep(100); 
-        }
-
-        // Discover and add new external sites
-        const sitesCollection = collection(db, "sites");
-        for (const newSiteUrl of externalSites) {
-            const q = query(sitesCollection, where("url", "==", newSiteUrl), limit(1));
-            const existingSiteSnapshot = await getDocs(q);
-            if (existingSiteSnapshot.empty) {
-                await addDoc(sitesCollection, {
-                    url: newSiteUrl,
-                    description: `Discovered from ${siteUrl}`,
-                    status: "Pending",
-                    createdAt: Timestamp.now(),
-                    lastCrawled: null,
-                    pagesCrawled: 0,
-                    currentlyCrawling: "",
-                });
-            }
         }
 
         await updateDoc(siteRef, { 
@@ -549,5 +539,26 @@ export async function deletePagesForSite(siteId: string) {
 
     } catch (error) {
         await logError(error, `deletePagesForSite`);
+    }
+}
+
+export async function deleteLinksForPage(pageUrl: string) {
+    try {
+        const linksCollection = collection(db, "links");
+        const q = query(linksCollection, where("sourceUrl", "==", pageUrl));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+            return;
+        }
+
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+
+    } catch (error) {
+        await logError(error, `deleteLinksForPage`);
     }
 }

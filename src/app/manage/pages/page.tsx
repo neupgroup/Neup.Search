@@ -69,7 +69,7 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
                     {pages.map((page) => (
                     <TableRow key={page.id}>
                         <TableCell className="font-medium">
-                            <div className="font-bold">{page.title}</div>
+                            <Link href={`/manage/pages/${page.id}`} className="font-bold hover:underline">{page.title}</Link>
                             <div className="text-xs text-muted-foreground line-clamp-2">{page.description}</div>
                         </TableCell>
                         <TableCell className="font-medium break-all">{page.url}</TableCell>
@@ -94,7 +94,9 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                             <DropdownMenuItem>Re-index</DropdownMenuItem>
-                            <DropdownMenuItem>View Details</DropdownMenuItem>
+                            <DropdownMenuItem asChild>
+                                <Link href={`/manage/pages/${page.id}`}>View Details</Link>
+                            </DropdownMenuItem>
                             <DropdownMenuItem className="text-red-600">Delete from Index</DropdownMenuItem>
                             </DropdownMenuContent>
                         </DropdownMenu>
