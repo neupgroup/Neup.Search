@@ -1,4 +1,5 @@
 
+
 import { Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -47,7 +48,8 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
                 <Table>
                 <TableHeader>
                     <TableRow>
-                    <TableHead>Page URL</TableHead>
+                    <TableHead>Page Title</TableHead>
+                    <TableHead>URL</TableHead>
                     <TableHead>Site</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Last Indexed</TableHead>
@@ -59,13 +61,14 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
                 <TableBody>
                     {pages.length === 0 && (
                         <TableRow>
-                            <TableCell colSpan={5} className="h-24 text-center">
+                            <TableCell colSpan={6} className="h-24 text-center">
                                 No pages found.
                             </TableCell>
                         </TableRow>
                     )}
                     {pages.map((page) => (
                     <TableRow key={page.id}>
+                        <TableCell className="font-medium">{page.title}</TableCell>
                         <TableCell className="font-medium">{page.url}</TableCell>
                         <TableCell>{page.siteUrl}</TableCell>
                         <TableCell>
@@ -120,3 +123,5 @@ export default async function ManagePagesPage({ searchParams }: { searchParams: 
     <PageContent search={search} startAfter={startAfter} />
   )
 }
+
+    

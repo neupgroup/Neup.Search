@@ -7,6 +7,7 @@ import { db } from "@/lib/firebase"
 export type Page = {
   id: string;
   url: string;
+  title: string;
   siteUrl: string;
   status: "Indexed" | "Error" | "Pending";
   lastIndexed: string | null;
@@ -55,6 +56,7 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
             return {
                 id: doc.id,
                 url: data.url,
+                title: data.title || 'No title',
                 siteUrl: data.siteUrl,
                 status: data.status,
                 lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
@@ -73,3 +75,5 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
         return { pages: [], lastVisibleId: null };
     }
 }
+
+    

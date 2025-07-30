@@ -73,25 +73,24 @@ export async function addSite(prevState: any, formData: FormData) {
 export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
     try {
         const sitesCollection = collection(db, "sites");
-        let queryConstraints: any[] = [limit(20)];
+        let q: any;
 
         if (search) {
-             queryConstraints = [
+             const queryConstraints = [
                 orderBy("url"),
                 where('url', '>=', search),
                 where('url', '<=', search + '\uf8ff'),
                 limit(20)
             ];
+            q = query(sitesCollection, ...queryConstraints);
         } else {
-            queryConstraints.unshift(orderBy("createdAt", "desc"));
+            const queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
+            if (startAfterDocId) {
+                const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
+                queryConstraints.push(startAfter(lastVisibleDoc));
+            }
+            q = query(sitesCollection, ...queryConstraints);
         }
-
-        if (startAfterDocId && !search) {
-            const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
-            queryConstraints.push(startAfter(lastVisibleDoc));
-        }
-
-        const q = query(sitesCollection, ...queryConstraints);
         
         const siteSnapshot = await getDocs(q);
         const sitesList = siteSnapshot.docs.map(doc => {
@@ -126,7 +125,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export async function crawlSite(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
-    let crawledUrls = new Set<string>();
+    let crawledUrls = new Map<string, {title: string, content: string}>();
     let externalSites = new Set<string>();
     const urlQueue = [siteUrl];
     const domain = new URL(siteUrl).hostname;
@@ -147,48 +146,58 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 pagesCrawled: pagesProcessed,
             });
             revalidatePath("/manage/sites");
-
-            crawledUrls.add(currentUrl);
-            pagesProcessed++;
-
-            const response = await fetch(currentUrl, { headers: { 'User-Agent': 'NeupBot/1.0' } });
-            if (!response.ok) {
-                console.warn(`Skipping ${currentUrl}: Failed to fetch (status: ${response.status})`);
-                continue;
-            }
-
-            const html = await response.text();
-            const $ = cheerio.load(html);
-
-            $('a').each((i, link) => {
-                const href = $(link).attr('href');
-                if (href) {
-                    try {
-                        const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
-                        const linkHostname = new URL(absoluteUrl).hostname;
-
-                        if (linkHostname === domain) {
-                            if (!crawledUrls.has(absoluteUrl) && !urlQueue.includes(absoluteUrl)) {
-                                urlQueue.push(absoluteUrl);
-                            }
-                        } else {
-                            const rootUrl = new URL(absoluteUrl).origin;
-                            externalSites.add(rootUrl);
-                        }
-                    } catch (e) {
-                        // Ignore invalid URLs
-                    }
+            
+            try {
+                const response = await fetch(currentUrl, { headers: { 'User-Agent': 'NeupBot/1.0' } });
+                if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) {
+                    console.warn(`Skipping ${currentUrl}: Not an HTML page or failed to fetch (status: ${response.status})`);
+                    continue;
                 }
-            });
+
+                const html = await response.text();
+                const $ = cheerio.load(html);
+
+                const title = $('title').text() || $('h1').first().text();
+                const content = $('body').text().replace(/\s\s+/g, ' ').trim();
+
+                crawledUrls.set(currentUrl, { title, content });
+                pagesProcessed++;
+
+                $('a').each((i, link) => {
+                    const href = $(link).attr('href');
+                    if (href) {
+                        try {
+                            const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
+                            const linkHostname = new URL(absoluteUrl).hostname;
+
+                            if (linkHostname === domain) {
+                                if (!crawledUrls.has(absoluteUrl) && !urlQueue.includes(absoluteUrl)) {
+                                    urlQueue.push(absoluteUrl);
+                                }
+                            } else {
+                                const rootUrl = new URL(absoluteUrl).origin;
+                                externalSites.add(rootUrl);
+                            }
+                        } catch (e) {
+                            // Ignore invalid URLs
+                        }
+                    }
+                });
+            } catch (fetchError) {
+                console.warn(`Skipping ${currentUrl}: Error during fetch - ${fetchError}`);
+            }
+            
             await sleep(100); 
         }
 
         const pagesBatch = writeBatch(db);
         const pagesCollection = collection(db, "pages");
-        crawledUrls.forEach(url => {
+        crawledUrls.forEach(({ title, content }, url) => {
             const newPageRef = doc(pagesCollection);
             pagesBatch.set(newPageRef, {
                 url: url,
+                title: title,
+                content: content,
                 siteId: siteId,
                 siteUrl: siteUrl,
                 status: "Indexed",
@@ -330,3 +339,5 @@ export async function getDashboardStats() {
         };
     }
 }
+
+    

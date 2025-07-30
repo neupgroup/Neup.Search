@@ -81,7 +81,10 @@ export default function SearchResultsTabs({ query, initialWebResults }: { query:
             <a href={result.url} target="_blank" rel="noopener noreferrer" className="group">
               <p className="text-sm text-muted-foreground">{result.url}</p>
               <h3 className="text-lg font-headline text-primary group-hover:underline">{result.title}</h3>
-              <p className="text-sm mt-1 text-foreground/80">{result.snippet}</p>
+              <p 
+                className="text-sm mt-1 text-foreground/80"
+                dangerouslySetInnerHTML={{ __html: result.snippet }}
+              />
             </a>
           </div>
         ))}
@@ -112,3 +115,5 @@ export default function SearchResultsTabs({ query, initialWebResults }: { query:
     </Tabs>
   )
 }
+
+    
