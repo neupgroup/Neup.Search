@@ -8,16 +8,11 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, PlusCircle, Search } from "lucide-react"
+import { getSites, type Site } from "./actions"
 
-const crawledSites = [
-    { url: "nextjs.org", status: "Active", lastCrawled: "2024-07-28" },
-    { url: "vercel.com", status: "Active", lastCrawled: "2024-07-28" },
-    { url: "firebase.google.com", status: "Paused", lastCrawled: "2024-07-25" },
-    { url: "tailwindcss.com", status: "Active", lastCrawled: "2024-07-28" },
-    { url: "ui.shadcn.com", status: "Error", lastCrawled: "2024-07-27" },
-]
+export default async function ManageSitesPage() {
+  const crawledSites: Site[] = await getSites();
 
-export default function ManageSitesPage() {
   return (
     <Card>
       <CardHeader>
@@ -56,11 +51,12 @@ export default function ManageSitesPage() {
           </TableHeader>
           <TableBody>
             {crawledSites.map((site) => (
-              <TableRow key={site.url}>
+              <TableRow key={site.id}>
                 <TableCell className="font-medium">{site.url}</TableCell>
                 <TableCell>
                   <Badge variant={
                       site.status === 'Active' ? 'default' 
+                      : site.status === 'Pending' ? 'outline'
                       : site.status === 'Paused' ? 'secondary' 
                       : 'destructive'
                   }>
