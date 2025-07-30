@@ -66,15 +66,17 @@ export async function addSite(prevState: any, formData: FormData) {
 export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
     try {
         const sitesCollection = collection(db, "sites");
-        let queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
+        let queryConstraints: any[] = [limit(20)];
 
         if (search) {
              queryConstraints = [
                 orderBy("url"),
-                startAt(search),
-                endAt(search + '\uf8ff'),
+                where('url', '>=', search),
+                where('url', '<=', search + '\uf8ff'),
                 limit(20)
             ];
+        } else {
+            queryConstraints.unshift(orderBy("createdAt", "desc"));
         }
 
         if (startAfterDocId && !search) {

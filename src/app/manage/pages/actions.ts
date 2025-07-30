@@ -22,15 +22,17 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
     try {
         const pagesCollection = collection(db, "pages");
         
-        let queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
+        let queryConstraints: any[] = [limit(20)];
 
         if (search) {
              queryConstraints = [
                 orderBy("url"),
-                startAt(search),
-                endAt(search + '\uf8ff'),
+                where('url', '>=', search),
+                where('url', '<=', search + '\uf8ff'),
                 limit(20)
             ];
+        } else {
+            queryConstraints.unshift(orderBy("createdAt", "desc"));
         }
 
         if (startAfterDocId && !search) {
