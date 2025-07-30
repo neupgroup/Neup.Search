@@ -43,21 +43,17 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const currentPage = Number(searchParams.get('page')) || 1;
-
+  const startAfter = searchParams.get('startAfter');
+  
   const handleNextPage = () => {
     if (lastVisibleId) {
-      const params = new URLSearchParams(searchParams);
-      params.set('page', String(currentPage + 1));
-      params.set('startAfter', lastVisibleId);
-      router.push(`${pathname}?${params.toString()}`);
+      router.push(`${pathname}?startAfter=${lastVisibleId}`);
     }
   };
 
   const handlePreviousPage = () => {
-    // This simple implementation goes back to the base URL,
-    // effectively going to page 1. A more complex implementation
-    // would be needed to track previous page cursors.
+    // A full robust pagination would require storing previous cursors.
+    // For this implementation, we will just go back to the first page.
     router.push(pathname);
   };
 
@@ -109,7 +105,12 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
               <TableRow key={site.id}>
                 <TableCell className="font-medium">
                   <div>{site.url}</div>
-                  {(site.status === 'Active' || site.status === 'Crawling') && site.lastCrawled !== 'Never' && (
+                  {(site.status === 'Crawling') && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
+                    </div>
+                  )}
+                  {(site.status === 'Active' && site.lastCrawled !== 'Never') && (
                     <div className="text-xs text-muted-foreground mt-1">
                       [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
                     </div>
@@ -155,7 +156,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
       </CardContent>
       <CardFooter>
         <div className="flex justify-end gap-2 w-full">
-            <Button onClick={handlePreviousPage} disabled={currentPage <= 1}>Previous</Button>
+            <Button onClick={handlePreviousPage} disabled={!startAfter}>Previous</Button>
             <Button onClick={handleNextPage} disabled={!lastVisibleId || sites.length < 20}>Next</Button>
         </div>
       </CardFooter>
