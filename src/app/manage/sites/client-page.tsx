@@ -2,7 +2,7 @@
 "use client"
 
 import Link from "next/link"
-import { useTransition } from "react"
+import { useTransition, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -44,6 +44,16 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const startAfter = searchParams.get('startAfter');
+
+  useEffect(() => {
+    const isCrawling = sites.some(site => site.status === 'Crawling');
+    if (isCrawling) {
+      const interval = setInterval(() => {
+        router.refresh();
+      }, 2000); // Refresh every 2 seconds
+      return () => clearInterval(interval);
+    }
+  }, [sites, router]);
   
   const handleNextPage = () => {
     if (lastVisibleId) {
@@ -105,12 +115,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
               <TableRow key={site.id}>
                 <TableCell className="font-medium">
                   <div>{site.url}</div>
-                  {(site.status === 'Crawling') && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
-                    </div>
-                  )}
-                  {(site.status === 'Active' && site.lastCrawled !== 'Never') && (
+                  {(site.status === 'Crawling' || (site.status === 'Active' && site.lastCrawled !== 'Never')) && (
                     <div className="text-xs text-muted-foreground mt-1">
                       [pages crawled: {site.pagesCrawled ?? 0} | currently crawling: {site.currentlyCrawling ?? 'N/A'}]
                     </div>
