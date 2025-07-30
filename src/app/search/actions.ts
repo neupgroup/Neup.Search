@@ -51,7 +51,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
     const q = query(pagesCollection, limit(1000)); 
     const querySnapshot = await getDocs(q);
 
-    const results: SearchResult[] = [];
+    const results: { score: number, result: SearchResult }[] = [];
     const lowercasedQuery = searchQuery.toLowerCase();
 
     querySnapshot.forEach((doc) => {
@@ -60,16 +60,43 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
       const url = data.url || "";
       const title = data.title || url;
 
-      if (content.toLowerCase().includes(lowercasedQuery) || url.toLowerCase().includes(lowercasedQuery)) {
+      const lowerContent = content.toLowerCase();
+      const lowerUrl = url.toLowerCase();
+      const lowerTitle = title.toLowerCase();
+
+      let score = 0;
+      let matchFound = false;
+
+      if (lowerTitle.includes(lowercasedQuery)) {
+        score += 5; // Higher score for title match
+        matchFound = true;
+      }
+      if (lowerContent.includes(lowercasedQuery)) {
+        score += 1;
+        matchFound = true;
+      }
+       if (lowerUrl.includes(lowercasedQuery)) {
+        score += 2; // Score for URL match
+        matchFound = true;
+      }
+
+
+      if (matchFound) {
         results.push({
-          title: title,
-          url: url,
-          snippet: getSnippet(content, searchQuery),
+          score,
+          result: {
+            title: title,
+            url: url,
+            snippet: getSnippet(content, searchQuery),
+          }
         });
       }
     });
 
-    return results.slice(0, 20); // Return top 20 results
+    // Sort by score descending
+    results.sort((a, b) => b.score - a.score);
+
+    return results.map(item => item.result).slice(0, 20); // Return top 20 results
   } catch (error) {
     console.error("Error fetching search results:", error);
     return [];
@@ -102,5 +129,4 @@ export async function generateAnswer(query: string) {
     return { answer: null, error: "Sorry, I couldn't generate an answer at this time. The AI may be offline. Please try again later." }
   }
 }
-
     
