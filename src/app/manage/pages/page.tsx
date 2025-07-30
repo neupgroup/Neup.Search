@@ -3,7 +3,6 @@ import { Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, Search } from "lucide-react"
@@ -21,6 +20,12 @@ function PageContent({search, startAfter}: {search?: string, startAfter?: string
 
 async function PagesList({search, startAfter}: {search?:string, startAfter?: string}) {
     const { pages, lastVisibleId } = await getPages(search, startAfter);
+
+    const prevLink = `/manage/pages${search ? `?q=${search}` : ''}`;
+    let nextLink = `/manage/pages?startAfter=${lastVisibleId}`;
+    if (search) {
+        nextLink += `&q=${search}`;
+    }
 
     return (
         <Card>
@@ -95,10 +100,10 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
             </CardContent>
             <CardFooter>
                  <div className="flex justify-end gap-2 w-full">
-                    <Link href={`/manage/pages`}>
+                    <Link href={prevLink}>
                         <Button variant="outline" disabled={!startAfter}>Previous</Button>
                     </Link>
-                     <Link href={`/manage/pages?startAfter=${lastVisibleId}`}>
+                     <Link href={nextLink}>
                         <Button variant="outline" disabled={!lastVisibleId || pages.length < 20}>Next</Button>
                     </Link>
                 </div>

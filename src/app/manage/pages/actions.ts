@@ -1,7 +1,7 @@
 
 "use server"
 
-import { collection, getDocs, Timestamp, query, orderBy, getDoc, doc, limit, startAfter, where, startAt, endAt } from "firebase/firestore"
+import { collection, getDocs, Timestamp, query, orderBy, getDoc, doc, limit, startAfter, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 
 export type Page = {
@@ -22,25 +22,32 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
     try {
         const pagesCollection = collection(db, "pages");
         
-        let queryConstraints: any[] = [limit(20)];
+        let q: any;
 
         if (search) {
-             queryConstraints = [
+            const queryConstraints = [
                 orderBy("url"),
                 where('url', '>=', search),
                 where('url', '<=', search + '\uf8ff'),
                 limit(20)
             ];
+             if (startAfterDocId) {
+                const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
+                queryConstraints.push(startAfter(lastVisibleDoc));
+            }
+            q = query(pagesCollection, ...queryConstraints);
         } else {
-            queryConstraints.unshift(orderBy("createdAt", "desc"));
+             const queryConstraints = [
+                orderBy("createdAt", "desc"),
+                limit(20)
+            ];
+            if (startAfterDocId) {
+                const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
+                queryConstraints.push(startAfter(lastVisibleDoc));
+            }
+            q = query(pagesCollection, ...queryConstraints);
         }
 
-        if (startAfterDocId && !search) {
-            const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
-            queryConstraints.push(startAfter(lastVisibleDoc));
-        }
-
-        const q = query(pagesCollection, ...queryConstraints);
         const pageSnapshot = await getDocs(q);
 
         const pagesList = pageSnapshot.docs.map(doc => {
