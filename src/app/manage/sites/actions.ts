@@ -8,7 +8,7 @@ import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy,
 import { z } from "zod"
 import * as cheerio from "cheerio"
 import { db } from "@/lib/firebase"
-import type { Page } from "../pages/actions"
+import type { Page, PaginatedPages } from "../pages/actions"
 
 const SiteSchema = z.object({
   url: z.string().url({ message: "Please enter a valid URL." }),
@@ -29,6 +29,12 @@ export type Site = {
 export type PaginatedSites = {
     sites: Site[];
     lastVisibleId: string | null;
+}
+
+export type PaginatedSitePages = {
+    pages: Page[];
+    lastVisibleId: string | null;
+    firstVisibleId: string | null;
 }
 
 export async function addSite(prevState: any, formData: FormData) {
@@ -220,6 +226,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
         console.error("Error crawling site: ", error);
         await updateDoc(siteRef, { status: "Error", currentlyCrawling: `Crawl failed: ${error.message}` });
     } finally {
+        revalidatePath(`/manage/sites/${siteId}`);
         revalidatePath("/manage/sites");
         revalidatePath("/manage/pages");
     }
@@ -249,13 +256,24 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
     }
 }
 
-export async function getPagesForSite(siteId: string): Promise<Page[]> {
+export async function getPagesForSite(siteId: string, startAfterDocId?: string): Promise<PaginatedSitePages> {
     try {
         const pagesCollection = collection(db, "pages");
-        const q = query(pagesCollection, where("siteId", "==", siteId), orderBy("createdAt", "desc"));
+         const queryConstraints: any[] = [
+            where("siteId", "==", siteId),
+            orderBy("url"),
+            limit(20)
+        ];
+
+        if (startAfterDocId) {
+            const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
+            queryConstraints.push(startAfter(lastVisibleDoc));
+        }
+
+        const q = query(pagesCollection, ...queryConstraints);
         const pageSnapshot = await getDocs(q);
 
-        return pageSnapshot.docs.map(doc => {
+        const pagesList = pageSnapshot.docs.map(doc => {
             const data = doc.data();
             return {
                 id: doc.id,
@@ -266,8 +284,18 @@ export async function getPagesForSite(siteId: string): Promise<Page[]> {
                 createdAt: (data.createdAt as Timestamp).toDate(),
             };
         });
+        
+        const firstVisible = pageSnapshot.docs[0];
+        const lastVisible = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+
+        return {
+            pages: pagesList,
+            lastVisibleId: lastVisible ? lastVisible.id : null,
+            firstVisibleId: firstVisible ? firstVisible.id : null,
+        }
+
     } catch (error) {
         console.error("Error fetching pages for site: ", error);
-        return [];
+        return { pages: [], lastVisibleId: null, firstVisibleId: null };
     }
 }

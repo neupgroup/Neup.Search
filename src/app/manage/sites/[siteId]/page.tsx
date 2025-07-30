@@ -1,18 +1,22 @@
 
-import { getSiteById, getPagesForSite, crawlSite } from "@/app/manage/sites/actions"
+import Link from "next/link"
+import { getSiteById, getPagesForSite } from "@/app/manage/sites/actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { notFound } from "next/navigation"
 
-export default async function SiteDetailPage({ params }: { params: { siteId: string } }) {
+export default async function SiteDetailPage({ params, searchParams }: { params: { siteId: string }, searchParams: { [key: string]: string | string[] | undefined } }) {
+  const startAfter = searchParams.startAfter as string | undefined;
   const site = await getSiteById(params.siteId)
-  const pages = await getPagesForSite(params.siteId)
-
+  
   if (!site) {
     notFound()
   }
+  
+  const { pages, lastVisibleId, firstVisibleId } = await getPagesForSite(params.siteId, startAfter)
+
 
   return (
     <div className="grid gap-6">
@@ -109,6 +113,16 @@ export default async function SiteDetailPage({ params }: { params: { siteId: str
             </TableBody>
           </Table>
         </CardContent>
+         <CardFooter>
+            <div className="flex justify-end gap-2 w-full">
+                <Link href={`/manage/sites/${params.siteId}`}>
+                    <Button variant="outline" disabled={!startAfter}>Previous</Button>
+                </Link>
+                <Link href={`/manage/sites/${params.siteId}?startAfter=${lastVisibleId}`}>
+                    <Button variant="outline" disabled={!lastVisibleId || pages.length < 20}>Next</Button>
+                </Link>
+            </div>
+        </CardFooter>
       </Card>
     </div>
   )
