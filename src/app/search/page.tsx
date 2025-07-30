@@ -1,15 +1,23 @@
+
 import { Suspense } from 'react'
 import Header from '@/components/header'
 import AIQA from '@/components/ai-qa'
 import SearchResultsTabs from '@/components/search-results-tabs'
 import { Skeleton } from '@/components/ui/skeleton'
+import { performSearch } from './actions'
 
 export const dynamic = 'force-dynamic'
+
+async function SearchResults({ query }: { query: string }) {
+  const results = await performSearch(query)
+  return <SearchResultsTabs query={query} initialWebResults={results} />
+}
+
 
 export default function SearchPage({
   searchParams,
 }: {
-  searchParams?: { [key: string]: string | string[] | undefined }
+  searchParams?: { [key:string]: string | string[] | undefined }
 }) {
   const query = (searchParams?.q as string) || ''
 
@@ -22,7 +30,7 @@ export default function SearchPage({
             <AIQA query={query} />
           </Suspense>
           <Suspense fallback={<SearchResultsSkeleton />}>
-            <SearchResultsTabs />
+            <SearchResults query={query} />
           </Suspense>
         </div>
       </main>
@@ -46,3 +54,4 @@ function AIQASkeleton() {
 function SearchResultsSkeleton() {
   return <Skeleton className="h-96 w-full rounded-xl" />
 }
+

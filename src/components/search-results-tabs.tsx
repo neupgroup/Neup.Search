@@ -1,3 +1,4 @@
+
 "use client"
 
 import Image from "next/image"
@@ -18,14 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-
-const webResults = [
-  { title: "Official Next.js Documentation", url: "nextjs.org", snippet: "The official documentation for Next.js, featuring tutorials, API references, and guides to help you build fast, modern web applications." },
-  { title: "Vercel: Develop. Preview. Ship.", url: "vercel.com", snippet: "Vercel is the platform for frontend developers, providing the speed and reliability innovators need to create at the moment of inspiration." },
-  { title: "Genkit AI Framework | Google for Developers", url: "firebase.google.com", snippet: "Genkit is an open source framework from Google that helps you build, deploy, and monitor production-ready AI-powered apps using flows." },
-  { title: "Tailwind CSS - Rapidly build modern websites", url: "tailwindcss.com", snippet: "A utility-first CSS framework packed with classes that can be composed to build any design, directly in your markup." },
-  { title: "Shadcn/UI - Beautifully designed components", url: "ui.shadcn.com", snippet: "Beautifully designed components that you can copy and paste into your apps. Accessible. Customizable. Open Source." },
-]
+import { type SearchResult } from "@/app/search/actions"
 
 const imageResults = Array(12).fill(0).map((_, i) => ({
   id: i,
@@ -33,7 +27,7 @@ const imageResults = Array(12).fill(0).map((_, i) => ({
   hint: i % 3 === 0 ? 'nature landscape' : (i % 3 === 1 ? 'city architecture' : 'abstract art')
 }))
 
-export default function SearchResultsTabs() {
+export default function SearchResultsTabs({ query, initialWebResults }: { query: string, initialWebResults: SearchResult[] }) {
   return (
     <Tabs defaultValue="web" className="w-full">
       <div className="flex flex-wrap items-center gap-2 md:gap-4 mb-6">
@@ -75,9 +69,15 @@ export default function SearchResultsTabs() {
       </div>
 
       <TabsContent value="web" className="space-y-6">
-        {webResults.map((result, index) => (
+        {initialWebResults.length === 0 && (
+            <div className="text-center text-muted-foreground">
+                <p>No web results found for "{query}".</p>
+                <p>Try crawling some sites first.</p>
+            </div>
+        )}
+        {initialWebResults.map((result, index) => (
           <div key={index}>
-            <a href={`https://${result.url}`} target="_blank" rel="noopener noreferrer" className="group">
+            <a href={result.url} target="_blank" rel="noopener noreferrer" className="group">
               <p className="text-sm text-muted-foreground">{result.url}</p>
               <h3 className="text-lg font-headline text-primary group-hover:underline">{result.title}</h3>
               <p className="text-sm mt-1 text-foreground/80">{result.snippet}</p>
@@ -87,19 +87,9 @@ export default function SearchResultsTabs() {
       </TabsContent>
 
       <TabsContent value="images">
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {imageResults.map((img) => (
-            <Card key={img.id} className="overflow-hidden group border-0 shadow-md">
-              <Image
-                src={img.src}
-                alt={`Search result image ${img.id + 1}`}
-                width={400}
-                height={300}
-                data-ai-hint={img.hint}
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-              />
-            </Card>
-          ))}
+        <div className="flex flex-col items-center justify-center h-full border-2 border-dashed rounded-lg bg-muted/50 py-12">
+            <h3 className="font-headline text-lg font-semibold">Coming Soon</h3>
+            <p className="text-muted-foreground text-sm">Image search is not yet available.</p>
         </div>
       </TabsContent>
 

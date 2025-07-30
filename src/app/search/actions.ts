@@ -1,21 +1,51 @@
+
 "use server"
 
 import { answerQuestion } from "@/ai/flows/answer-question"
+import { collection, query, where, limit, getDocs } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 
-// This is a mock function to simulate fetching search results.
-// In a real application, you would use a search API like Google Search or Bing Search.
-async function getSearchResults(query: string): Promise<string[]> {
-  console.log(`Simulating search for: ${query}`)
-  // Mock results that are relevant to a potential query.
-  // The content is crafted to help the LLM generate a useful answer.
-  return [
-    `Next.js by Vercel is a popular open-source React framework for building server-rendered and statically generated web applications. Key features include file-system based routing, automatic code splitting, and server-side rendering (SSR), which improves performance and SEO. Source: nextjs.org`,
-    `To get started with Next.js, developers can use 'create-next-app', a command-line tool that sets up a new project with a default template and all necessary configurations, enabling a quick start to development. Source: vercel.com/docs`,
-    `Genkit is a powerful, open-source framework from Google designed to streamline the development of AI-powered applications. It provides tools to define and orchestrate 'flows', which are sequences of steps that can call AI models, process data, and integrate with external services. Source: firebase.google.com/docs/genkit`,
-    `A core concept in Genkit is the 'flow,' which allows developers to chain together calls to different AI models, data sources, and tools. This modular approach makes it easier to build, test, and maintain complex AI logic in production environments. Source: genkit.dev`,
-    `Tailwind CSS is a utility-first CSS framework for rapidly building custom user interfaces. Instead of writing custom CSS, developers use pre-defined utility classes directly in their HTML, which can significantly speed up the styling process. Source: tailwindcss.com`,
-  ]
+export type SearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+};
+
+async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
+  if (!searchQuery) {
+    return [];
+  }
+  try {
+    const pagesCollection = collection(db, "pages");
+    const q = query(
+      pagesCollection,
+      where('url', '>=', searchQuery),
+      where('url', '<=', searchQuery + '\uf8ff'),
+      limit(10)
+    );
+
+    const querySnapshot = await getDocs(q);
+    const results: SearchResult[] = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      results.push({
+        // For now, we'll use the URL as the title and a placeholder snippet
+        title: data.url,
+        url: data.url,
+        snippet: `Content from ${data.url} would be displayed here.`,
+      });
+    });
+    return results;
+  } catch (error) {
+    console.error("Error fetching search results:", error);
+    return [];
+  }
 }
+
+export async function performSearch(query: string): Promise<SearchResult[]> {
+  return await getSearchResults(query);
+}
+
 
 export async function generateAnswer(query: string) {
   if (!query) {
@@ -24,9 +54,10 @@ export async function generateAnswer(query: string) {
 
   try {
     const searchResults = await getSearchResults(query)
+    const searchResultUrls = searchResults.map(r => `${r.title} (${r.url}): ${r.snippet}`);
     const { answer } = await answerQuestion({
       question: query,
-      searchResults,
+      searchResults: searchResultUrls,
     })
     return { answer, error: null }
   } catch (e: any) {
@@ -34,3 +65,4 @@ export async function generateAnswer(query: string) {
     return { answer: null, error: "Sorry, I couldn't generate an answer at this time. The AI may be offline. Please try again later." }
   }
 }
+
