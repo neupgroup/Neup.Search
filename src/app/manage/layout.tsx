@@ -7,7 +7,7 @@ import {
   Home,
   Package,
   Package2,
-  ShoppingCart,
+  FileText,
   Users,
   LineChart,
   Globe,
@@ -35,6 +35,7 @@ export default function ManageLayout({
   const navLinks = [
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/sites", label: "Crawled Sites", icon: Globe, badge: 5 },
+    { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
     { href: "#", label: "Indexing", icon: Package },
     { href: "#", label: "Users", icon: Users },
     { href: "#", label: "Analytics", icon: LineChart },
