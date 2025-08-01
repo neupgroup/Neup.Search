@@ -86,7 +86,6 @@ export async function summarizeSiteAction(siteId: string, siteUrl: string) {
     const siteRef = doc(db, "sites", siteId);
     try {
         await updateDoc(siteRef, { currentlyCrawling: "Summarizing site..." });
-        revalidatePath(`/manage/sites/${siteId}`);
 
         const summaryData = await summarizeSite({ url: siteUrl });
         
@@ -251,7 +250,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
     
     try {
         await updateDoc(siteRef, { status: "Crawling", currentlyCrawling: "Fetching robots.txt..." });
-        revalidatePath(`/manage/sites/${siteId}`);
 
         const robotsTxt = await getRobotsTxt(siteUrl);
         const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] };
@@ -261,7 +259,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
         // Prioritize sitemap URLs
         if (sitemaps.length > 0) {
             await updateDoc(siteRef, { currentlyCrawling: `Found ${sitemaps.length} sitemaps. Parsing...` });
-            revalidatePath(`/manage/sites/${siteId}`);
             for (const sitemapUrl of sitemaps) {
                 const sitemapUrls = await getSitemapUrls(sitemapUrl);
                 urlQueue.push(...sitemapUrls);
@@ -272,7 +269,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             const sitemapUrls = await getSitemapUrls(defaultSitemapUrl);
             if(sitemapUrls.length > 0) {
                  await updateDoc(siteRef, { currentlyCrawling: `Found default sitemap.xml. Parsing...` });
-                 revalidatePath(`/manage/sites/${siteId}`);
                  urlQueue.push(...sitemapUrls);
             }
         }
@@ -304,7 +300,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 currentlyCrawling: `Crawling ${currentUrl}`,
                 pagesCrawled: pagesProcessed,
             });
-            revalidatePath(`/manage/sites/${siteId}`);
             
             try {
                 const response = await fetch(currentUrl, { headers: { 'User-Agent': userAgent } });
