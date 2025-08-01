@@ -601,6 +601,29 @@ export async function deleteLinksForPage(pageUrl: string) {
     }
 }
 
+export async function crawlAllSites() {
+    try {
+        const sitesCollection = collection(db, "sites");
+        const q = query(sitesCollection, orderBy("createdAt", "desc"));
+        const sitesSnapshot = await getDocs(q);
+        
+        const sitesToCrawl = sitesSnapshot.docs.map(doc => ({
+            id: doc.id,
+            url: doc.data().url
+        }));
+
+        for (const site of sitesToCrawl) {
+            // No need to await here, let them run. 
+            // The UI will update automatically for each site as it starts/finishes.
+            crawlSite(site.id, site.url);
+        }
+
+    } catch (error) {
+        await logError(error, "crawlAllSites");
+    } finally {
+        revalidatePath("/manage/sites");
+    }
+}
     
 
     

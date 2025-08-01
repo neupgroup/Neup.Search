@@ -11,8 +11,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { MoreHorizontal, PlusCircle, Search } from "lucide-react"
-import { crawlSite, type Site } from "./actions"
+import { MoreHorizontal, PlusCircle, Search, Loader2, Play } from "lucide-react"
+import { crawlSite, type Site, crawlAllSites } from "./actions"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { useDebouncedCallback } from "use-debounce"
 
@@ -40,6 +40,27 @@ function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl:
         {isCrawling || isPending ? 'Crawling...' : 'Recrawl'}
     </DropdownMenuItem>
   )
+}
+
+function CrawlAllButton() {
+    const [isPending, startTransition] = useTransition();
+
+    const handleCrawlAll = () => {
+        startTransition(async () => {
+            await crawlAllSites();
+        });
+    }
+
+    return (
+         <Button onClick={handleCrawlAll} disabled={isPending}>
+            {isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+                <Play className="mr-2 h-4 w-4" />
+            )}
+            {isPending ? "Starting Crawlers..." : "Crawl All Sites"}
+        </Button>
+    )
 }
 
 export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites: Site[], lastVisibleId: string | null }) {
@@ -92,7 +113,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
         <CardDescription>
           Manage the list of websites to be crawled and indexed.
         </CardDescription>
-        <div className="flex items-center justify-between pt-4">
+        <div className="flex items-center justify-between pt-4 gap-2">
             <div className="relative flex-1 md:grow-0">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -103,12 +124,15 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
                     defaultValue={searchParams.get('q') || ''}
                 />
             </div>
-            <Link href="/manage/sites/new">
-                <Button>
-                    <PlusCircle className="h-4 w-4 mr-2" />
-                    Add New Site
-                </Button>
-            </Link>
+            <div className="flex gap-2">
+                <CrawlAllButton />
+                <Link href="/manage/sites/new">
+                    <Button>
+                        <PlusCircle className="h-4 w-4 mr-2" />
+                        Add New Site
+                    </Button>
+                </Link>
+            </div>
         </div>
       </CardHeader>
       <CardContent>
