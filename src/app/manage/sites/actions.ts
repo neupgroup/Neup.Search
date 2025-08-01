@@ -232,6 +232,14 @@ async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
         return [];
     }
 }
+
+async function siteExists(url: string): Promise<boolean> {
+    const sitesCollection = collection(db, "sites");
+    const q = query(sitesCollection, where("url", "==", url), limit(1));
+    const snapshot = await getDocs(q);
+    return !snapshot.empty;
+}
+
 // --- End of Robots.txt and Sitemap Parsing ---
 
 
@@ -370,6 +378,20 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                                 const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname;
                                 if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
                                     urlQueue.push(absoluteUrl);
+                                }
+                            } else {
+                                // If external link, check if it's a new site and add it.
+                                const externalSiteUrl = new URL(absoluteUrl).origin;
+                                if (!(await siteExists(externalSiteUrl))) {
+                                     await addDoc(collection(db, "sites"), {
+                                        url: externalSiteUrl,
+                                        description: `Discovered from ${currentUrl}`,
+                                        status: "Pending",
+                                        createdAt: Timestamp.now(),
+                                        lastCrawled: null,
+                                        pagesCrawled: 0,
+                                    });
+                                    revalidatePath("/manage/sites");
                                 }
                             }
                         } catch (e) {
@@ -569,3 +591,5 @@ export async function deleteLinksForPage(pageUrl: string) {
         await logError(error, `deleteLinksForPage`);
     }
 }
+
+    
