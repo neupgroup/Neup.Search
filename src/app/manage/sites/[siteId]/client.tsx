@@ -29,7 +29,10 @@ function SubmitButton({ children, variant = "default", ...props }: { children: R
 
 export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, siteUrl: string, status: string }) {
     return (
-        <form action={async () => await crawlSite(siteId, siteUrl)}>
+        <form action={async () => {
+            "use server"
+            await crawlSite(siteId, siteUrl)
+        }}>
             <SubmitButton disabled={status === "Crawling"}>
                 {status === "Crawling" ? "Crawling..." : "Recrawl Site"}
             </SubmitButton>
@@ -39,7 +42,10 @@ export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, sit
 
 export function CancelCrawlButton({ siteId }: { siteId: string }) {
     return (
-        <form action={async () => await cancelCrawl(siteId)}>
+        <form action={async () => {
+            "use server"
+            await cancelCrawl(siteId)
+        }}>
             <SubmitButton variant="destructive">
                 Cancel Crawl
             </SubmitButton>
@@ -49,10 +55,13 @@ export function CancelCrawlButton({ siteId }: { siteId: string }) {
 
 export function UpdateSummaryButton({ siteId, siteUrl }: { siteId: string, siteUrl: string }) {
     return (
-        <form action={async () => await summarizeSiteAction(siteId, siteUrl)}>
+        <form action={async () => {
+            "use server"
+            await summarizeSiteAction(siteId, siteUrl)
+        }}>
             <SubmitButton variant="outline">
                 Update Summary
-            </Button>
+            </SubmitButton>
         </form>
     )
 }
@@ -72,11 +81,14 @@ export function DeletePagesButton({ siteId, siteName }: { siteId: string, siteNa
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <form action={async () => await deletePagesForSite(siteId)}>
+                    <form action={async () => {
+                        "use server"
+                        await deletePagesForSite(siteId)
+                    }}>
                         <AlertDialogAction asChild>
                             <SubmitButton variant="destructive">
                                 Continue
-                            </SubmitButton>
+                            </Button>
                         </AlertDialogAction>
                     </form>
                 </AlertDialogFooter>
