@@ -1,4 +1,5 @@
 
+
 import { notFound } from "next/navigation"
 import { getPageById, getBacklinks, summarizePageAction } from "../actions"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,8 +35,8 @@ export default async function PageDetailPage({ params }: { params: { pageId: str
                     await summarizePageAction(page.id, page.content)
                 }
             }}>
-                <Button type="submit" variant="outline" disabled={!page.content}>
-                    {page.summary ? "Update Summary" : "Generate Summary"}
+                <Button type="submit" variant="outline" disabled={!page.content || !!page.summary}>
+                    {page.summary ? "Summary Generated" : "Generate Summary"}
                 </Button>
             </form>
           </div>

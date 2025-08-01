@@ -30,7 +30,7 @@ function SubmitButton({ children, variant = "default", ...props }: { children: R
 export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, siteUrl: string, status: string }) {
     return (
         <form action={async () => await crawlSite(siteId, siteUrl)}>
-            <SubmitButton>
+            <SubmitButton disabled={status === "Crawling"}>
                 {status === "Crawling" ? "Crawling..." : "Recrawl Site"}
             </SubmitButton>
         </form>
@@ -52,7 +52,7 @@ export function UpdateSummaryButton({ siteId, siteUrl }: { siteId: string, siteU
         <form action={async () => await summarizeSiteAction(siteId, siteUrl)}>
             <SubmitButton variant="outline">
                 Update Summary
-            </SubmitButton>
+            </Button>
         </form>
     )
 }

@@ -120,7 +120,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
               {pages.map((page) => (
                 <TableRow key={page.id}>
                   <TableCell className="font-medium break-all">
-                    <div className="font-bold">{page.title}</div>
+                     <Link href={`/manage/pages/${page.id}`} className="font-bold hover:underline">{page.title}</Link>
                     <div className="text-xs text-muted-foreground">{page.url}</div>
                   </TableCell>
                   <TableCell>
