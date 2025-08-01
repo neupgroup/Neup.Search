@@ -24,7 +24,10 @@ function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl:
       return;
     }
     startTransition(async () => {
-      await crawlSite(siteId, siteUrl)
+      const formData = new FormData();
+      formData.append('siteId', siteId);
+      formData.append('siteUrl', siteUrl);
+      await crawlSite(formData)
     });
   };
   

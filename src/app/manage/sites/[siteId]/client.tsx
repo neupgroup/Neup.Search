@@ -28,9 +28,10 @@ function SubmitButton({ children, variant = "default", ...props }: { children: R
 }
 
 export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, siteUrl: string, status: string }) {
-    const crawlSiteWithParams = crawlSite.bind(null, siteId, siteUrl)
     return (
-        <form action={crawlSiteWithParams}>
+        <form action={crawlSite}>
+            <input type="hidden" name="siteId" value={siteId} />
+            <input type="hidden" name="siteUrl" value={siteUrl} />
             <SubmitButton disabled={status === "Crawling"}>
                 {status === "Crawling" ? "Crawling..." : "Force Scrape"}
             </SubmitButton>
@@ -39,9 +40,9 @@ export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, sit
 }
 
 export function CancelCrawlButton({ siteId }: { siteId: string }) {
-    const cancelCrawlWithId = cancelCrawl.bind(null, siteId)
     return (
-        <form action={cancelCrawlWithId}>
+        <form action={cancelCrawl}>
+            <input type="hidden" name="siteId" value={siteId} />
             <SubmitButton variant="destructive">
                 Cancel Crawl
             </SubmitButton>
@@ -50,9 +51,10 @@ export function CancelCrawlButton({ siteId }: { siteId: string }) {
 }
 
 export function UpdateSummaryButton({ siteId, siteUrl }: { siteId: string, siteUrl: string }) {
-    const summarizeSiteActionWithParams = summarizeSiteAction.bind(null, siteId, siteUrl)
     return (
-        <form action={summarizeSiteActionWithParams}>
+        <form action={summarizeSiteAction}>
+            <input type="hidden" name="siteId" value={siteId} />
+            <input type="hidden" name="siteUrl" value={siteUrl} />
             <SubmitButton variant="outline">
                 Update Summary
             </SubmitButton>
@@ -61,29 +63,29 @@ export function UpdateSummaryButton({ siteId, siteUrl }: { siteId: string, siteU
 }
 
 export function DeletePagesButton({ siteId, siteName }: { siteId: string, siteName: string }) {
-    const deletePagesForSiteWithId = deletePagesForSite.bind(null, siteId)
     return (
          <AlertDialog>
             <AlertDialogTrigger asChild>
                 <Button variant="destructive" className="bg-red-700 hover:bg-red-800">Delete All Pages</Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
-                <AlertDialogHeader>
-                <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                <AlertDialogDescription>
-                    This action cannot be undone. This will permanently delete all indexed pages for <strong>{siteName}</strong> from your database.
-                </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                    <form action={deletePagesForSiteWithId}>
+                <form action={deletePagesForSite}>
+                    <input type="hidden" name="siteId" value={siteId} />
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This action cannot be undone. This will permanently delete all indexed pages for <strong>{siteName}</strong> from your database.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction asChild>
                             <SubmitButton variant="destructive">
                                 Continue
                             </SubmitButton>
                         </AlertDialogAction>
-                    </form>
-                </AlertDialogFooter>
+                    </AlertDialogFooter>
+                </form>
             </AlertDialogContent>
         </AlertDialog>
     )

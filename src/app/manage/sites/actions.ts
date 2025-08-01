@@ -54,20 +54,23 @@ export async function addSite(prevState: any, formData: FormData) {
     }
   }
 
-  let siteId: string;
-  const siteUrl = validatedFields.data.url;
+  const siteData = {
+      siteId: '',
+      siteUrl: validatedFields.data.url,
+      description: validatedFields.data.description,
+  }
 
   try {
     const docRef = await addDoc(collection(db, "sites"), {
-      url: siteUrl,
-      description: validatedFields.data.description,
+      url: siteData.siteUrl,
+      description: siteData.description,
       status: "Pending",
       createdAt: Timestamp.now(),
       lastCrawled: null,
       pagesCrawled: 0,
       currentlyCrawling: "Summarizing site...",
     });
-    siteId = docRef.id;
+    siteData.siteId = docRef.id;
   } catch (error) {
     await logError(error, "addSite");
     return {
@@ -76,13 +79,23 @@ export async function addSite(prevState: any, formData: FormData) {
   }
   
   // Trigger summarization asynchronously (don't block the redirect)
-  summarizeSiteAction(siteId, siteUrl).catch((e) => logError(e, "summarizeSiteAction_async"));
+  const formDataForSummary = new FormData()
+  formDataForSummary.append('siteId', siteData.siteId)
+  formDataForSummary.append('siteUrl', siteData.siteUrl)
+  summarizeSiteAction(formDataForSummary).catch((e) => logError(e, "summarizeSiteAction_async"));
 
   revalidatePath("/manage/sites")
   redirect("/manage/sites")
 }
 
-export async function summarizeSiteAction(siteId: string, siteUrl: string) {
+export async function summarizeSiteAction(formData: FormData) {
+    const siteId = formData.get("siteId") as string;
+    const siteUrl = formData.get("siteUrl") as string;
+
+    if (!siteId || !siteUrl) {
+        throw new Error("siteId and siteUrl are required.");
+    }
+
     const siteRef = doc(db, "sites", siteId);
     try {
         await updateDoc(siteRef, { currentlyCrawling: "Summarizing site..." });
@@ -242,7 +255,14 @@ async function siteExists(url: string): Promise<boolean> {
 // --- End of Robots.txt and Sitemap Parsing ---
 
 
-export async function crawlSite(siteId: string, siteUrl: string) {
+export async function crawlSite(formData: FormData) {
+    const siteId = formData.get("siteId") as string;
+    const siteUrl = formData.get("siteUrl") as string;
+
+    if (!siteId || !siteUrl) {
+        throw new Error("siteId and siteUrl are required.");
+    }
+    
     const siteRef = doc(db, "sites", siteId);
     let crawledUrls = new Set<string>();
     const domain = new URL(siteUrl).hostname;
@@ -395,7 +415,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                                         lastCrawled: null,
                                         pagesCrawled: 0,
                                     });
-                                    revalidatePath("/manage/sites");
                                 }
                             }
                         } catch (e) {
@@ -537,7 +556,11 @@ export async function getDashboardStats() {
 }
 
 
-export async function cancelCrawl(siteId: string) {
+export async function cancelCrawl(formData: FormData) {
+    const siteId = formData.get("siteId") as string;
+    if (!siteId) {
+        throw new Error("siteId is required.");
+    }
     try {
         const siteRef = doc(db, "sites", siteId);
         await updateDoc(siteRef, { status: "Active", currentlyCrawling: "Crawl cancelled by user." });
@@ -548,7 +571,11 @@ export async function cancelCrawl(siteId: string) {
     }
 }
 
-export async function deletePagesForSite(siteId: string) {
+export async function deletePagesForSite(formData: FormData) {
+    const siteId = formData.get("siteId") as string;
+    if (!siteId) {
+        throw new Error("siteId is required.");
+    }
     try {
         const pagesCollection = collection(db, "pages");
         const q = query(pagesCollection, where("siteId", "==", siteId));
@@ -608,9 +635,12 @@ export async function crawlAllSites() {
         }));
 
         for (const site of sitesToCrawl) {
+            const formData = new FormData();
+            formData.append('siteId', site.id);
+            formData.append('siteUrl', site.url);
             // No need to await here, let them run. 
             // The UI will update automatically for each site as it starts/finishes.
-            crawlSite(site.id, site.url);
+            crawlSite(formData);
         }
 
     } catch (error) {
