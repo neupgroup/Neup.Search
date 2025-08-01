@@ -35,21 +35,51 @@ export type PaginatedPages = {
 export async function getPages(search?: string, startAfterDocId?: string): Promise<PaginatedPages> {
     try {
         const pagesCollection = collection(db, "pages");
+        const LIMIT = 50; // Fetch more for local filtering if searching
         
         let q: any;
+        let pagesList: Page[] = [];
+        let lastVisibleId: string | null = null;
 
         if (search) {
-            const queryConstraints = [
-                orderBy("url"),
-                where('url', '>=', search),
-                where('url', '<=', search + '\uf8ff'),
-                limit(20)
-            ];
-             if (startAfterDocId) {
-                const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
-                queryConstraints.push(startAfter(lastVisibleDoc));
+            // Firestore doesn't support case-insensitive 'contains' queries, so we fetch and filter.
+            // This is not ideal for very large datasets but works for moderately sized ones.
+            // A more scalable solution would involve a dedicated search service like Algolia or Typesense.
+            const allPagesSnapshot = await getDocs(query(pagesCollection, orderBy("createdAt", "desc")));
+            const lowercasedSearch = search.toLowerCase();
+            
+            const filteredPages = allPagesSnapshot.docs.map(doc => {
+                 const data = doc.data();
+                 return {
+                    id: doc.id,
+                    url: data.url,
+                    title: data.title || 'No title',
+                    description: data.description || 'No description',
+                    siteUrl: data.siteUrl,
+                    status: data.status,
+                    lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
+                    createdAt: (data.createdAt as Timestamp).toDate(),
+                };
+            }).filter(page => 
+                page.url.toLowerCase().includes(lowercasedSearch) ||
+                page.title.toLowerCase().includes(lowercasedSearch) ||
+                (page.description && page.description.toLowerCase().includes(lowercasedSearch))
+            );
+
+            // Manual pagination on the filtered results
+            let startIndex = 0;
+            if (startAfterDocId) {
+                const foundIndex = filteredPages.findIndex(p => p.id === startAfterDocId);
+                if (foundIndex !== -1) {
+                    startIndex = foundIndex + 1;
+                }
             }
-            q = query(pagesCollection, ...queryConstraints);
+            
+            pagesList = filteredPages.slice(startIndex, startIndex + 20);
+            if (filteredPages.length > startIndex + 20) {
+                 lastVisibleId = pagesList[pagesList.length - 1]?.id || null;
+            }
+
         } else {
              const queryConstraints = [
                 orderBy("createdAt", "desc"),
@@ -60,29 +90,29 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
                 queryConstraints.push(startAfter(lastVisibleDoc));
             }
             q = query(pagesCollection, ...queryConstraints);
+            const pageSnapshot = await getDocs(q);
+
+            pagesList = pageSnapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    url: data.url,
+                    title: data.title || 'No title',
+                    description: data.description || 'No description',
+                    siteUrl: data.siteUrl,
+                    status: data.status,
+                    lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
+                    createdAt: (data.createdAt as Timestamp).toDate(),
+                };
+            });
+            const lastVisible = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+            lastVisibleId = lastVisible ? lastVisible.id : null;
         }
 
-        const pageSnapshot = await getDocs(q);
-
-        const pagesList = pageSnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                url: data.url,
-                title: data.title || 'No title',
-                description: data.description || 'No description',
-                siteUrl: data.siteUrl,
-                status: data.status,
-                lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
-                createdAt: (data.createdAt as Timestamp).toDate(),
-            };
-        });
-
-        const lastVisible = pageSnapshot.docs[pageSnapshot.docs.length - 1];
 
         return {
             pages: pagesList,
-            lastVisibleId: lastVisible ? lastVisible.id : null,
+            lastVisibleId: lastVisibleId,
         }
     } catch (error) {
         await logError(error, "getPages");

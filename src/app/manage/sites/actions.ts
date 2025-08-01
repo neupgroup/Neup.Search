@@ -125,48 +125,86 @@ export async function summarizeSiteAction(formData: FormData) {
 export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
     try {
         const sitesCollection = collection(db, "sites");
-        let q: any;
+        let sitesList: Site[] = [];
+        let lastVisibleId: string | null = null;
+        const LMT = 20;
 
         if (search) {
-             const queryConstraints = [
-                orderBy("url"),
-                where('url', '>=', search),
-                where('url', '<=', search + '\uf8ff'),
-                limit(20)
-            ];
-            q = query(sitesCollection, ...queryConstraints);
+            // Firestore doesn't support case-insensitive 'contains' queries, so we fetch all and filter locally.
+            // This is not performant on very large datasets. A real search engine would use a more robust
+            // search solution like Algolia, Typesense, or Elasticsearch.
+            const allSitesSnapshot = await getDocs(query(sitesCollection, orderBy("createdAt", "desc")));
+            const lowercasedSearch = search.toLowerCase();
+            
+            const filteredSites = allSitesSnapshot.docs.map(doc => {
+                 const data = doc.data();
+                return {
+                    id: doc.id,
+                    url: data.url,
+                    description: data.description,
+                    status: data.status,
+                    lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
+                    createdAt: (data.createdAt as Timestamp).toDate(),
+                    pagesCrawled: data.pagesCrawled || 0,
+                    currentlyCrawling: data.currentlyCrawling || null,
+                    name: data.name || null,
+                    logoUrl: data.logoUrl || null,
+                    summary: data.summary || null,
+                };
+            }).filter(site => 
+                site.url.toLowerCase().includes(lowercasedSearch) ||
+                (site.name && site.name.toLowerCase().includes(lowercasedSearch)) ||
+                (site.summary && site.summary.toLowerCase().includes(lowercasedSearch)) ||
+                site.description.toLowerCase().includes(lowercasedSearch)
+            );
+
+            // Manual pagination on the filtered results
+            let startIndex = 0;
+            if (startAfterDocId) {
+                const foundIndex = filteredSites.findIndex(s => s.id === startAfterDocId);
+                if (foundIndex !== -1) {
+                    startIndex = foundIndex + 1;
+                }
+            }
+
+            sitesList = filteredSites.slice(startIndex, startIndex + LMT);
+            if (filteredSites.length > startIndex + LMT) {
+                lastVisibleId = sitesList[sitesList.length - 1]?.id || null;
+            }
+
         } else {
-            const queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
+            const queryConstraints = [orderBy("createdAt", "desc"), limit(LMT)];
             if (startAfterDocId) {
                 const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
                 queryConstraints.push(startAfter(lastVisibleDoc));
             }
-            q = query(sitesCollection, ...queryConstraints);
-        }
-        
-        const siteSnapshot = await getDocs(q);
-        const sitesList = siteSnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                url: data.url,
-                description: data.description,
-                status: data.status,
-                lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
-                createdAt: (data.createdAt as Timestamp).toDate(),
-                pagesCrawled: data.pagesCrawled || 0,
-                currentlyCrawling: data.currentlyCrawling || null,
-                name: data.name || null,
-                logoUrl: data.logoUrl || null,
-                summary: data.summary || null,
-            };
-        });
+            const q = query(sitesCollection, ...queryConstraints);
+            
+            const siteSnapshot = await getDocs(q);
+            sitesList = siteSnapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    url: data.url,
+                    description: data.description,
+                    status: data.status,
+                    lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
+                    createdAt: (data.createdAt as Timestamp).toDate(),
+                    pagesCrawled: data.pagesCrawled || 0,
+                    currentlyCrawling: data.currentlyCrawling || null,
+                    name: data.name || null,
+                    logoUrl: data.logoUrl || null,
+                    summary: data.summary || null,
+                };
+            });
 
-        const lastVisible = siteSnapshot.docs[siteSnapshot.docs.length - 1];
+            const lastVisible = siteSnapshot.docs[siteSnapshot.docs.length - 1];
+            lastVisibleId = lastVisible ? lastVisible.id : null;
+        }
 
         return {
             sites: sitesList,
-            lastVisibleId: lastVisible ? lastVisible.id : null,
+            lastVisibleId: lastVisibleId,
         }
     } catch (error) {
         await logError(error, "getSites");
