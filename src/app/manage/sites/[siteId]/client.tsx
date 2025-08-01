@@ -32,7 +32,7 @@ export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, sit
     return (
         <form action={crawlSiteWithParams}>
             <SubmitButton disabled={status === "Crawling"}>
-                {status === "Crawling" ? "Crawling..." : "Recrawl Site"}
+                {status === "Crawling" ? "Crawling..." : "Force Scrape"}
             </SubmitButton>
         </form>
     )
@@ -68,22 +68,22 @@ export function DeletePagesButton({ siteId, siteName }: { siteId: string, siteNa
                 <Button variant="destructive" className="bg-red-700 hover:bg-red-800">Delete All Pages</Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
-                <form action={deletePagesForSiteWithId}>
-                    <AlertDialogHeader>
-                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                        This action cannot be undone. This will permanently delete all indexed pages for <strong>{siteName}</strong> from your database.
-                    </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction asChild>
-                        <SubmitButton variant="destructive">
-                            Continue
-                        </SubmitButton>
-                    </AlertDialogAction>
-                    </AlertDialogFooter>
-                </form>
+                <AlertDialogHeader>
+                <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                <AlertDialogDescription>
+                    This action cannot be undone. This will permanently delete all indexed pages for <strong>{siteName}</strong> from your database.
+                </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <form action={deletePagesForSiteWithId}>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction asChild>
+                            <SubmitButton variant="destructive">
+                                Continue
+                            </SubmitButton>
+                        </AlertDialogAction>
+                    </form>
+                </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
     )
