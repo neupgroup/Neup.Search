@@ -29,7 +29,7 @@ function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl:
   };
   
   const handleSelect = (event: Event) => {
-    // Prevent the dropdown from closing when we click "Recrawl"
+    // Prevent the dropdown from closing when we click
     event.preventDefault();
     // Manually trigger the crawl action
     handleCrawl();
@@ -37,7 +37,7 @@ function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl:
 
   return (
     <DropdownMenuItem onSelect={handleSelect} disabled={isCrawling || isPending}>
-        {isCrawling || isPending ? 'Crawling...' : 'Recrawl'}
+        {isCrawling || isPending ? 'Crawling...' : 'Force Scrape'}
     </DropdownMenuItem>
   )
 }
