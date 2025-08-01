@@ -127,7 +127,7 @@ export async function getSites(search?: string, startAfterDocId?: string): Promi
             const queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
             if (startAfterDocId) {
                 const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
-                queryConstraints.push(start(lastVisibleDoc));
+                queryConstraints.push(startAfter(lastVisibleDoc));
             }
             q = query(sitesCollection, ...queryConstraints);
         }
@@ -266,9 +266,18 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                 const sitemapUrls = await getSitemapUrls(sitemapUrl);
                 urlQueue.push(...sitemapUrls);
             }
+        } else {
+             // If no sitemaps in robots.txt, try the default sitemap.xml location
+            const defaultSitemapUrl = new URL("/sitemap.xml", siteUrl).toString();
+            const sitemapUrls = await getSitemapUrls(defaultSitemapUrl);
+            if(sitemapUrls.length > 0) {
+                 await updateDoc(siteRef, { currentlyCrawling: `Found default sitemap.xml. Parsing...` });
+                 revalidatePath(`/manage/sites/${siteId}`);
+                 urlQueue.push(...sitemapUrls);
+            }
         }
         
-        // Add base URL if queue is empty
+        // Add base URL if queue is empty (fallback to link discovery)
         if (urlQueue.length === 0) {
             urlQueue.push(siteUrl);
         }
@@ -591,5 +600,7 @@ export async function deleteLinksForPage(pageUrl: string) {
         await logError(error, `deleteLinksForPage`);
     }
 }
+
+    
 
     
