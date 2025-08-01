@@ -127,7 +127,7 @@ export async function getSites(search?: string, startAfterDocId?: string): Promi
             const queryConstraints = [orderBy("createdAt", "desc"), limit(20)];
             if (startAfterDocId) {
                 const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
-                queryConstraints.push(startAfter(lastVisibleDoc));
+                queryConstraints.push(start(lastVisibleDoc));
             }
             q = query(sitesCollection, ...queryConstraints);
         }
@@ -276,7 +276,10 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             
             const currentUrl = urlQueue.shift()!;
             
-            if (crawledUrls.has(currentUrl) || disallow.some(regex => regex.test(new URL(currentUrl).pathname))) {
+            // Normalize URL to avoid crawling the same page with different fragments or parameters
+            const normalizedUrl = new URL(currentUrl).origin + new URL(currentUrl).pathname;
+
+            if (crawledUrls.has(normalizedUrl) || disallow.some(regex => regex.test(new URL(currentUrl).pathname))) {
                 continue;
             }
 
@@ -288,6 +291,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
             
             try {
                 const response = await fetch(currentUrl, { headers: { 'User-Agent': userAgent } });
+                crawledUrls.add(normalizedUrl);
                 const contentType = response.headers.get('content-type');
                 
                 if (!response.ok || !contentType?.includes('text/html')) {
@@ -295,7 +299,6 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                     continue;
                 }
                 
-                crawledUrls.add(currentUrl);
                 const html = await response.text();
                 const $ = cheerio.load(html);
 
@@ -328,12 +331,13 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                     audios: $('audio').map((i, el) => $(el).attr('src')).get().filter(src => src),
                 };
 
-                // Add to batch for Firestore
+                const batch = writeBatch(db);
+
+                // Add/Update page document
                 const pagesCollection = collection(db, "pages");
                 const pageQuery = query(pagesCollection, where("url", "==", currentUrl), limit(1));
                 const existingPageSnapshot = await getDocs(pageQuery);
 
-                const batch = writeBatch(db);
                 if (existingPageSnapshot.empty) {
                     const newPageRef = doc(pagesCollection);
                     batch.set(newPageRef, pageData);
@@ -341,8 +345,7 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                     const pageDocRef = existingPageSnapshot.docs[0].ref;
                     batch.update(pageDocRef, pageData);
                 }
-                await batch.commit();
-
+                
                 pagesProcessed++;
 
                 // Link discovery and backlink creation
@@ -355,23 +358,27 @@ export async function crawlSite(siteId: string, siteUrl: string) {
                             const linkHostname = new URL(absoluteUrl).hostname;
                             
                             // Log the link relationship
-                            const linkDocRef = doc(linksCollection);
-                            batch.set(linkDocRef, {
+                            const linkDocRef = doc(collection(db, "links")); // Create new ref for each link
+                             batch.set(linkDocRef, {
                                 sourceUrl: currentUrl,
                                 sourceTitle: pageTitle,
                                 targetUrl: absoluteUrl
                             });
 
                             if (linkHostname === domain) {
-                                if (!crawledUrls.has(absoluteUrl) && !urlQueue.includes(absoluteUrl)) {
+                                // Add internal links to the queue if not already crawled or in queue
+                                const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname;
+                                if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
                                     urlQueue.push(absoluteUrl);
                                 }
-                            } 
+                            }
                         } catch (e) {
-                            // Ignore invalid URLs
+                           // Ignore invalid URLs
+                           // console.warn(`Invalid URL found on ${currentUrl}: ${href}`);
                         }
                     }
                 }
+                
                 await batch.commit();
 
             } catch (fetchError) {
