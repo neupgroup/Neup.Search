@@ -1,0 +1,91 @@
+// Prisma schema for Postgres replacing previous Firebase/Firestore data model
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SiteStatus {
+  Pending
+  Active
+  Paused
+  Error
+  Crawling
+}
+
+enum PageStatus {
+  Indexed
+  Error
+  Pending
+}
+
+model Site {
+  id                String      @id @default(cuid())
+  url               String      @unique
+  description       String
+  status            SiteStatus  @default(Pending)
+  createdAt         DateTime    @default(now())
+  lastCrawled       DateTime?
+  pagesCrawled      Int         @default(0)
+  currentlyCrawling String?
+  name              String?
+  summary           String?
+  logoUrl           String?
+
+  pages Page[]
+
+  @@index([createdAt])
+}
+
+model Page {
+  id           String      @id @default(cuid())
+  url          String      @unique
+  title        String?
+  description  String?
+  summary      String?
+  keywords     String?
+  content      String?
+  bodyHtml     String?
+  status       PageStatus  @default(Pending)
+  lastIndexed  DateTime?
+  createdAt    DateTime    @default(now())
+  httpHeaders  Json?
+  canonicalUrl String?
+  lang         String?
+  openGraph    Json?
+  images       Json?
+  videos       Json?
+  audios       Json?
+
+  // Relations
+  siteId String
+  site   Site        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteUrl String?
+
+  @@index([createdAt])
+  @@index([siteId])
+}
+
+model Link {
+  id          String   @id @default(cuid())
+  sourceUrl   String
+  sourceTitle String?
+  targetUrl   String
+  createdAt   DateTime @default(now())
+
+  @@index([sourceUrl])
+  @@index([targetUrl])
+}
+
+model SystemError {
+  id        String   @id @default(cuid())
+  message   String
+  context   String
+  stack     String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

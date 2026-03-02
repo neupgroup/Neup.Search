@@ -27,7 +27,7 @@ function SubmitButton() {
 }
 
 export default function AddNewSitePage() {
-  const initialState = { errors: {} };
+  const initialState: { errors: Record<string, string[]> } = { errors: {} };
   const [state, dispatch] = useActionState(addSite, initialState);
 
   return (

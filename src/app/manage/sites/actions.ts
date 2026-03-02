@@ -4,10 +4,9 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { collection, addDoc, getDocs, doc, updateDoc, Timestamp, query, orderBy, writeBatch, getDoc, limit, startAfter, where, endAt, startAt,getCountFromServer, deleteDoc } from "firebase/firestore"
 import { z } from "zod"
 import * as cheerio from "cheerio"
-import { db } from "@/lib/firebase"
+import { prisma } from "@/lib/prisma"
 import type { Page, PaginatedPages } from "../pages/actions"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 import { logError } from "@/lib/logging"
@@ -61,16 +60,15 @@ export async function addSite(prevState: any, formData: FormData) {
   }
 
   try {
-    const docRef = await addDoc(collection(db, "sites"), {
-      url: siteData.siteUrl,
-      description: siteData.description,
-      status: "Pending",
-      createdAt: Timestamp.now(),
-      lastCrawled: null,
-      pagesCrawled: 0,
-      currentlyCrawling: "Summarizing site...",
+    const newSite = await prisma.site.create({
+      data: {
+        url: siteData.siteUrl,
+        description: siteData.description,
+        status: "Pending",
+        currentlyCrawling: "Summarizing site...",
+      }
     });
-    siteData.siteId = docRef.id;
+    siteData.siteId = newSite.id;
   } catch (error) {
     await logError(error, "addSite");
     return {
@@ -96,24 +94,26 @@ export async function summarizeSiteAction(formData: FormData) {
         throw new Error("siteId and siteUrl are required.");
     }
 
-    const siteRef = doc(db, "sites", siteId);
     try {
-        await updateDoc(siteRef, { currentlyCrawling: "Summarizing site..." });
+        await prisma.site.update({ where: { id: siteId }, data: { currentlyCrawling: "Summarizing site..." } });
 
         const summaryData = await summarizeSite({ url: siteUrl });
         
-        await updateDoc(siteRef, {
-            name: summaryData.name,
-            summary: summaryData.summary,
-            logoUrl: summaryData.logoUrl,
+        await prisma.site.update({
+          where: { id: siteId },
+          data: {
+            name: summaryData.name || null,
+            summary: summaryData.summary || null,
+            logoUrl: summaryData.logoUrl || null,
             currentlyCrawling: "",
+          }
         });
 
     } catch (error) {
         await logError(error, "summarizeSiteAction");
-        await updateDoc(siteRef, { 
-            currentlyCrawling: "Failed to summarize site.",
-            status: "Error",
+        await prisma.site.update({
+          where: { id: siteId },
+          data: { currentlyCrawling: "Failed to summarize site.", status: "Error" }
         });
     } finally {
         revalidatePath(`/manage/sites/${siteId}`);
@@ -124,82 +124,71 @@ export async function summarizeSiteAction(formData: FormData) {
 
 export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
     try {
-        const sitesCollection = collection(db, "sites");
         let sitesList: Site[] = [];
         let lastVisibleId: string | null = null;
         const LMT = 20;
 
         if (search) {
-            // Firestore doesn't support case-insensitive 'contains' queries, so we fetch all and filter locally.
-            // This is not performant on very large datasets. A real search engine would use a more robust
-            // search solution like Algolia, Typesense, or Elasticsearch.
-            const allSitesSnapshot = await getDocs(query(sitesCollection, orderBy("createdAt", "desc")));
-            const lowercasedSearch = search.toLowerCase();
-            
-            const filteredSites = allSitesSnapshot.docs.map(doc => {
-                 const data = doc.data();
-                return {
-                    id: doc.id,
-                    url: data.url,
-                    description: data.description,
-                    status: data.status,
-                    lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
-                    createdAt: (data.createdAt as Timestamp).toDate(),
-                    pagesCrawled: data.pagesCrawled || 0,
-                    currentlyCrawling: data.currentlyCrawling || null,
-                    name: data.name || null,
-                    logoUrl: data.logoUrl || null,
-                    summary: data.summary || null,
-                };
-            }).filter(site => 
-                site.url.toLowerCase().includes(lowercasedSearch) ||
-                (site.name && site.name.toLowerCase().includes(lowercasedSearch)) ||
-                (site.summary && site.summary.toLowerCase().includes(lowercasedSearch)) ||
-                site.description.toLowerCase().includes(lowercasedSearch)
-            );
-
-            // Manual pagination on the filtered results
+            const filtered = await prisma.site.findMany({
+              where: {
+                OR: [
+                  { url: { contains: search, mode: "insensitive" } },
+                  { name: { contains: search, mode: "insensitive" } },
+                  { summary: { contains: search, mode: "insensitive" } },
+                  { description: { contains: search, mode: "insensitive" } },
+                ],
+              },
+              orderBy: { createdAt: "desc" },
+              take: 1000,
+            });
             let startIndex = 0;
             if (startAfterDocId) {
-                const foundIndex = filteredSites.findIndex(s => s.id === startAfterDocId);
-                if (foundIndex !== -1) {
-                    startIndex = foundIndex + 1;
-                }
+              const foundIndex = filtered.findIndex((s: { id: string }) => s.id === startAfterDocId);
+              if (foundIndex !== -1) startIndex = foundIndex + 1;
             }
-
-            sitesList = filteredSites.slice(startIndex, startIndex + LMT);
-            if (filteredSites.length > startIndex + LMT) {
-                lastVisibleId = sitesList[sitesList.length - 1]?.id || null;
+            const slice = filtered.slice(startIndex, startIndex + LMT);
+            sitesList = slice.map((s: { id: string; url: string; description: string; status: string; lastCrawled: Date | null; createdAt: Date; pagesCrawled: number; currentlyCrawling: string | null; name: string | null; logoUrl: string | null; summary: string | null; }) => ({
+              id: s.id,
+              url: s.url,
+              description: s.description,
+              status: s.status as any,
+              lastCrawled: s.lastCrawled ? s.lastCrawled.toLocaleDateString() : 'Never',
+              createdAt: s.createdAt,
+              pagesCrawled: s.pagesCrawled || 0,
+              currentlyCrawling: s.currentlyCrawling || undefined,
+              name: s.name || undefined,
+              logoUrl: s.logoUrl || undefined,
+              summary: s.summary || undefined,
+            }));
+            if (filtered.length > startIndex + LMT) {
+              lastVisibleId = sitesList[sitesList.length - 1]?.id || null;
             }
 
         } else {
-            const queryConstraints = [orderBy("createdAt", "desc"), limit(LMT)];
-            if (startAfterDocId) {
-                const lastVisibleDoc = await getDoc(doc(db, "sites", startAfterDocId));
-                queryConstraints.push(startAfter(lastVisibleDoc));
-            }
-            const q = query(sitesCollection, ...queryConstraints);
-            
-            const siteSnapshot = await getDocs(q);
-            sitesList = siteSnapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    url: data.url,
-                    description: data.description,
-                    status: data.status,
-                    lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
-                    createdAt: (data.createdAt as Timestamp).toDate(),
-                    pagesCrawled: data.pagesCrawled || 0,
-                    currentlyCrawling: data.currentlyCrawling || null,
-                    name: data.name || null,
-                    logoUrl: data.logoUrl || null,
-                    summary: data.summary || null,
-                };
+            const base = await prisma.site.findMany({
+              orderBy: { createdAt: "desc" },
+              take: LMT,
+              ...(startAfterDocId
+                ? {
+                    cursor: { id: startAfterDocId },
+                    skip: 1,
+                  }
+                : {}),
             });
-
-            const lastVisible = siteSnapshot.docs[siteSnapshot.docs.length - 1];
-            lastVisibleId = lastVisible ? lastVisible.id : null;
+            sitesList = base.map((s: { id: string; url: string; description: string; status: string; lastCrawled: Date | null; createdAt: Date; pagesCrawled: number; currentlyCrawling: string | null; name: string | null; logoUrl: string | null; summary: string | null; }) => ({
+              id: s.id,
+              url: s.url,
+              description: s.description,
+              status: s.status as any,
+              lastCrawled: s.lastCrawled ? s.lastCrawled.toLocaleDateString() : 'Never',
+              createdAt: s.createdAt,
+              pagesCrawled: s.pagesCrawled || 0,
+              currentlyCrawling: s.currentlyCrawling || undefined,
+              name: s.name || undefined,
+              logoUrl: s.logoUrl || undefined,
+              summary: s.summary || undefined,
+            }));
+            lastVisibleId = sitesList.length ? sitesList[sitesList.length - 1].id : null;
         }
 
         return {
@@ -266,12 +255,12 @@ async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
         const $ = cheerio.load(xml, { xmlMode: true });
         const urls: string[] = [];
 
-        $('url > loc').each((i, el) => {
+        $('url > loc').each((i: number, el: cheerio.Element) => {
             urls.push($(el).text());
         });
         
         // Handle nested sitemaps
-        const nestedSitemaps = $('sitemap > loc').map((i, el) => $(el).text()).get();
+        const nestedSitemaps = $('sitemap > loc').map((i: number, el: cheerio.Element) => $(el).text()).get();
         for (const nestedSitemap of nestedSitemaps) {
             urls.push(...await getSitemapUrls(nestedSitemap));
         }
@@ -284,10 +273,8 @@ async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
 }
 
 async function siteExists(url: string): Promise<boolean> {
-    const sitesCollection = collection(db, "sites");
-    const q = query(sitesCollection, where("url", "==", url), limit(1));
-    const snapshot = await getDocs(q);
-    return !snapshot.empty;
+    const s = await prisma.site.findFirst({ where: { url } });
+    return !!s;
 }
 
 // --- End of Robots.txt and Sitemap Parsing ---
@@ -301,13 +288,12 @@ export async function crawlSite(formData: FormData) {
         throw new Error("siteId and siteUrl are required.");
     }
     
-    const siteRef = doc(db, "sites", siteId);
     let crawledUrls = new Set<string>();
     const domain = new URL(siteUrl).hostname;
     let pagesProcessed = 0;
     
     try {
-        await updateDoc(siteRef, { status: "Crawling", currentlyCrawling: "Fetching robots.txt..." });
+        await prisma.site.update({ where: { id: siteId }, data: { status: "Crawling", currentlyCrawling: "Fetching robots.txt..." } });
 
         const robotsTxt = await getRobotsTxt(siteUrl);
         const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] };
@@ -316,7 +302,7 @@ export async function crawlSite(formData: FormData) {
 
         // Prioritize sitemap URLs
         if (sitemaps.length > 0) {
-            await updateDoc(siteRef, { currentlyCrawling: `Found ${sitemaps.length} sitemaps. Parsing...` });
+            await prisma.site.update({ where: { id: siteId }, data: { currentlyCrawling: `Found ${sitemaps.length} sitemaps. Parsing...` } });
             for (const sitemapUrl of sitemaps) {
                 const sitemapUrls = await getSitemapUrls(sitemapUrl);
                 urlQueue.push(...sitemapUrls);
@@ -326,7 +312,7 @@ export async function crawlSite(formData: FormData) {
             const defaultSitemapUrl = new URL("/sitemap.xml", siteUrl).toString();
             const sitemapUrls = await getSitemapUrls(defaultSitemapUrl);
             if(sitemapUrls.length > 0) {
-                 await updateDoc(siteRef, { currentlyCrawling: `Found default sitemap.xml. Parsing...` });
+                 await prisma.site.update({ where: { id: siteId }, data: { currentlyCrawling: `Found default sitemap.xml. Parsing...` } });
                  urlQueue.push(...sitemapUrls);
             }
         }
@@ -338,10 +324,10 @@ export async function crawlSite(formData: FormData) {
 
         while (urlQueue.length > 0) {
             // Check for cancellation
-            const currentSiteDoc = await getDoc(siteRef);
-            if (currentSiteDoc.data()?.status !== "Crawling") {
+            const currentSite = await prisma.site.findUnique({ where: { id: siteId }, select: { status: true } });
+            if (currentSite?.status !== "Crawling") {
                 console.log("Crawl cancelled by user.");
-                await updateDoc(siteRef, { currentlyCrawling: "Crawl cancelled." });
+                await prisma.site.update({ where: { id: siteId }, data: { currentlyCrawling: "Crawl cancelled." } });
                 break; 
             }
             
@@ -354,9 +340,9 @@ export async function crawlSite(formData: FormData) {
                 continue;
             }
 
-            await updateDoc(siteRef, { 
-                currentlyCrawling: `Crawling ${currentUrl}`,
-                pagesCrawled: pagesProcessed,
+            await prisma.site.update({
+              where: { id: siteId },
+              data: { currentlyCrawling: `Crawling ${currentUrl}`, pagesCrawled: pagesProcessed }
             });
             
             try {
@@ -384,9 +370,8 @@ export async function crawlSite(formData: FormData) {
                     url: currentUrl,
                     siteId,
                     siteUrl,
-                    status: "Indexed",
-                    lastIndexed: Timestamp.now(),
-                    createdAt: Timestamp.now(),
+                    status: "Indexed" as const,
+                    lastIndexed: new Date(),
                     httpHeaders: Object.fromEntries(response.headers.entries()),
                     canonicalUrl: $('link[rel="canonical"]').attr('href'),
                     lang: $('html').attr('lang'),
@@ -396,73 +381,69 @@ export async function crawlSite(formData: FormData) {
                         image: $('meta[property="og:image"]').attr('content'),
                         url: $('meta[property="og:url"]').attr('content'),
                     },
-                    images: $('img').map((i, el) => ({ src: $(el).attr('src'), alt: $(el).attr('alt') })).get().filter(img => img.src),
-                    videos: $('video').map((i, el) => $(el).attr('src')).get().filter(src => src),
-                    audios: $('audio').map((i, el) => $(el).attr('src')).get().filter(src => src),
+                    images: $('img').map((i: number, el: cheerio.Element) => ({ src: $(el).attr('src'), alt: $(el).attr('alt') })).get().filter((img: { src?: string | null }) => !!img.src),
+                    videos: $('video').map((i: number, el: cheerio.Element) => $(el).attr('src')).get().filter((src: string | undefined | null) => !!src),
+                    audios: $('audio').map((i: number, el: cheerio.Element) => $(el).attr('src')).get().filter((src: string | undefined | null) => !!src),
                 };
 
-                const batch = writeBatch(db);
+                await prisma.$transaction(async (tx: any) => {
+                  await tx.page.upsert({
+                    where: { url: currentUrl },
+                    create: pageData,
+                    update: pageData,
+                  });
 
-                // Add/Update page document
-                const pagesCollection = collection(db, "pages");
-                const pageQuery = query(pagesCollection, where("url", "==", currentUrl), limit(1));
-                const existingPageSnapshot = await getDocs(pageQuery);
+                  const linkCreates: { sourceUrl: string; sourceTitle?: string | null; targetUrl: string }[] = [];
+                  for (const link of $('a').toArray()) {
+                    const href = $(link).attr('href');
+                    if (!href) continue;
+                    try {
+                      const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
+                      linkCreates.push({
+                        sourceUrl: currentUrl,
+                        sourceTitle: pageTitle,
+                        targetUrl: absoluteUrl,
+                      });
+                    } catch (_) {
+                    }
+                  }
+                  if (linkCreates.length) {
+                    for (const l of linkCreates) {
+                      await tx.link.create({ data: l });
+                    }
+                  }
+                });
 
-                if (existingPageSnapshot.empty) {
-                    const newPageRef = doc(pagesCollection);
-                    batch.set(newPageRef, pageData);
-                } else {
-                    const pageDocRef = existingPageSnapshot.docs[0].ref;
-                    batch.update(pageDocRef, pageData);
-                }
-                
                 pagesProcessed++;
 
-                // Link discovery and backlink creation
-                const linksCollection = collection(db, "links");
                 for (const link of $('a').toArray()) {
-                     const href = $(link).attr('href');
-                     if (href) {
-                        try {
-                            const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
-                            const linkHostname = new URL(absoluteUrl).hostname;
-                            
-                            // Log the link relationship
-                            const linkDocRef = doc(collection(db, "links")); // Create new ref for each link
-                             batch.set(linkDocRef, {
-                                sourceUrl: currentUrl,
-                                sourceTitle: pageTitle,
-                                targetUrl: absoluteUrl
-                            });
-
-                            if (linkHostname === domain) {
-                                // Add internal links to the queue if not already crawled or in queue
-                                const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname;
-                                if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
-                                    urlQueue.push(absoluteUrl);
-                                }
-                            } else {
-                                // If external link, check if it's a new site and add it.
-                                const externalSiteUrl = new URL(absoluteUrl).origin;
-                                if (!(await siteExists(externalSiteUrl))) {
-                                     await addDoc(collection(db, "sites"), {
-                                        url: externalSiteUrl,
-                                        description: `Discovered from ${currentUrl}`,
-                                        status: "Pending",
-                                        createdAt: Timestamp.now(),
-                                        lastCrawled: null,
-                                        pagesCrawled: 0,
-                                    });
-                                }
-                            }
-                        } catch (e) {
-                           // Ignore invalid URLs
-                           // console.warn(`Invalid URL found on ${currentUrl}: ${href}`);
-                        }
+                  const href = $(link).attr('href');
+                  if (!href) continue;
+                  try {
+                    const absoluteUrl = new URL(href, siteUrl).toString().split('#')[0];
+                    const linkHostname = new URL(absoluteUrl).hostname;
+                    if (linkHostname === domain) {
+                      const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname;
+                      if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
+                        urlQueue.push(absoluteUrl);
+                      }
+                    } else {
+                      const externalSiteUrl = new URL(absoluteUrl).origin;
+                      if (!(await siteExists(externalSiteUrl))) {
+                        await prisma.site.upsert({
+                          where: { url: externalSiteUrl },
+                          create: {
+                            url: externalSiteUrl,
+                            description: `Discovered from ${currentUrl}`,
+                            status: "Pending",
+                          },
+                          update: {},
+                        });
+                      }
                     }
+                  } catch (_) {
+                  }
                 }
-                
-                await batch.commit();
 
             } catch (fetchError) {
                 await logError({ error: fetchError, currentUrl }, 'crawlSite_fetch');
@@ -472,16 +453,19 @@ export async function crawlSite(formData: FormData) {
             await sleep(100); 
         }
 
-        await updateDoc(siteRef, { 
+        await prisma.site.update({
+          where: { id: siteId },
+          data: {
             status: "Active",
-            lastCrawled: Timestamp.now(),
+            lastCrawled: new Date(),
             pagesCrawled: crawledUrls.size,
-            currentlyCrawling: "Crawl complete."
+            currentlyCrawling: "Crawl complete.",
+          }
         });
 
     } catch (error: any) {
         await logError(error, "crawlSite");
-        await updateDoc(siteRef, { status: "Error", currentlyCrawling: `Crawl failed: ${error.message}` });
+        await prisma.site.update({ where: { id: siteId }, data: { status: "Error", currentlyCrawling: `Crawl failed: ${error.message}` } });
     } finally {
         revalidatePath(`/manage/sites/${siteId}`);
         revalidatePath("/manage/sites");
@@ -492,23 +476,20 @@ export async function crawlSite(formData: FormData) {
 
 export async function getSiteById(siteId: string): Promise<Site | null> {
     try {
-        const siteDoc = await getDoc(doc(db, "sites", siteId));
-        if (!siteDoc.exists()) {
-            return null;
-        }
-        const data = siteDoc.data();
+        const s = await prisma.site.findUnique({ where: { id: siteId } });
+        if (!s) return null;
         return {
-            id: siteDoc.id,
-            url: data.url,
-            description: data.description,
-            status: data.status,
-            lastCrawled: data.lastCrawled ? (data.lastCrawled as Timestamp).toDate().toLocaleDateString() : 'Never',
-            createdAt: (data.createdAt as Timestamp).toDate(),
-            pagesCrawled: data.pagesCrawled || 0,
-            currentlyCrawling: data.currentlyCrawling || null,
-            name: data.name || null,
-            logoUrl: data.logoUrl || null,
-            summary: data.summary || null,
+          id: s.id,
+          url: s.url,
+          description: s.description,
+          status: s.status as any,
+          lastCrawled: s.lastCrawled ? s.lastCrawled.toLocaleDateString() : 'Never',
+          createdAt: s.createdAt,
+          pagesCrawled: s.pagesCrawled || 0,
+          currentlyCrawling: s.currentlyCrawling || undefined,
+          name: s.name || undefined,
+          logoUrl: s.logoUrl || undefined,
+          summary: s.summary || undefined,
         };
     } catch (error) {
         await logError(error, "getSiteById");
@@ -518,37 +499,34 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
 
 export async function getPagesForSite(siteId: string, startAfterDocId?: string): Promise<PaginatedSitePages> {
     try {
-        const pagesCollection = collection(db, "pages");
-         const queryConstraints: any[] = [
-            where("siteId", "==", siteId),
-            orderBy("url"),
-            limit(20)
-        ];
+        const base = await prisma.page.findMany({
+          where: { siteId },
+          orderBy: { url: "asc" },
+          take: 20,
+          ...(startAfterDocId
+            ? {
+                cursor: { id: startAfterDocId },
+                skip: 1,
+              }
+            : {}),
+          select: { id: true, url: true, title: true, siteUrl: true, status: true, lastIndexed: true, createdAt: true }
+        });
 
-        if (startAfterDocId) {
-            const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
-            queryConstraints.push(startAfter(lastVisibleDoc));
-        }
-
-        const q = query(pagesCollection, ...queryConstraints);
-        const pageSnapshot = await getDocs(q);
-
-        const pagesList = pageSnapshot.docs.map(doc => {
-            const data = doc.data();
-            const page: Page = {
-                id: doc.id,
-                url: data.url,
-                title: data.title || 'No title',
-                siteUrl: data.siteUrl,
-                status: data.status,
-                lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
-                createdAt: (data.createdAt as Timestamp).toDate(),
-            };
-            return page;
+        const pagesList = base.map((doc: { id: string; url: string; title: string | null; siteUrl: string | null; status: string; lastIndexed: Date | null; createdAt: Date; }) => {
+          const page: Page = {
+            id: doc.id,
+            url: doc.url,
+            title: doc.title || 'No title',
+            siteUrl: doc.siteUrl || '',
+            status: doc.status as any,
+            lastIndexed: doc.lastIndexed ? doc.lastIndexed.toLocaleDateString() : 'Never',
+            createdAt: doc.createdAt,
+          };
+          return page;
         });
         
-        const firstVisible = pageSnapshot.docs[0];
-        const lastVisible = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+        const firstVisible = pagesList[0] || null;
+        const lastVisible = pagesList[pagesList.length - 1] || null;
 
         return {
             pages: pagesList,
@@ -564,23 +542,16 @@ export async function getPagesForSite(siteId: string, startAfterDocId?: string):
 
 export async function getDashboardStats() {
     try {
-        const sitesCollection = collection(db, "sites");
-        const pagesCollection = collection(db, "pages");
-
-        const totalSitesSnapshot = await getCountFromServer(sitesCollection);
-        const totalPagesSnapshot = await getCountFromServer(pagesCollection);
-
-        const activeCrawlsQuery = query(sitesCollection, where("status", "==", "Crawling"));
-        const activeCrawlsSnapshot = await getCountFromServer(activeCrawlsQuery);
-        
-        const errorCrawlsQuery = query(sitesCollection, where("status", "==", "Error"));
-        const errorCrawlsSnapshot = await getCountFromServer(errorCrawlsQuery);
+        const totalSites = await prisma.site.count();
+        const totalPages = await prisma.page.count();
+        const activeCrawls = await prisma.site.count({ where: { status: "Crawling" } });
+        const crawlErrors = await prisma.site.count({ where: { status: "Error" } });
 
         return {
-            totalSites: totalSitesSnapshot.data().count,
-            totalPages: totalPagesSnapshot.data().count,
-            activeCrawls: activeCrawlsSnapshot.data().count,
-            crawlErrors: errorCrawlsSnapshot.data().count,
+            totalSites,
+            totalPages,
+            activeCrawls,
+            crawlErrors,
         }
     } catch (error) {
         await logError(error, "getDashboardStats");
@@ -600,8 +571,7 @@ export async function cancelCrawl(formData: FormData) {
         throw new Error("siteId is required.");
     }
     try {
-        const siteRef = doc(db, "sites", siteId);
-        await updateDoc(siteRef, { status: "Active", currentlyCrawling: "Crawl cancelled by user." });
+        await prisma.site.update({ where: { id: siteId }, data: { status: "Active", currentlyCrawling: "Crawl cancelled by user." } });
         revalidatePath(`/manage/sites/${siteId}`);
         revalidatePath("/manage/sites");
     } catch (error) {
@@ -615,22 +585,8 @@ export async function deletePagesForSite(formData: FormData) {
         throw new Error("siteId is required.");
     }
     try {
-        const pagesCollection = collection(db, "pages");
-        const q = query(pagesCollection, where("siteId", "==", siteId));
-        const snapshot = await getDocs(q);
-
-        if (snapshot.empty) {
-            return;
-        }
-
-        const batch = writeBatch(db);
-        snapshot.docs.forEach(doc => {
-            batch.delete(doc.ref);
-        });
-        await batch.commit();
-
-        const siteRef = doc(db, "sites", siteId);
-        await updateDoc(siteRef, { pagesCrawled: 0, lastCrawled: null });
+        await prisma.page.deleteMany({ where: { siteId } });
+        await prisma.site.update({ where: { id: siteId }, data: { pagesCrawled: 0, lastCrawled: null } });
 
         revalidatePath(`/manage/sites/${siteId}`);
         revalidatePath("/manage/pages");
@@ -642,19 +598,7 @@ export async function deletePagesForSite(formData: FormData) {
 
 export async function deleteLinksForPage(pageUrl: string) {
     try {
-        const linksCollection = collection(db, "links");
-        const q = query(linksCollection, where("sourceUrl", "==", pageUrl));
-        const snapshot = await getDocs(q);
-
-        if (snapshot.empty) {
-            return;
-        }
-
-        const batch = writeBatch(db);
-        snapshot.docs.forEach(doc => {
-            batch.delete(doc.ref);
-        });
-        await batch.commit();
+        await prisma.link.deleteMany({ where: { sourceUrl: pageUrl } });
 
     } catch (error) {
         await logError(error, `deleteLinksForPage`);
@@ -663,14 +607,10 @@ export async function deleteLinksForPage(pageUrl: string) {
 
 export async function crawlAllSites() {
     try {
-        const sitesCollection = collection(db, "sites");
-        const q = query(sitesCollection, orderBy("createdAt", "desc"));
-        const sitesSnapshot = await getDocs(q);
-        
-        const sitesToCrawl = sitesSnapshot.docs.map(doc => ({
-            id: doc.id,
-            url: doc.data().url
-        }));
+        const sitesToCrawl = await prisma.site.findMany({
+          orderBy: { createdAt: "desc" },
+          select: { id: true, url: true }
+        });
 
         for (const site of sitesToCrawl) {
             const formData = new FormData();

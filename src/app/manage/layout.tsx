@@ -33,7 +33,7 @@ export default function ManageLayout({
 }) {
   const pathname = usePathname()
 
-  const navLinks = [
+  const navLinks: { href: string; label: string; icon: any; badge?: string }[] = [
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/sites", label: "Crawled Sites", icon: Globe },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },

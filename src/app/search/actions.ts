@@ -3,8 +3,7 @@
 "use server"
 
 import { answerQuestion } from "@/ai/flows/answer-question"
-import { collection, query, where, limit, getDocs } from "firebase/firestore"
-import { db } from "@/lib/firebase"
+import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logging";
 
 export type SearchResult = {
@@ -56,19 +55,25 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
     return [];
   }
   try {
-    const pagesCollection = collection(db, "pages");
-    const q = query(pagesCollection, limit(1000)); 
-    const querySnapshot = await getDocs(q);
+    const pages = await prisma.page.findMany({
+      take: 1000,
+      orderBy: { createdAt: "desc" },
+      select: {
+        url: true,
+        title: true,
+        description: true,
+        content: true,
+      },
+    });
 
-    const results: { score: number, result: SearchResult }[] = [];
+    const results: { score: number; result: SearchResult }[] = [];
     const lowercasedQuery = searchQuery.toLowerCase();
 
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      const content = data.content || "";
-      const url = data.url || "";
-      const title = data.title || url;
-      const description = data.description || "";
+    for (const p of pages) {
+      const content = p.content || "";
+      const url = p.url || "";
+      const title = p.title || url;
+      const description = p.description || "";
 
       const lowerContent = content.toLowerCase();
       const lowerUrl = url.toLowerCase();
@@ -90,7 +95,6 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
         matchFound = true;
       }
 
-
       if (matchFound) {
         results.push({
           score,
@@ -99,10 +103,10 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
             url: url,
             snippet: getSnippet(content, description, searchQuery),
             description: description,
-          }
+          },
         });
       }
-    });
+    }
 
     results.sort((a, b) => b.score - a.score);
 

@@ -2,8 +2,7 @@
 
 "use server"
 
-import { collection, getDocs, Timestamp, query, orderBy, getDoc, doc, limit, startAfter, where, updateDoc } from "firebase/firestore"
-import { db } from "@/lib/firebase"
+import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logging"
 import { revalidatePath } from "next/cache"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
@@ -34,85 +33,74 @@ export type PaginatedPages = {
 
 export async function getPages(search?: string, startAfterDocId?: string): Promise<PaginatedPages> {
     try {
-        const pagesCollection = collection(db, "pages");
-        const LIMIT = 50; // Fetch more for local filtering if searching
-        
-        let q: any;
+        const LIMIT = 20;
         let pagesList: Page[] = [];
         let lastVisibleId: string | null = null;
 
         if (search) {
-            // Firestore doesn't support case-insensitive 'contains' queries, so we fetch and filter.
-            // This is not ideal for very large datasets but works for moderately sized ones.
-            // A more scalable solution would involve a dedicated search service like Algolia or Typesense.
-            const allPagesSnapshot = await getDocs(query(pagesCollection, orderBy("createdAt", "desc")));
-            const lowercasedSearch = search.toLowerCase();
-            
-            const filteredPages = allPagesSnapshot.docs.map(doc => {
-                 const data = doc.data();
-                 return {
-                    id: doc.id,
-                    url: data.url,
-                    title: data.title || 'No title',
-                    description: data.description || 'No description',
-                    siteUrl: data.siteUrl,
-                    status: data.status,
-                    lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
-                    createdAt: (data.createdAt as Timestamp).toDate(),
-                };
-            }).filter(page => 
-                page.url.toLowerCase().includes(lowercasedSearch) ||
-                page.title.toLowerCase().includes(lowercasedSearch) ||
-                (page.description && page.description.toLowerCase().includes(lowercasedSearch))
-            );
-
-            // Manual pagination on the filtered results
+            const filtered = await prisma.page.findMany({
+                where: {
+                    OR: [
+                        { url: { contains: search, mode: "insensitive" } },
+                        { title: { contains: search, mode: "insensitive" } },
+                        { description: { contains: search, mode: "insensitive" } },
+                    ],
+                },
+                orderBy: { createdAt: "desc" },
+                take: 1000,
+                select: {
+                    id: true, url: true, title: true, description: true, siteUrl: true, status: true, lastIndexed: true, createdAt: true
+                }
+            });
             let startIndex = 0;
             if (startAfterDocId) {
-                const foundIndex = filteredPages.findIndex(p => p.id === startAfterDocId);
-                if (foundIndex !== -1) {
-                    startIndex = foundIndex + 1;
-                }
+                const foundIndex = filtered.findIndex(p => p.id === startAfterDocId);
+                if (foundIndex !== -1) startIndex = foundIndex + 1;
             }
-            
-            pagesList = filteredPages.slice(startIndex, startIndex + 20);
-            if (filteredPages.length > startIndex + 20) {
-                 lastVisibleId = pagesList[pagesList.length - 1]?.id || null;
+            const slice = filtered.slice(startIndex, startIndex + LIMIT);
+            pagesList = slice.map((p: { id: string; url: string; title: string | null; description: string | null; siteUrl: string | null; status: string; lastIndexed: Date | null; createdAt: Date; }) => ({
+                id: p.id,
+                url: p.url,
+                title: p.title || 'No title',
+                description: p.description || 'No description',
+                siteUrl: p.siteUrl || '',
+                status: p.status as any,
+                lastIndexed: p.lastIndexed ? p.lastIndexed.toLocaleDateString() : 'Never',
+                createdAt: p.createdAt,
+            }));
+            if (filtered.length > startIndex + LIMIT) {
+                lastVisibleId = pagesList[pagesList.length - 1]?.id || null;
             }
-
         } else {
-             const queryConstraints = [
-                orderBy("createdAt", "desc"),
-                limit(20)
-            ];
-            if (startAfterDocId) {
-                const lastVisibleDoc = await getDoc(doc(db, "pages", startAfterDocId));
-                queryConstraints.push(startAfter(lastVisibleDoc));
-            }
-            q = query(pagesCollection, ...queryConstraints);
-            const pageSnapshot = await getDocs(q);
-
-            pagesList = pageSnapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    url: data.url,
-                    title: data.title || 'No title',
-                    description: data.description || 'No description',
-                    siteUrl: data.siteUrl,
-                    status: data.status,
-                    lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
-                    createdAt: (data.createdAt as Timestamp).toDate(),
-                };
+            const base = await prisma.page.findMany({
+                orderBy: { createdAt: "desc" },
+                take: LIMIT,
+                ...(startAfterDocId
+                    ? {
+                        cursor: { id: startAfterDocId },
+                        skip: 1,
+                      }
+                    : {}),
+                select: {
+                    id: true, url: true, title: true, description: true, siteUrl: true, status: true, lastIndexed: true, createdAt: true
+                }
             });
-            const lastVisible = pageSnapshot.docs[pageSnapshot.docs.length - 1];
-            lastVisibleId = lastVisible ? lastVisible.id : null;
+            pagesList = base.map((p: { id: string; url: string; title: string | null; description: string | null; siteUrl: string | null; status: string; lastIndexed: Date | null; createdAt: Date; }) => ({
+                id: p.id,
+                url: p.url,
+                title: p.title || 'No title',
+                description: p.description || 'No description',
+                siteUrl: p.siteUrl || '',
+                status: p.status as any,
+                lastIndexed: p.lastIndexed ? p.lastIndexed.toLocaleDateString() : 'Never',
+                createdAt: p.createdAt,
+            }));
+            lastVisibleId = pagesList.length ? pagesList[pagesList.length - 1].id : null;
         }
-
 
         return {
             pages: pagesList,
-            lastVisibleId: lastVisibleId,
+            lastVisibleId,
         }
     } catch (error) {
         await logError(error, "getPages");
@@ -122,22 +110,19 @@ export async function getPages(search?: string, startAfterDocId?: string): Promi
 
 export async function getPageById(pageId: string): Promise<Page | null> {
     try {
-        const pageDoc = await getDoc(doc(db, "pages", pageId));
-        if (!pageDoc.exists()) {
-            return null;
-        }
-        const data = pageDoc.data();
+        const p = await prisma.page.findUnique({ where: { id: pageId } });
+        if (!p) return null;
         return {
-            id: pageDoc.id,
-            url: data.url,
-            title: data.title || 'No title',
-            description: data.description,
-            summary: data.summary,
-            content: data.content,
-            siteUrl: data.siteUrl,
-            status: data.status,
-            lastIndexed: data.lastIndexed ? (data.lastIndexed as Timestamp).toDate().toLocaleDateString() : 'Never',
-            createdAt: (data.createdAt as Timestamp).toDate(),
+            id: p.id,
+            url: p.url,
+            title: p.title || 'No title',
+            description: p.description || undefined,
+            summary: p.summary || undefined,
+            content: p.content || undefined,
+            siteUrl: p.siteUrl || '',
+            status: p.status as any,
+            lastIndexed: p.lastIndexed ? p.lastIndexed.toLocaleDateString() : 'Never',
+            createdAt: p.createdAt,
         };
     } catch (error) {
         await logError({ error, pageId }, "getPageById");
@@ -147,24 +132,17 @@ export async function getPageById(pageId: string): Promise<Page | null> {
 
 export async function getBacklinks(pageUrl: string): Promise<Backlink[]> {
     try {
-        const linksCollection = collection(db, "links");
-        const q = query(linksCollection, where("targetUrl", "==", pageUrl), limit(100));
-        const snapshot = await getDocs(q);
-
-        if (snapshot.empty) {
-            return [];
-        }
-
-        const backlinks = snapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                sourceUrl: data.sourceUrl,
-                sourceTitle: data.sourceTitle || data.sourceUrl,
-            };
+        const links = await prisma.link.findMany({
+            where: { targetUrl: pageUrl },
+            orderBy: { createdAt: "desc" },
+            take: 100,
+            select: { id: true, sourceUrl: true, sourceTitle: true }
         });
-
-        return backlinks;
+        return links.map((l: { id: string; sourceUrl: string; sourceTitle: string | null; }) => ({
+            id: l.id,
+            sourceUrl: l.sourceUrl,
+            sourceTitle: l.sourceTitle || l.sourceUrl
+        }));
     } catch (error) {
         await logError({ error, pageUrl }, "getBacklinks");
         return [];
@@ -172,12 +150,11 @@ export async function getBacklinks(pageUrl: string): Promise<Backlink[]> {
 }
 
 export async function summarizePageAction(pageId: string, pageContent: string) {
-    const pageRef = doc(db, "pages", pageId);
     try {
         const { summary } = await summarizePageContent({ content: pageContent });
-        
-        await updateDoc(pageRef, {
-            summary: summary,
+        await prisma.page.update({
+            where: { id: pageId },
+            data: { summary }
         });
 
     } catch (error) {
