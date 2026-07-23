@@ -1,6 +1,7 @@
 // Prisma schema for Postgres replacing previous Firebase/Firestore data model
 generator client {
   provider = "prisma-client-js"
+  output   = "./client"
 }
 
 datasource db {

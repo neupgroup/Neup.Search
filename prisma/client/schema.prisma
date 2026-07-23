@@ -1,0 +1,36 @@
+// Prisma schema for Postgres replacing previous Firebase/Firestore data model
+generator client {
+  provider = "prisma-client-js"
+  output   = "./client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id           String    @id
+  type         String
+  neupId       String
+  displayImage String?
+  displayName  String
+  lastActive   DateTime?
+
+  @@index([neupId])
+  @@map("account")
+}
+
+model Domain {
+  id          String    @id @default(cuid())
+  domain      String    @unique
+  name        String
+  lastCrawled DateTime?
+  status      String
+  addedOn     DateTime  @default(now())
+  details     Json?
+
+  @@index([addedOn])
+  @@index([status])
+  @@map("domains")
+}
