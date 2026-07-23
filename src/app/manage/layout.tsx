@@ -37,6 +37,7 @@ export default function ManageLayout({
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/sites", label: "Crawled Sites", icon: Globe },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
+    { href: "/manage/errorrs", label: "Crawl Errors", icon: AlertTriangle },
     { href: "/manage/system/error", label: "System Errors", icon: AlertTriangle },
     { href: "#", label: "Indexing", icon: Package },
     { href: "#", label: "Users", icon: Users },

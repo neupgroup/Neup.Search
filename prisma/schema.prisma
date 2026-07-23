@@ -30,6 +30,8 @@ model Domain {
   details     Json?
 
   pages Page[]
+  sourceLinks Link[] @relation("SourceDomainLinks")
+  targetLinks Link[] @relation("TargetDomainLinks")
 
   @@index([addedOn])
   @@index([status])
@@ -51,10 +53,39 @@ model Page {
   lastCrawled DateTime?
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  sourceLinks Link[] @relation("SourcePageLinks")
+  targetLinks Link[] @relation("TargetPageLinks")
 
   @@index([addedOn])
   @@index([domainId])
   @@index([status])
   @@index([url])
   @@map("page")
+}
+
+model Link {
+  id             String   @id @default(cuid())
+  sourceDomainId String
+  targetDomainId String
+  sourcePageId   String?
+  targetPageId   String?
+  sourceUrl      String
+  targetUrl      String
+  anchorText     String?
+  rel            String?
+  type           String
+  addedOn        DateTime @default(now())
+
+  sourceDomain Domain @relation("SourceDomainLinks", fields: [sourceDomainId], references: [id], onDelete: Cascade)
+  targetDomain Domain @relation("TargetDomainLinks", fields: [targetDomainId], references: [id], onDelete: Cascade)
+  sourcePage   Page?  @relation("SourcePageLinks", fields: [sourcePageId], references: [id], onDelete: SetNull)
+  targetPage   Page?  @relation("TargetPageLinks", fields: [targetPageId], references: [id], onDelete: SetNull)
+
+  @@index([addedOn])
+  @@index([sourceDomainId])
+  @@index([targetDomainId])
+  @@index([sourcePageId])
+  @@index([targetPageId])
+  @@index([targetUrl])
+  @@map("Links")
 }
