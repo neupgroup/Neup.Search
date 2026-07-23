@@ -89,3 +89,17 @@ model SystemError {
 
   @@index([createdAt])
 }
+
+model Account {
+  id           String    @id @default(cuid())
+  connectionId String
+  type         String
+  neupId       String
+  displayImage String?
+  displayName  String
+  lastActive   DateTime?
+
+  @@index([connectionId])
+  @@index([neupId])
+  @@map("account")
+}
