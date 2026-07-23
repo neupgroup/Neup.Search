@@ -2,9 +2,9 @@
 "use client"
 
 import { useFormStatus } from "react-dom"
-import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite } from "@/app/manage/sites/actions"
+import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite } from "@/app/manage/sites/actions"
 import { Button } from "@/components/ui/button"
-import { Loader2 } from "lucide-react"
+import { Braces, Loader2 } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +34,19 @@ export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, sit
             <input type="hidden" name="siteUrl" value={siteUrl} />
             <SubmitButton disabled={status === "Crawling"}>
                 {status === "Crawling" ? "Crawling..." : "Force Scrape"}
+            </SubmitButton>
+        </form>
+    )
+}
+
+export function JavascriptCrawlButton({ siteId, siteUrl, status }: { siteId: string, siteUrl: string, status: string }) {
+    return (
+        <form action={crawlJavascriptSite}>
+            <input type="hidden" name="siteId" value={siteId} />
+            <input type="hidden" name="siteUrl" value={siteUrl} />
+            <SubmitButton variant="outline" disabled={status === "Crawling"}>
+                <Braces className="mr-2 h-4 w-4" />
+                {status === "Crawling" ? "Crawling..." : "JS Crawl"}
             </SubmitButton>
         </form>
     )

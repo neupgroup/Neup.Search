@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio"
+import { chromium } from "playwright"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 import { logError } from "@/lib/logging"
 import { prisma } from "@/lib/prisma"
@@ -923,6 +924,272 @@ export async function runCrawler(siteId: string, siteUrl: string) {
         status: "Error",
         details: {
           currentActivity: `Crawl failed: ${error.message}`,
+        },
+      },
+    })
+  }
+}
+
+export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
+  if (!siteId || !siteUrl) {
+    throw new Error("siteId and siteUrl are required.")
+  }
+
+  const rootDomain = getDomainName(siteUrl)
+  const crawledUrls = new Set<string>()
+  const sitemapReferencesByUrl = new Map<string, Set<string>>()
+  let pagesProcessed = 0
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
+
+  try {
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Crawling",
+        details: {
+          ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
+          currentActivity: "Starting JavaScript crawler...",
+        },
+      },
+    })
+
+    const robotsTxt = await getRobotsTxt(siteUrl)
+    const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
+    const urlQueue: string[] = []
+
+    if (sitemaps.length > 0) {
+      await updateDomainDetails(siteId, { currentActivity: `Found ${sitemaps.length} sitemaps. Parsing...` })
+      for (const sitemapUrl of sitemaps) {
+        const entries = await getSitemapUrlEntries(sitemapUrl)
+        for (const entry of entries) {
+          addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
+          urlQueue.push(entry.url)
+        }
+      }
+    } else {
+      const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString())
+      if (sitemapEntries.length > 0) {
+        await updateDomainDetails(siteId, { currentActivity: "Found default sitemap.xml. Parsing..." })
+        for (const entry of sitemapEntries) {
+          addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
+          urlQueue.push(entry.url)
+        }
+      }
+    }
+
+    if (urlQueue.length === 0) {
+      urlQueue.push(siteUrl)
+    }
+
+    browser = await chromium.launch({ headless: true })
+    const context = await browser.newContext({
+      userAgent: neupbotUserAgent,
+      ignoreHTTPSErrors: true,
+    })
+    const renderedPage = await context.newPage()
+
+    while (urlQueue.length > 0) {
+      const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
+      if (currentDomain?.status !== "Crawling") {
+        await updateDomainDetails(siteId, { currentActivity: "JavaScript crawl cancelled." })
+        break
+      }
+
+      const currentUrl = urlQueue.shift()!
+      const parsedCurrentUrl = new URL(currentUrl)
+      const normalizedUrl = parsedCurrentUrl.origin + parsedCurrentUrl.pathname
+
+      if (crawledUrls.has(normalizedUrl) || disallow.some((regex) => regex.test(parsedCurrentUrl.pathname))) {
+        continue
+      }
+
+      await updateDomainDetails(siteId, {
+        currentActivity: `Rendering ${currentUrl}`,
+        pagesCrawled: pagesProcessed,
+      })
+
+      try {
+        let response = await renderedPage.goto(currentUrl, {
+          waitUntil: "networkidle",
+          timeout: 30000,
+        }).catch(async () => {
+          return renderedPage.goto(currentUrl, {
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
+          })
+        })
+
+        crawledUrls.add(normalizedUrl)
+        const statusCode = response?.status() ?? null
+        const headers = response?.headers() ?? {}
+        const contentType = headers["content-type"] || "text/html"
+        const isHtml = contentType.includes("text/html")
+
+        if (!response || (statusCode !== null && statusCode >= 400) || !isHtml) {
+          const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
+          const pageData = {
+            domainId: siteId,
+            url: currentUrl,
+            title: null,
+            description: null,
+            type: contentType || "unknown",
+            data: [{
+              contentType,
+              headers,
+              renderedWithJavaScript: true,
+              sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
+            }],
+            fullContent: null,
+            status: statusCode !== null && statusCode >= 400 ? "Error" : "Skipped",
+            statusCode,
+            lastCrawled: new Date(),
+          }
+
+          if (existingPage) {
+            await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
+          } else {
+            await prisma.page.create({ data: pageData })
+          }
+          continue
+        }
+
+        await renderedPage.waitForTimeout(1000)
+        const html = await renderedPage.content()
+        const $ = cheerio.load(html)
+        const pageTitle = $("title").text() || $("h1").first().text()
+        const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
+        const data = [{
+          keywords: $("meta[name=\"keywords\"]").attr("content") || "",
+          bodyHtml: $("body").html() || "",
+          httpHeaders: headers,
+          canonicalUrl: $("link[rel=\"canonical\"]").attr("href") || null,
+          lang: $("html").attr("lang") || null,
+          renderedWithJavaScript: true,
+          openGraph: {
+            title: $("meta[property=\"og:title\"]").attr("content") || null,
+            type: $("meta[property=\"og:type\"]").attr("content") || null,
+            image: $("meta[property=\"og:image\"]").attr("content") || null,
+            url: $("meta[property=\"og:url\"]").attr("content") || null,
+          },
+          images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
+          videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+          audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+          iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+          sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
+        }]
+        const pageData = {
+          domainId: siteId,
+          url: currentUrl,
+          title: pageTitle || null,
+          description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
+          type: "text/html",
+          data,
+          fullContent,
+          status: "Indexed",
+          statusCode,
+          lastCrawled: new Date(),
+        }
+
+        const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
+        if (existingPage) {
+          await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
+        } else {
+          await prisma.page.create({ data: pageData })
+        }
+
+        pagesProcessed++
+        const seenTargetUrls = new Set<string>()
+
+        for (const link of $("a").toArray()) {
+          const href = $(link).attr("href")
+          if (!href) continue
+          try {
+            const absoluteUrl = new URL(href, currentUrl).toString().split("#")[0]
+            if (seenTargetUrls.has(absoluteUrl)) continue
+            seenTargetUrls.add(absoluteUrl)
+
+            const targetHostname = getDomainName(absoluteUrl)
+            const isInternalLink = targetHostname === rootDomain
+            const targetDomain = isInternalLink
+              ? { id: siteId }
+              : await prisma.domain.upsert({
+                  where: { domain: new URL(absoluteUrl).origin },
+                  create: {
+                    domain: new URL(absoluteUrl).origin,
+                    name: targetHostname,
+                    status: "Pending",
+                    details: {
+                      discoveredFrom: currentUrl,
+                    },
+                  },
+                  update: {},
+                  select: { id: true },
+                })
+
+            await prisma.link.upsert({
+              where: {
+                linkFrom_linkTo_fromDomain_toDomain: {
+                  linkFrom: currentUrl,
+                  linkTo: absoluteUrl,
+                  fromDomain: siteId,
+                  toDomain: targetDomain.id,
+                },
+              },
+              create: {
+                linkFrom: currentUrl,
+                linkTo: absoluteUrl,
+                fromDomain: siteId,
+                toDomain: targetDomain.id,
+              },
+              update: {
+                linkFrom: currentUrl,
+              },
+            })
+
+            if (isInternalLink) {
+              const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname
+              if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
+                urlQueue.push(absoluteUrl)
+              }
+            }
+          } catch {
+          }
+        }
+      } catch (renderError) {
+        await logError({ error: renderError, currentUrl }, "runJavascriptCrawler_render")
+      }
+
+      await sleep(100)
+    }
+
+    await context.close()
+    await browser.close()
+    browser = null
+
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Active",
+        lastCrawled: new Date(),
+        details: {
+          ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
+          pagesCrawled: crawledUrls.size,
+          currentActivity: "JavaScript crawl complete.",
+        },
+      },
+    })
+  } catch (error: any) {
+    if (browser) {
+      await browser.close().catch(() => undefined)
+    }
+
+    await logError(error, "runJavascriptCrawler")
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Error",
+        details: {
+          currentActivity: `JavaScript crawl failed: ${error.message}`,
         },
       },
     })

@@ -17,6 +17,7 @@ import {
   InvalidDomainError,
   markDomainSummaryFailed,
   runCrawler,
+  runJavascriptCrawler,
   summarizeDomain,
   type ManagedDomain,
 } from "../../../../services/neupbot"
@@ -104,6 +105,16 @@ export async function crawlSite(formData: FormData) {
   const siteUrl = formData.get("siteUrl") as string
 
   await runCrawler(siteId, siteUrl)
+  revalidatePath(`/manage/sites/${siteId}`)
+  revalidatePath("/manage/sites")
+  revalidatePath("/manage/pages")
+}
+
+export async function crawlJavascriptSite(formData: FormData) {
+  const siteId = formData.get("siteId") as string
+  const siteUrl = formData.get("siteUrl") as string
+
+  await runJavascriptCrawler(siteId, siteUrl)
   revalidatePath(`/manage/sites/${siteId}`)
   revalidatePath("/manage/sites")
   revalidatePath("/manage/pages")
