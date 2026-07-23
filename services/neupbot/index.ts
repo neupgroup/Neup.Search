@@ -431,12 +431,13 @@ export async function runCrawler(siteId: string, siteUrl: string) {
         }
 
         const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
-        const savedPage = existingPage
-          ? await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
-          : await prisma.page.create({ data: pageData })
+        if (existingPage) {
+          await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
+        } else {
+          await prisma.page.create({ data: pageData })
+        }
 
         pagesProcessed++
-        await prisma.link.deleteMany({ where: { sourcePageId: savedPage.id } })
         const seenTargetUrls = new Set<string>()
 
         for (const link of $("a").toArray()) {
@@ -464,22 +465,23 @@ export async function runCrawler(siteId: string, siteUrl: string) {
                   update: {},
                   select: { id: true },
                 })
-            const targetPage = await prisma.page.findFirst({
-              where: { domainId: targetDomain.id, url: absoluteUrl },
-              select: { id: true },
-            })
-
-            await prisma.link.create({
-              data: {
-                sourceDomainId: siteId,
-                targetDomainId: targetDomain.id,
-                sourcePageId: savedPage.id,
-                targetPageId: targetPage?.id || null,
-                sourceUrl: currentUrl,
-                targetUrl: absoluteUrl,
-                anchorText: $(link).text().replace(/\s\s+/g, " ").trim() || null,
-                rel: $(link).attr("rel") || null,
-                type: isInternalLink ? "Internal" : "External",
+            await prisma.link.upsert({
+              where: {
+                linkFrom_linkTo_fromDomain_toDomain: {
+                  linkFrom: currentUrl,
+                  linkTo: absoluteUrl,
+                  fromDomain: siteId,
+                  toDomain: targetDomain.id,
+                },
+              },
+              create: {
+                linkFrom: currentUrl,
+                linkTo: absoluteUrl,
+                fromDomain: siteId,
+                toDomain: targetDomain.id,
+              },
+              update: {
+                linkFrom: currentUrl,
               },
             })
 

@@ -30,8 +30,8 @@ model Domain {
   details     Json?
 
   pages Page[]
-  sourceLinks Link[] @relation("SourceDomainLinks")
-  targetLinks Link[] @relation("TargetDomainLinks")
+  linksFrom Link[] @relation("FromDomainLinks")
+  linksTo   Link[] @relation("ToDomainLinks")
 
   @@index([addedOn])
   @@index([status])
@@ -53,8 +53,6 @@ model Page {
   lastCrawled DateTime?
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  sourceLinks Link[] @relation("SourcePageLinks")
-  targetLinks Link[] @relation("TargetPageLinks")
 
   @@index([addedOn])
   @@index([domainId])
@@ -64,28 +62,21 @@ model Page {
 }
 
 model Link {
-  id             String   @id @default(cuid())
-  sourceDomainId String
-  targetDomainId String
-  sourcePageId   String?
-  targetPageId   String?
-  sourceUrl      String
-  targetUrl      String
-  anchorText     String?
-  rel            String?
-  type           String
-  addedOn        DateTime @default(now())
+  id           String   @id @default(cuid())
+  linkFrom     String
+  linkTo       String
+  fromDomain   String
+  toDomain     String
+  firstCrawlOn DateTime @default(now())
 
-  sourceDomain Domain @relation("SourceDomainLinks", fields: [sourceDomainId], references: [id], onDelete: Cascade)
-  targetDomain Domain @relation("TargetDomainLinks", fields: [targetDomainId], references: [id], onDelete: Cascade)
-  sourcePage   Page?  @relation("SourcePageLinks", fields: [sourcePageId], references: [id], onDelete: SetNull)
-  targetPage   Page?  @relation("TargetPageLinks", fields: [targetPageId], references: [id], onDelete: SetNull)
+  from Domain @relation("FromDomainLinks", fields: [fromDomain], references: [id], onDelete: Cascade)
+  to   Domain @relation("ToDomainLinks", fields: [toDomain], references: [id], onDelete: Cascade)
 
-  @@index([addedOn])
-  @@index([sourceDomainId])
-  @@index([targetDomainId])
-  @@index([sourcePageId])
-  @@index([targetPageId])
-  @@index([targetUrl])
+  @@unique([linkFrom, linkTo, fromDomain, toDomain])
+  @@index([firstCrawlOn])
+  @@index([fromDomain])
+  @@index([toDomain])
+  @@index([linkFrom])
+  @@index([linkTo])
   @@map("Links")
 }
