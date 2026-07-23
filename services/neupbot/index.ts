@@ -68,7 +68,7 @@ export type SitemapReference = {
   sitemapUrl: string
 }
 
-export type ContentKind = "image" | "video"
+export type ContentKind = "image" | "video" | "audio" | "text" | "document" | "iframe"
 
 export type ContentItem = {
   id: string
@@ -84,6 +84,13 @@ export type ContentItem = {
   alt?: string
 }
 
+export type PaginatedContentItems = {
+  items: ContentItem[]
+  page: number
+  pageSize: number
+  hasNextPage: boolean
+}
+
 type SitemapUrlEntry = {
   url: string
   sitemapUrl: string
@@ -91,6 +98,9 @@ type SitemapUrlEntry = {
 
 const imageFileTypes = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff"])
 const videoFileTypes = new Set(["mp4", "webm", "mov", "m4v", "avi", "mpeg", "mpg", "ogv"])
+const audioFileTypes = new Set(["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "weba"])
+const textFileTypes = new Set(["txt", "csv", "json", "xml", "html", "htm", "css", "js", "ts", "md", "log"])
+const documentFileTypes = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"])
 
 export function classifyContentSlug(slug: string): { kind?: ContentKind; fileType?: string } | null {
   const normalizedSlug = slug.toLowerCase()
@@ -98,8 +108,15 @@ export function classifyContentSlug(slug: string): { kind?: ContentKind; fileTyp
   if (normalizedSlug === "content") return {}
   if (normalizedSlug === "image") return { kind: "image" }
   if (normalizedSlug === "video") return { kind: "video" }
+  if (normalizedSlug === "audio") return { kind: "audio" }
+  if (normalizedSlug === "iframe") return { kind: "iframe" }
+  if (normalizedSlug === "text") return { kind: "text" }
+  if (normalizedSlug === "document") return { kind: "document" }
   if (imageFileTypes.has(normalizedSlug)) return { kind: "image", fileType: normalizedSlug }
   if (videoFileTypes.has(normalizedSlug)) return { kind: "video", fileType: normalizedSlug }
+  if (audioFileTypes.has(normalizedSlug)) return { kind: "audio", fileType: normalizedSlug }
+  if (textFileTypes.has(normalizedSlug)) return { kind: "text", fileType: normalizedSlug }
+  if (documentFileTypes.has(normalizedSlug)) return { kind: "document", fileType: normalizedSlug }
 
   return null
 }
@@ -204,6 +221,9 @@ function classifyContentUrl(url: string): { kind: ContentKind; fileType: string 
   if (!fileType) return null
   if (imageFileTypes.has(fileType)) return { kind: "image", fileType }
   if (videoFileTypes.has(fileType)) return { kind: "video", fileType }
+  if (audioFileTypes.has(fileType)) return { kind: "audio", fileType }
+  if (textFileTypes.has(fileType)) return { kind: "text", fileType }
+  if (documentFileTypes.has(fileType)) return { kind: "document", fileType }
   return null
 }
 
@@ -212,10 +232,10 @@ function matchesContentTarget(content: { kind: ContentKind; fileType: string }, 
   return !target.fileType || content.fileType === target.fileType
 }
 
-function readContentAssets(data: unknown, sourcePageUrl: string): Array<{ url: string; alt?: string }> {
+function readContentAssets(data: unknown, sourcePageUrl: string): Array<{ url: string; alt?: string; kind?: ContentKind; fileType?: string }> {
   if (!Array.isArray(data)) return []
 
-  const assets: Array<{ url: string; alt?: string }> = []
+  const assets: Array<{ url: string; alt?: string; kind?: ContentKind; fileType?: string }> = []
   for (const entry of data) {
     if (!entry || typeof entry !== "object") continue
 
@@ -241,18 +261,74 @@ function readContentAssets(data: unknown, sourcePageUrl: string): Array<{ url: s
         }
       }
     }
+
+    if ("audios" in entry && Array.isArray(entry.audios)) {
+      for (const audio of entry.audios) {
+        if (typeof audio !== "string") continue
+        try {
+          assets.push({ url: new URL(audio, sourcePageUrl).toString() })
+        } catch {
+        }
+      }
+    }
+
+    if ("iframes" in entry && Array.isArray(entry.iframes)) {
+      for (const iframe of entry.iframes) {
+        if (typeof iframe !== "string") continue
+        try {
+          assets.push({ url: new URL(iframe, sourcePageUrl).toString(), kind: "iframe", fileType: "iframe" })
+        } catch {
+        }
+      }
+    }
+
+    if ("bodyHtml" in entry && typeof entry.bodyHtml === "string") {
+      const $ = cheerio.load(entry.bodyHtml)
+      for (const iframe of $("iframe").toArray()) {
+        const src = $(iframe).attr("src")
+        if (!src) continue
+        try {
+          assets.push({ url: new URL(src, sourcePageUrl).toString(), kind: "iframe", fileType: "iframe" })
+        } catch {
+        }
+      }
+    }
   }
 
   return assets
 }
 
-export async function getContentItemsByFileTypeSlug(slug: string): Promise<ContentItem[] | null> {
+function matchesContentSearch(item: ContentItem, search?: string) {
+  const normalizedSearch = search?.trim().toLowerCase()
+  if (!normalizedSearch) return true
+
+  return [
+    item.url,
+    item.siteUrl,
+    item.sourcePageTitle,
+    item.sourcePageUrl,
+    item.fileType,
+    item.kind,
+    item.alt,
+  ].some((value) => value?.toLowerCase().includes(normalizedSearch))
+}
+
+export async function getContentItemsByFileTypeSlug(
+  slug: string,
+  page = 1,
+  pageSize = 15,
+  search?: string,
+): Promise<PaginatedContentItems | null> {
   const target = classifyContentSlug(slug)
   if (!target) return null
+  const currentPage = Math.max(1, Math.floor(page))
+  const resultLimit = Math.min(100, Math.max(1, Math.floor(pageSize)))
+  const neededItems = currentPage * resultLimit + 1
 
   try {
     const pages = await prisma.page.findMany({
       orderBy: { addedOn: "desc" },
+      take: neededItems * 5,
       select: {
         id: true,
         url: true,
@@ -277,7 +353,7 @@ export async function getContentItemsByFileTypeSlug(slug: string): Promise<Conte
 
       if (directContent && matchesContentTarget(directContent, target) && !seenUrls.has(page.url)) {
         seenUrls.add(page.url)
-        contentItems.push({
+        const contentItem = {
           id: `${page.id}:direct`,
           url: page.url,
           kind: directContent.kind,
@@ -288,15 +364,29 @@ export async function getContentItemsByFileTypeSlug(slug: string): Promise<Conte
           siteUrl: page.domain.domain,
           status: page.status,
           statusCode: page.statusCode,
-        })
+        }
+        if (matchesContentSearch(contentItem, search)) {
+          contentItems.push(contentItem)
+        }
+        if (contentItems.length >= neededItems) {
+          const start = (currentPage - 1) * resultLimit
+          return {
+            items: contentItems.slice(start, start + resultLimit),
+            page: currentPage,
+            pageSize: resultLimit,
+            hasNextPage: contentItems.length > start + resultLimit,
+          }
+        }
       }
 
       for (const asset of readContentAssets(page.data, page.url)) {
-        const assetContent = classifyContentUrl(asset.url)
+        const assetContent = asset.kind && asset.fileType
+          ? { kind: asset.kind, fileType: asset.fileType }
+          : classifyContentUrl(asset.url)
         if (!assetContent || !matchesContentTarget(assetContent, target) || seenUrls.has(asset.url)) continue
 
         seenUrls.add(asset.url)
-        contentItems.push({
+        const contentItem = {
           id: `${page.id}:${asset.url}`,
           url: asset.url,
           kind: assetContent.kind,
@@ -308,14 +398,32 @@ export async function getContentItemsByFileTypeSlug(slug: string): Promise<Conte
           status: page.status,
           statusCode: page.statusCode,
           alt: asset.alt,
-        })
+        }
+        if (matchesContentSearch(contentItem, search)) {
+          contentItems.push(contentItem)
+        }
+        if (contentItems.length >= neededItems) {
+          const start = (currentPage - 1) * resultLimit
+          return {
+            items: contentItems.slice(start, start + resultLimit),
+            page: currentPage,
+            pageSize: resultLimit,
+            hasNextPage: contentItems.length > start + resultLimit,
+          }
+        }
       }
     }
 
-    return contentItems
+    const start = (currentPage - 1) * resultLimit
+    return {
+      items: contentItems.slice(start, start + resultLimit),
+      page: currentPage,
+      pageSize: resultLimit,
+      hasNextPage: contentItems.length > start + resultLimit,
+    }
   } catch (error) {
     await logError({ error, slug }, "getContentItemsByFileTypeSlug")
-    return []
+    return { items: [], page: currentPage, pageSize: resultLimit, hasNextPage: false }
   }
 }
 
@@ -707,6 +815,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
           images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
           videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
           audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+          iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
           sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
         }]
 

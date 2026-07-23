@@ -5,6 +5,7 @@ import { getPageById, getBacklinks, getPageSitemapReferences, summarizePageActio
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
+import { CrawlerDataPanel } from "./crawler-data-panel"
 
 export default async function PageDetailPage({ params }: { params: Promise<{ pageId: string }> }) {
   const resolvedParams = await params;
@@ -51,6 +52,8 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
           </p>
         </CardContent>
       </Card>
+
+      <CrawlerDataPanel url={page.url} />
 
       <section className="space-y-3">
         <div className="space-y-1">

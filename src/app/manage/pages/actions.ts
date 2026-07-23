@@ -5,7 +5,7 @@ import { logError } from "@/lib/logging"
 import { revalidatePath } from "next/cache"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
 import type { Prisma } from "@prisma/client"
-import { findSitemapReferencesForUrl, type SitemapReference } from "../../../../services/neupbot"
+import { findSitemapReferencesForUrl, neupbotUserAgent, type SitemapReference } from "../../../../services/neupbot"
 
 export type Page = {
   id: string
@@ -30,6 +30,20 @@ export type Backlink = {
 }
 
 export type PageSitemapReference = SitemapReference
+
+export type LiveCrawlerDataState = {
+  data?: {
+    url: string
+    status: number
+    statusText: string
+    contentType: string | null
+    fetchedAt: string
+    html: string
+    truncated: boolean
+    headers: Array<{ key: string; value: string }>
+  }
+  error?: string
+}
 
 export type PaginatedPages = {
   pages: Page[]
@@ -345,6 +359,40 @@ export async function getPageSitemapReferences(page: Page): Promise<PageSitemapR
   }
 
   return [...references.values()]
+}
+
+export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, formData: FormData): Promise<LiveCrawlerDataState> {
+  const pageUrl = String(formData.get("url") || "")
+
+  if (!pageUrl) {
+    return { error: "Page URL is required." }
+  }
+
+  try {
+    const response = await fetch(pageUrl, {
+      headers: { "User-Agent": neupbotUserAgent },
+      redirect: "manual",
+      cache: "no-store",
+    })
+    const html = await response.text()
+    const maxLength = 500_000
+
+    return {
+      data: {
+        url: pageUrl,
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get("content-type"),
+        fetchedAt: new Date().toISOString(),
+        html: html.slice(0, maxLength),
+        truncated: html.length > maxLength,
+        headers: Array.from(response.headers.entries()).map(([key, value]) => ({ key, value })),
+      },
+    }
+  } catch (error) {
+    await logError({ error, pageUrl }, "viewCrawlerDataAction")
+    return { error: "Could not fetch live crawler data for this page." }
+  }
 }
 
 export async function summarizePageAction(pageId: string, pageContent: string) {
