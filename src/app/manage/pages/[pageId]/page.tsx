@@ -1,10 +1,9 @@
 
 
 import { notFound } from "next/navigation"
-import { getPageById, getBacklinks, summarizePageAction } from "../actions"
+import { getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import Link from "next/link"
 
 export default async function PageDetailPage({ params }: { params: Promise<{ pageId: string }> }) {
@@ -15,7 +14,10 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
     notFound()
   }
 
-  const backlinks = await getBacklinks(page.url)
+  const [backlinks, sitemapReferences] = await Promise.all([
+    getBacklinks(page.url),
+    getPageSitemapReferences(page),
+  ])
 
   return (
     <div className="grid gap-6">
@@ -50,42 +52,74 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Backlinks</CardTitle>
-          <CardDescription>
-            A list of all pages that link to this page.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Source URL</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold leading-none tracking-tight">Linked From Pages</h2>
+          <p className="text-sm text-muted-foreground">
+            Pages that contain a link to this page.
+          </p>
+        </div>
+        <div className="space-y-3">
               {backlinks.length === 0 && (
-                <TableRow>
-                  <TableCell className="h-24 text-center">
+                <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                     No backlinks have been recorded for this page yet.
-                  </TableCell>
-                </TableRow>
+                </div>
               )}
               {backlinks.map((link) => (
-                <TableRow key={link.id}>
-                  <TableCell className="font-medium">
-                     <Link href={link.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
-                        {link.sourceTitle}
-                    </Link>
-                    <p className="text-xs text-muted-foreground">{link.sourceUrl}</p>
-                  </TableCell>
-                </TableRow>
+                <Card key={link.id} className="transition-colors hover:bg-muted/50">
+                  <CardContent className="p-4">
+                    <div className="space-y-2">
+                      {link.sourcePageId ? (
+                        <Link href={`/manage/pages/${link.sourcePageId}`} className="font-medium hover:underline">
+                          {link.sourceTitle}
+                        </Link>
+                      ) : (
+                        <div className="font-medium">{link.sourceTitle}</div>
+                      )}
+                      <Link
+                        href={link.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block break-all text-sm text-muted-foreground hover:text-primary"
+                      >
+                        {link.sourceUrl}
+                      </Link>
+                    </div>
+                  </CardContent>
+                </Card>
               ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold leading-none tracking-tight">Listed In Sitemaps</h2>
+          <p className="text-sm text-muted-foreground">
+            Sitemaps that include this page URL.
+          </p>
+        </div>
+        <div className="space-y-3">
+          {sitemapReferences.length === 0 && (
+            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                This page has not been found in a sitemap yet.
+            </div>
+          )}
+          {sitemapReferences.map((reference) => (
+            <Card key={reference.sitemapUrl} className="transition-colors hover:bg-muted/50">
+              <CardContent className="p-4">
+                <Link
+                  href={reference.sitemapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block break-all text-sm font-medium hover:text-primary"
+                >
+                  {reference.sitemapUrl}
+                </Link>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
     </div>
   )
 }

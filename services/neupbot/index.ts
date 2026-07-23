@@ -64,6 +64,46 @@ export type CrawlIssue = {
   addedOn: Date
 }
 
+export type SitemapReference = {
+  sitemapUrl: string
+}
+
+export type ContentKind = "image" | "video"
+
+export type ContentItem = {
+  id: string
+  url: string
+  kind: ContentKind
+  fileType: string
+  sourcePageId: string
+  sourcePageUrl: string
+  sourcePageTitle: string
+  siteUrl: string
+  status: string
+  statusCode: number | null
+  alt?: string
+}
+
+type SitemapUrlEntry = {
+  url: string
+  sitemapUrl: string
+}
+
+const imageFileTypes = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff"])
+const videoFileTypes = new Set(["mp4", "webm", "mov", "m4v", "avi", "mpeg", "mpg", "ogv"])
+
+export function classifyContentSlug(slug: string): { kind?: ContentKind; fileType?: string } | null {
+  const normalizedSlug = slug.toLowerCase()
+
+  if (normalizedSlug === "content") return {}
+  if (normalizedSlug === "image") return { kind: "image" }
+  if (normalizedSlug === "video") return { kind: "video" }
+  if (imageFileTypes.has(normalizedSlug)) return { kind: "image", fileType: normalizedSlug }
+  if (videoFileTypes.has(normalizedSlug)) return { kind: "video", fileType: normalizedSlug }
+
+  return null
+}
+
 export class InvalidDomainError extends Error {
   constructor(message = "Please enter a valid domain.") {
     super(message)
@@ -121,6 +161,162 @@ export function assertValidSiteDomain(input: string) {
 
 export function getDomainName(input: string) {
   return new URL(input).hostname
+}
+
+function normalizeCrawlTarget(input: string) {
+  const url = new URL(input)
+  return url.origin + url.pathname
+}
+
+function addSitemapReference(
+  references: Map<string, Set<string>>,
+  pageUrl: string,
+  sitemapUrl: string,
+) {
+  const normalizedUrl = normalizeCrawlTarget(pageUrl)
+  const sitemapUrls = references.get(normalizedUrl) ?? new Set<string>()
+  sitemapUrls.add(sitemapUrl)
+  references.set(normalizedUrl, sitemapUrls)
+}
+
+function readSitemapReferences(
+  references: Map<string, Set<string>>,
+  pageUrl: string,
+): SitemapReference[] {
+  return [...(references.get(normalizeCrawlTarget(pageUrl)) ?? [])].map((sitemapUrl) => ({
+    sitemapUrl,
+  }))
+}
+
+function getUrlFileType(input: string): string | null {
+  try {
+    const pathname = new URL(input).pathname
+    const fileName = pathname.split("/").pop() || ""
+    const extension = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : null
+    return extension || null
+  } catch {
+    return null
+  }
+}
+
+function classifyContentUrl(url: string): { kind: ContentKind; fileType: string } | null {
+  const fileType = getUrlFileType(url)
+  if (!fileType) return null
+  if (imageFileTypes.has(fileType)) return { kind: "image", fileType }
+  if (videoFileTypes.has(fileType)) return { kind: "video", fileType }
+  return null
+}
+
+function matchesContentTarget(content: { kind: ContentKind; fileType: string }, target: { kind?: ContentKind; fileType?: string }) {
+  if (target.kind && content.kind !== target.kind) return false
+  return !target.fileType || content.fileType === target.fileType
+}
+
+function readContentAssets(data: unknown, sourcePageUrl: string): Array<{ url: string; alt?: string }> {
+  if (!Array.isArray(data)) return []
+
+  const assets: Array<{ url: string; alt?: string }> = []
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object") continue
+
+    if ("images" in entry && Array.isArray(entry.images)) {
+      for (const image of entry.images) {
+        if (!image || typeof image !== "object" || !("src" in image) || typeof image.src !== "string") continue
+        try {
+          assets.push({
+            url: new URL(image.src, sourcePageUrl).toString(),
+            alt: "alt" in image && typeof image.alt === "string" ? image.alt : undefined,
+          })
+        } catch {
+        }
+      }
+    }
+
+    if ("videos" in entry && Array.isArray(entry.videos)) {
+      for (const video of entry.videos) {
+        if (typeof video !== "string") continue
+        try {
+          assets.push({ url: new URL(video, sourcePageUrl).toString() })
+        } catch {
+        }
+      }
+    }
+  }
+
+  return assets
+}
+
+export async function getContentItemsByFileTypeSlug(slug: string): Promise<ContentItem[] | null> {
+  const target = classifyContentSlug(slug)
+  if (!target) return null
+
+  try {
+    const pages = await prisma.page.findMany({
+      orderBy: { addedOn: "desc" },
+      select: {
+        id: true,
+        url: true,
+        title: true,
+        type: true,
+        data: true,
+        status: true,
+        statusCode: true,
+        domain: {
+          select: {
+            domain: true,
+          },
+        },
+      },
+    })
+    const seenUrls = new Set<string>()
+    const contentItems: ContentItem[] = []
+
+    for (const page of pages) {
+      const sourcePageTitle = page.title || page.url
+      const directContent = classifyContentUrl(page.url)
+
+      if (directContent && matchesContentTarget(directContent, target) && !seenUrls.has(page.url)) {
+        seenUrls.add(page.url)
+        contentItems.push({
+          id: `${page.id}:direct`,
+          url: page.url,
+          kind: directContent.kind,
+          fileType: directContent.fileType,
+          sourcePageId: page.id,
+          sourcePageUrl: page.url,
+          sourcePageTitle,
+          siteUrl: page.domain.domain,
+          status: page.status,
+          statusCode: page.statusCode,
+        })
+      }
+
+      for (const asset of readContentAssets(page.data, page.url)) {
+        const assetContent = classifyContentUrl(asset.url)
+        if (!assetContent || !matchesContentTarget(assetContent, target) || seenUrls.has(asset.url)) continue
+
+        seenUrls.add(asset.url)
+        contentItems.push({
+          id: `${page.id}:${asset.url}`,
+          url: asset.url,
+          kind: assetContent.kind,
+          fileType: assetContent.fileType,
+          sourcePageId: page.id,
+          sourcePageUrl: page.url,
+          sourcePageTitle,
+          siteUrl: page.domain.domain,
+          status: page.status,
+          statusCode: page.statusCode,
+          alt: asset.alt,
+        })
+      }
+    }
+
+    return contentItems
+  } catch (error) {
+    await logError({ error, slug }, "getContentItemsByFileTypeSlug")
+    return []
+  }
 }
 
 export function readDetails(details: unknown): DomainDetails {
@@ -281,10 +477,14 @@ function parseRobotsTxt(robotsTxt: string): { sitemaps: string[], disallow: RegE
   let isOurBot = false
 
   robotsTxt.split("\n").forEach((line) => {
-    const [key, value] = line.split(":").map((part) => part.trim())
+    const separatorIndex = line.indexOf(":")
+    if (separatorIndex === -1) return
+
+    const key = line.slice(0, separatorIndex).trim()
+    const value = line.slice(separatorIndex + 1).trim()
     if (key?.toLowerCase() === "user-agent") {
       isOurBot = value === "*" || value === neupbotUserAgent
-    } else if (isOurBot && key?.toLowerCase() === "sitemap" && value) {
+    } else if (key?.toLowerCase() === "sitemap" && value) {
       sitemaps.push(value)
     } else if (isOurBot && key?.toLowerCase() === "disallow" && value) {
       disallow.push(new RegExp("^" + value.replace(/\*/g, ".*").replace(/\//g, "\\/")))
@@ -294,23 +494,52 @@ function parseRobotsTxt(robotsTxt: string): { sitemaps: string[], disallow: RegE
   return { sitemaps, disallow }
 }
 
-async function getSitemapUrls(sitemapUrl: string): Promise<string[]> {
+async function getSitemapUrlEntries(sitemapUrl: string): Promise<SitemapUrlEntry[]> {
   try {
     const response = await fetch(sitemapUrl, { headers: { "User-Agent": neupbotUserAgent } })
     if (!response.ok) return []
 
     const xml = await response.text()
     const $ = cheerio.load(xml, { xmlMode: true })
-    const urls = $("url > loc").map((_: number, el: cheerio.Element) => $(el).text()).get()
+    const urls = $("url > loc")
+      .map((_: number, el: cheerio.Element): SitemapUrlEntry => ({
+        url: $(el).text(),
+        sitemapUrl,
+      }))
+      .get()
     const nestedSitemaps = $("sitemap > loc").map((_: number, el: cheerio.Element) => $(el).text()).get()
 
     for (const nestedSitemap of nestedSitemaps) {
-      urls.push(...await getSitemapUrls(nestedSitemap))
+      urls.push(...await getSitemapUrlEntries(nestedSitemap))
     }
 
     return urls
   } catch (error) {
     await logError({ error, sitemapUrl }, "getSitemapUrls")
+    return []
+  }
+}
+
+export async function findSitemapReferencesForUrl(pageUrl: string, siteUrl: string): Promise<SitemapReference[]> {
+  try {
+    const robotsTxt = await getRobotsTxt(siteUrl)
+    const { sitemaps } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [] }
+    const sitemapUrls = sitemaps.length > 0 ? sitemaps : [new URL("/sitemap.xml", siteUrl).toString()]
+    const normalizedPageUrl = normalizeCrawlTarget(pageUrl)
+    const references = new Set<string>()
+
+    for (const sitemapUrl of sitemapUrls) {
+      const entries = await getSitemapUrlEntries(sitemapUrl)
+      for (const entry of entries) {
+        if (normalizeCrawlTarget(entry.url) === normalizedPageUrl) {
+          references.add(entry.sitemapUrl)
+        }
+      }
+    }
+
+    return [...references].map((sitemapUrl) => ({ sitemapUrl }))
+  } catch (error) {
+    await logError({ error, pageUrl, siteUrl }, "findSitemapReferencesForUrl")
     return []
   }
 }
@@ -322,6 +551,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
 
   const rootDomain = getDomainName(siteUrl)
   const crawledUrls = new Set<string>()
+  const sitemapReferencesByUrl = new Map<string, Set<string>>()
   let pagesProcessed = 0
 
   try {
@@ -343,13 +573,20 @@ export async function runCrawler(siteId: string, siteUrl: string) {
     if (sitemaps.length > 0) {
       await updateDomainDetails(siteId, { currentActivity: `Found ${sitemaps.length} sitemaps. Parsing...` })
       for (const sitemapUrl of sitemaps) {
-        urlQueue.push(...await getSitemapUrls(sitemapUrl))
+        const entries = await getSitemapUrlEntries(sitemapUrl)
+        for (const entry of entries) {
+          addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
+          urlQueue.push(entry.url)
+        }
       }
     } else {
-      const sitemapUrls = await getSitemapUrls(new URL("/sitemap.xml", siteUrl).toString())
-      if (sitemapUrls.length > 0) {
+      const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString())
+      if (sitemapEntries.length > 0) {
         await updateDomainDetails(siteId, { currentActivity: "Found default sitemap.xml. Parsing..." })
-        urlQueue.push(...sitemapUrls)
+        for (const entry of sitemapEntries) {
+          addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
+          urlQueue.push(entry.url)
+        }
       }
     }
 
@@ -393,6 +630,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
             contentType,
             headers: Object.fromEntries(response.headers.entries()),
             redirectLocation: targetUrl,
+            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
           }]
           const pageData = {
             domainId: siteId,
@@ -425,7 +663,11 @@ export async function runCrawler(siteId: string, siteUrl: string) {
         const isHtml = contentType?.includes("text/html") ?? false
         if (!response.ok || !isHtml) {
           const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
-          const data = [{ contentType, headers: Object.fromEntries(response.headers.entries()) }]
+          const data = [{
+            contentType,
+            headers: Object.fromEntries(response.headers.entries()),
+            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
+          }]
           const pageData = {
             domainId: siteId,
             url: currentUrl,
@@ -465,6 +707,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
           images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
           videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
           audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+          sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
         }]
 
         const pageData = {

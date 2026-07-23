@@ -12,6 +12,7 @@ import {
   LineChart,
   Globe,
   AlertTriangle,
+  Files,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -37,6 +38,7 @@ export default function ManageLayout({
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/sites", label: "Crawled Sites", icon: Globe },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
+    { href: "/manage/content", label: "Content", icon: Files },
     { href: "/manage/errorrs", label: "Crawl Errors", icon: AlertTriangle },
     { href: "/manage/system/error", label: "System Errors", icon: AlertTriangle },
     { href: "#", label: "Indexing", icon: Package },

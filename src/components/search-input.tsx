@@ -17,9 +17,10 @@ export function SearchInput({ placeholder }: { placeholder: string }) {
     } else {
       params.delete('q');
     }
-    params.delete('startAfter'); // Reset pagination on new search
+    params.delete('startAfter'); // Reset cursor pagination on routes that still use it.
+    params.delete('page'); // Reset page-number pagination on new search.
     replace(`${pathname}?${params.toString()}`);
-  }, 300);
+  }, 3000);
 
   return (
     <Input
