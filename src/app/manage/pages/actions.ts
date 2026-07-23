@@ -11,7 +11,8 @@ export type Page = {
   url: string
   title: string
   siteUrl: string
-  status: "Indexed" | "Error" | "Pending" | "Skipped"
+  status: "Indexed" | "Error" | "Pending" | "Skipped" | "Redirect"
+  statusCode: number | null
   lastIndexed: string | null
   createdAt: Date
   description?: string
@@ -36,6 +37,7 @@ type PageRow = {
   title: string | null
   description: string | null
   status: string
+  statusCode: number | null
   lastCrawled: Date | null
   addedOn: Date
   fullContent?: string | null
@@ -63,6 +65,7 @@ function mapPage(page: PageRow): Page {
     description: page.description || "No description",
     siteUrl: page.domain.domain,
     status: page.status as Page["status"],
+    statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
     summary: readSummary(page.data),
@@ -123,8 +126,40 @@ export async function getPageById(pageId: string): Promise<Page | null> {
   }
 }
 
-export async function getBacklinks(_pageUrl?: string): Promise<Backlink[]> {
-  return []
+export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
+  if (!pageUrl) return []
+
+  try {
+    const links = await prisma.link.findMany({
+      where: { linkTo: pageUrl },
+      orderBy: { firstCrawlOn: "desc" },
+      select: {
+        id: true,
+        linkFrom: true,
+      },
+    })
+
+    if (links.length === 0) return []
+
+    const sourceUrls = [...new Set(links.map((link) => link.linkFrom))]
+    const sourcePages = await prisma.page.findMany({
+      where: { url: { in: sourceUrls } },
+      select: {
+        url: true,
+        title: true,
+      },
+    })
+    const sourceTitleByUrl = new Map(sourcePages.map((page) => [page.url, page.title || "No title"]))
+
+    return links.map((link) => ({
+      id: link.id,
+      sourceUrl: link.linkFrom,
+      sourceTitle: sourceTitleByUrl.get(link.linkFrom) || link.linkFrom,
+    }))
+  } catch (error) {
+    await logError({ error, pageUrl }, "getBacklinks")
+    return []
+  }
 }
 
 export async function summarizePageAction(pageId: string, pageContent: string) {

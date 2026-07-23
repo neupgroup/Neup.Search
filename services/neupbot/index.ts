@@ -32,7 +32,8 @@ export type ManagedPage = {
   url: string
   title: string
   siteUrl: string
-  status: "Indexed" | "Error" | "Pending" | "Skipped"
+  status: "Indexed" | "Error" | "Pending" | "Skipped" | "Redirect"
+  statusCode: number | null
   lastIndexed: string | null
   createdAt: Date
   description?: string
@@ -551,6 +552,7 @@ export async function getPagesForDomain(siteId: string, startAfterDocId?: string
     description: page.description || "No description",
     siteUrl: page.domain.domain,
     status: page.status as ManagedPage["status"],
+    statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
     content: page.fullContent || undefined,

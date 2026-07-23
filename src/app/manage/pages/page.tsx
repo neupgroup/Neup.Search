@@ -2,14 +2,24 @@
 
 import { Suspense } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { MoreHorizontal, Search } from "lucide-react"
-import { getPages } from "./actions"
+import { ExternalLink, Search } from "lucide-react"
+import { getPages, type Page } from "./actions"
 import Link from "next/link"
 import { SearchInput } from "@/components/search-input"
+
+function getStatusLabel(page: Page) {
+    return page.statusCode && page.statusCode >= 400 ? String(page.statusCode) : page.status
+}
+
+function getStatusVariant(page: Page) {
+    if (page.statusCode && page.statusCode >= 400) return "destructive"
+    if (page.status === "Error") return "destructive"
+    if (page.status === "Indexed") return "default"
+    if (page.status === "Pending") return "outline"
+    return "secondary"
+}
 
 function PageContent({search, startAfter}: {search?: string, startAfter?: string}) {
     return (
@@ -29,13 +39,15 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
     }
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>Indexed Pages</CardTitle>
-                <CardDescription>
-                View and manage all the pages that have been crawled and indexed.
-                </CardDescription>
-                <div className="flex items-center justify-between pt-4">
+        <div className="space-y-4">
+            <div className="space-y-4">
+                <div className="space-y-1">
+                    <h1 className="text-2xl font-semibold leading-none tracking-tight">Indexed Pages</h1>
+                    <p className="text-sm text-muted-foreground">
+                        View and manage all the pages that have been crawled and indexed.
+                    </p>
+                </div>
+                <div className="flex items-center justify-between">
                     <div className="relative flex-1 md:grow-0">
                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                         <SearchInput 
@@ -43,70 +55,45 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
                         />
                     </div>
                 </div>
-            </CardHeader>
-            <CardContent>
-                <Table>
-                <TableHeader>
-                    <TableRow>
-                    <TableHead className="w-[30%]">Page Title</TableHead>
-                    <TableHead className="w-[30%]">URL</TableHead>
-                    <TableHead>Site</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Last Indexed</TableHead>
-                    <TableHead>
-                        <span className="sr-only">Actions</span>
-                    </TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {pages.length === 0 && (
-                        <TableRow>
-                            <TableCell colSpan={6} className="h-24 text-center">
-                                No pages found.
-                            </TableCell>
-                        </TableRow>
-                    )}
-                    {pages.map((page) => (
-                    <TableRow key={page.id}>
-                        <TableCell className="font-medium">
-                            <Link href={`/manage/pages/${page.id}`} className="font-bold hover:underline">{page.title}</Link>
-                            <div className="text-xs text-muted-foreground line-clamp-2">{page.description}</div>
-                        </TableCell>
-                        <TableCell className="font-medium break-all">{page.url}</TableCell>
-                        <TableCell>{page.siteUrl}</TableCell>
-                        <TableCell>
-                        <Badge variant={
-                            page.status === 'Indexed' ? 'default' 
-                            : page.status === 'Pending' ? 'outline'
-                            : 'destructive'
-                        }>
-                            {page.status}
-                        </Badge>
-                        </TableCell>
-                        <TableCell>{page.lastIndexed}</TableCell>
-                        <TableCell>
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                            <Button aria-haspopup="true" size="icon" variant="ghost">
-                                <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Toggle menu</span>
-                            </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                            <DropdownMenuItem>Re-index</DropdownMenuItem>
-                            <DropdownMenuItem asChild>
-                                <Link href={`/manage/pages/${page.id}`}>View Details</Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem className="text-red-600">Delete from Index</DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                        </TableCell>
-                    </TableRow>
-                    ))}
-                </TableBody>
-                </Table>
-            </CardContent>
-            <CardFooter>
+            </div>
+            <div className="space-y-3">
+                {pages.length === 0 && (
+                    <Card className="border-dashed">
+                        <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                            No pages found.
+                        </CardContent>
+                    </Card>
+                )}
+                {pages.map((page) => (
+                    <Card key={page.id} className="transition-colors hover:bg-muted/50">
+                        <CardContent className="p-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0 space-y-2">
+                                    <Link
+                                        href={`/manage/pages/${page.id}`}
+                                        className="block truncate text-base font-semibold leading-tight hover:underline"
+                                    >
+                                        {page.title}
+                                    </Link>
+                                    <a
+                                        href={page.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="flex min-w-0 items-center gap-2 break-all text-sm text-muted-foreground hover:text-primary"
+                                    >
+                                        <span>{page.url}</span>
+                                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                    </a>
+                                </div>
+                                <Badge variant={getStatusVariant(page)} className="w-fit shrink-0">
+                                    {getStatusLabel(page)}
+                                </Badge>
+                            </div>
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+            <div>
                  <div className="flex justify-end gap-2 w-full">
                     <Link href={prevLink}>
                         <Button variant="outline" disabled={!startAfter}>Previous</Button>
@@ -115,8 +102,8 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
                         <Button variant="outline" disabled={!lastVisibleId || pages.length < 20}>Next</Button>
                     </Link>
                 </div>
-            </CardFooter>
-        </Card>
+            </div>
+        </div>
     )
 }
 
