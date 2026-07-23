@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import Link from "next/link"
 
-export default async function PageDetailPage({ params }: { params: { pageId: string } }) {
-  const page = await getPageById(params.pageId)
+export default async function PageDetailPage({ params }: { params: Promise<{ pageId: string }> }) {
+  const resolvedParams = await params;
+  const page = await getPageById(resolvedParams.pageId)
   
   if (!page) {
     notFound()

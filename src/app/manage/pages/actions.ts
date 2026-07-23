@@ -1,165 +1,159 @@
-
-
 "use server"
 
 import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logging"
 import { revalidatePath } from "next/cache"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
+import type { Prisma } from "@prisma/client"
 
 export type Page = {
-  id: string;
-  url: string;
-  title: string;
-  siteUrl: string;
-  status: "Indexed" | "Error" | "Pending";
-  lastIndexed: string | null;
-  createdAt: Date;
-  description?: string;
-  summary?: string;
-  content?: string;
+  id: string
+  url: string
+  title: string
+  siteUrl: string
+  status: "Indexed" | "Error" | "Pending" | "Skipped"
+  lastIndexed: string | null
+  createdAt: Date
+  description?: string
+  summary?: string
+  content?: string
 }
 
 export type Backlink = {
-    id: string;
-    sourceUrl: string;
-    sourceTitle: string;
+  id: string
+  sourceUrl: string
+  sourceTitle: string
 }
 
 export type PaginatedPages = {
-    pages: Page[];
-    lastVisibleId: string | null;
+  pages: Page[]
+  lastVisibleId: string | null
+}
+
+type PageRow = {
+  id: string
+  url: string
+  title: string | null
+  description: string | null
+  status: string
+  lastCrawled: Date | null
+  addedOn: Date
+  fullContent?: string | null
+  data?: unknown
+  domain: {
+    domain: string
+  }
+}
+
+function readSummary(data: unknown): string | undefined {
+  if (!Array.isArray(data)) return undefined
+  const summaryEntry = data.find((entry) => {
+    return entry && typeof entry === "object" && "kind" in entry && entry.kind === "summary"
+  })
+  return summaryEntry && typeof summaryEntry === "object" && "summary" in summaryEntry && typeof summaryEntry.summary === "string"
+    ? summaryEntry.summary
+    : undefined
+}
+
+function mapPage(page: PageRow): Page {
+  return {
+    id: page.id,
+    url: page.url,
+    title: page.title || "No title",
+    description: page.description || "No description",
+    siteUrl: page.domain.domain,
+    status: page.status as Page["status"],
+    lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
+    createdAt: page.addedOn,
+    summary: readSummary(page.data),
+    content: page.fullContent || undefined,
+  }
 }
 
 export async function getPages(search?: string, startAfterDocId?: string): Promise<PaginatedPages> {
-    try {
-        const LIMIT = 20;
-        let pagesList: Page[] = [];
-        let lastVisibleId: string | null = null;
-
-        if (search) {
-            const filtered = await prisma.page.findMany({
-                where: {
-                    OR: [
-                        { url: { contains: search, mode: "insensitive" } },
-                        { title: { contains: search, mode: "insensitive" } },
-                        { description: { contains: search, mode: "insensitive" } },
-                    ],
-                },
-                orderBy: { createdAt: "desc" },
-                take: 1000,
-                select: {
-                    id: true, url: true, title: true, description: true, siteUrl: true, status: true, lastIndexed: true, createdAt: true
-                }
-            });
-            let startIndex = 0;
-            if (startAfterDocId) {
-                const foundIndex = filtered.findIndex(p => p.id === startAfterDocId);
-                if (foundIndex !== -1) startIndex = foundIndex + 1;
-            }
-            const slice = filtered.slice(startIndex, startIndex + LIMIT);
-            pagesList = slice.map((p: { id: string; url: string; title: string | null; description: string | null; siteUrl: string | null; status: string; lastIndexed: Date | null; createdAt: Date; }) => ({
-                id: p.id,
-                url: p.url,
-                title: p.title || 'No title',
-                description: p.description || 'No description',
-                siteUrl: p.siteUrl || '',
-                status: p.status as any,
-                lastIndexed: p.lastIndexed ? p.lastIndexed.toLocaleDateString() : 'Never',
-                createdAt: p.createdAt,
-            }));
-            if (filtered.length > startIndex + LIMIT) {
-                lastVisibleId = pagesList[pagesList.length - 1]?.id || null;
-            }
-        } else {
-            const base = await prisma.page.findMany({
-                orderBy: { createdAt: "desc" },
-                take: LIMIT,
-                ...(startAfterDocId
-                    ? {
-                        cursor: { id: startAfterDocId },
-                        skip: 1,
-                      }
-                    : {}),
-                select: {
-                    id: true, url: true, title: true, description: true, siteUrl: true, status: true, lastIndexed: true, createdAt: true
-                }
-            });
-            pagesList = base.map((p: { id: string; url: string; title: string | null; description: string | null; siteUrl: string | null; status: string; lastIndexed: Date | null; createdAt: Date; }) => ({
-                id: p.id,
-                url: p.url,
-                title: p.title || 'No title',
-                description: p.description || 'No description',
-                siteUrl: p.siteUrl || '',
-                status: p.status as any,
-                lastIndexed: p.lastIndexed ? p.lastIndexed.toLocaleDateString() : 'Never',
-                createdAt: p.createdAt,
-            }));
-            lastVisibleId = pagesList.length ? pagesList[pagesList.length - 1].id : null;
+  try {
+    const limit = 20
+    const where = search
+      ? {
+          OR: [
+            { url: { contains: search, mode: "insensitive" as const } },
+            { title: { contains: search, mode: "insensitive" as const } },
+            { description: { contains: search, mode: "insensitive" as const } },
+            { fullContent: { contains: search, mode: "insensitive" as const } },
+            { domain: { domain: { contains: search, mode: "insensitive" as const } } },
+          ],
         }
+      : undefined
 
-        return {
-            pages: pagesList,
-            lastVisibleId,
-        }
-    } catch (error) {
-        await logError(error, "getPages");
-        return { pages: [], lastVisibleId: null };
+    const rows = await prisma.page.findMany({
+      where,
+      orderBy: { addedOn: "desc" },
+      take: search ? 1000 : limit,
+      ...(startAfterDocId && !search ? { cursor: { id: startAfterDocId }, skip: 1 } : {}),
+      include: { domain: { select: { domain: true } } },
+    })
+
+    const startIndex = search && startAfterDocId ? rows.findIndex((page) => page.id === startAfterDocId) + 1 : 0
+    const slice = search ? rows.slice(Math.max(startIndex, 0), Math.max(startIndex, 0) + limit) : rows
+    const pages = slice.map(mapPage)
+
+    return {
+      pages,
+      lastVisibleId: (search ? rows.length > Math.max(startIndex, 0) + limit : pages.length === limit)
+        ? pages[pages.length - 1]?.id || null
+        : null,
     }
+  } catch (error) {
+    await logError(error, "getPages")
+    return { pages: [], lastVisibleId: null }
+  }
 }
 
 export async function getPageById(pageId: string): Promise<Page | null> {
-    try {
-        const p = await prisma.page.findUnique({ where: { id: pageId } });
-        if (!p) return null;
-        return {
-            id: p.id,
-            url: p.url,
-            title: p.title || 'No title',
-            description: p.description || undefined,
-            summary: p.summary || undefined,
-            content: p.content || undefined,
-            siteUrl: p.siteUrl || '',
-            status: p.status as any,
-            lastIndexed: p.lastIndexed ? p.lastIndexed.toLocaleDateString() : 'Never',
-            createdAt: p.createdAt,
-        };
-    } catch (error) {
-        await logError({ error, pageId }, "getPageById");
-        return null;
-    }
+  try {
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      include: { domain: { select: { domain: true } } },
+    })
+
+    return page ? mapPage(page) : null
+  } catch (error) {
+    await logError({ error, pageId }, "getPageById")
+    return null
+  }
 }
 
-export async function getBacklinks(pageUrl: string): Promise<Backlink[]> {
-    try {
-        const links = await prisma.link.findMany({
-            where: { targetUrl: pageUrl },
-            orderBy: { createdAt: "desc" },
-            take: 100,
-            select: { id: true, sourceUrl: true, sourceTitle: true }
-        });
-        return links.map((l: { id: string; sourceUrl: string; sourceTitle: string | null; }) => ({
-            id: l.id,
-            sourceUrl: l.sourceUrl,
-            sourceTitle: l.sourceTitle || l.sourceUrl
-        }));
-    } catch (error) {
-        await logError({ error, pageUrl }, "getBacklinks");
-        return [];
-    }
+export async function getBacklinks(_pageUrl?: string): Promise<Backlink[]> {
+  return []
 }
 
 export async function summarizePageAction(pageId: string, pageContent: string) {
-    try {
-        const { summary } = await summarizePageContent({ content: pageContent });
-        await prisma.page.update({
-            where: { id: pageId },
-            data: { summary }
-        });
+  try {
+    const { summary } = await summarizePageContent({ content: pageContent })
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: { data: true },
+    })
+    const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
+      return entry !== null && !(entry && typeof entry === "object" && "kind" in entry && entry.kind === "summary")
+    }) : []) as Prisma.InputJsonValue[]
 
-    } catch (error) {
-       await logError({ error, pageId }, "summarizePageAction");
-    } finally {
-        revalidatePath(`/manage/pages/${pageId}`);
-    }
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        data: [
+          ...data,
+          {
+            kind: "summary",
+            summary,
+            addedOn: new Date().toISOString(),
+          },
+        ],
+      },
+    })
+  } catch (error) {
+    await logError({ error, pageId }, "summarizePageAction")
+  } finally {
+    revalidatePath(`/manage/pages/${pageId}`)
+  }
 }

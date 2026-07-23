@@ -20,9 +20,10 @@ async function SitesList({search, startAfter}: {search?: string, startAfter?: st
 }
 
 
-export default async function ManageSitesPage({ searchParams }: { searchParams: { [key: string]: string | string[] | undefined } }) {
-  const startAfter = searchParams.startAfter as string | undefined;
-  const search = searchParams.q as string | undefined;
+export default async function ManageSitesPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  const resolvedSearchParams = await searchParams;
+  const startAfter = resolvedSearchParams.startAfter as string | undefined;
+  const search = resolvedSearchParams.q as string | undefined;
 
   return (
     <PageContent search={search} startAfter={startAfter} />

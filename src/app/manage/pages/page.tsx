@@ -121,9 +121,10 @@ async function PagesList({search, startAfter}: {search?:string, startAfter?: str
 }
 
 
-export default async function ManagePagesPage({ searchParams }: { searchParams: { [key: string]: string | string[] | undefined } }) {
-  const startAfter = searchParams.startAfter as string | undefined;
-  const search = searchParams.q as string | undefined;
+export default async function ManagePagesPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  const resolvedSearchParams = await searchParams;
+  const startAfter = resolvedSearchParams.startAfter as string | undefined;
+  const search = resolvedSearchParams.q as string | undefined;
   return (
     <PageContent search={search} startAfter={startAfter} />
   )

@@ -14,12 +14,13 @@ async function SearchResults({ query }: { query: string }) {
 }
 
 
-export default function SearchPage({
+export default async function SearchPage({
   searchParams,
 }: {
-  searchParams?: { [key:string]: string | string[] | undefined }
+  searchParams?: Promise<{ [key:string]: string | string[] | undefined }>
 }) {
-  const query = (searchParams?.q as string) || ''
+  const resolvedSearchParams = await searchParams;
+  const query = (resolvedSearchParams?.q as string) || ''
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -54,4 +55,3 @@ function AIQASkeleton() {
 function SearchResultsSkeleton() {
   return <Skeleton className="h-96 w-full rounded-xl" />
 }
-

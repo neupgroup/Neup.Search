@@ -57,12 +57,12 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
   try {
     const pages = await prisma.page.findMany({
       take: 1000,
-      orderBy: { createdAt: "desc" },
+      orderBy: { addedOn: "desc" },
       select: {
         url: true,
         title: true,
         description: true,
-        content: true,
+        fullContent: true,
       },
     });
 
@@ -70,7 +70,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
     const lowercasedQuery = searchQuery.toLowerCase();
 
     for (const p of pages) {
-      const content = p.content || "";
+      const content = p.fullContent || "";
       const url = p.url || "";
       const title = p.title || url;
       const description = p.description || "";

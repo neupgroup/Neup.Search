@@ -10,15 +10,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { notFound } from "next/navigation"
 import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton } from "./client"
 
-export default async function SiteDetailPage({ params, searchParams }: { params: { siteId: string }, searchParams: { [key: string]: string | string[] | undefined } }) {
-  const startAfter = searchParams.startAfter as string | undefined;
-  const site = await getSiteById(params.siteId)
+export default async function SiteDetailPage({ params, searchParams }: { params: Promise<{ siteId: string }>, searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams;
+  const startAfter = resolvedSearchParams.startAfter as string | undefined;
+  const site = await getSiteById(resolvedParams.siteId)
   
   if (!site) {
     notFound()
   }
   
-  const { pages, lastVisibleId } = await getPagesForSite(params.siteId, startAfter)
+  const { pages, lastVisibleId } = await getPagesForSite(resolvedParams.siteId, startAfter)
 
 
   return (
@@ -136,10 +138,10 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
         </CardContent>
          <CardFooter>
             <div className="flex justify-end gap-2 w-full">
-                <Link href={`/manage/sites/${params.siteId}`}>
+                <Link href={`/manage/sites/${resolvedParams.siteId}`}>
                     <Button variant="outline" disabled={!startAfter}>Previous</Button>
                 </Link>
-                <Link href={`/manage/sites/${params.siteId}?startAfter=${lastVisibleId}`}>
+                <Link href={`/manage/sites/${resolvedParams.siteId}?startAfter=${lastVisibleId}`}>
                     <Button variant="outline" disabled={!lastVisibleId || pages.length < 20}>Next</Button>
                 </Link>
             </div>
