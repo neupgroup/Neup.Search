@@ -103,3 +103,17 @@ model Account {
   @@index([neupId])
   @@map("account")
 }
+
+model Domain {
+  id          String    @id @default(cuid())
+  domain      String    @unique
+  name        String
+  lastCrawled DateTime?
+  status      String
+  addedOn     DateTime  @default(now())
+  details     Json?
+
+  @@index([addedOn])
+  @@index([status])
+  @@map("domains")
+}
