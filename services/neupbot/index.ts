@@ -64,12 +64,59 @@ export type CrawlIssue = {
   addedOn: Date
 }
 
+export class InvalidDomainError extends Error {
+  constructor(message = "Please enter a valid domain.") {
+    super(message)
+    this.name = "InvalidDomainError"
+  }
+}
+
 export function normalizeSiteUrl(input: string) {
   const url = new URL(input)
   url.hash = ""
   url.pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "")
   url.search = ""
   return url.toString()
+}
+
+function isIpv4Address(hostname: string) {
+  const parts = hostname.split(".")
+  return parts.length === 4 && parts.every((part) => {
+    if (!/^\d+$/.test(part)) return false
+    const value = Number(part)
+    return value >= 0 && value <= 255 && String(value) === part
+  })
+}
+
+export function isValidDomainHostname(hostname: string) {
+  const normalizedHostname = hostname.toLowerCase().replace(/\.$/, "")
+
+  if (
+    !normalizedHostname ||
+    normalizedHostname.length > 253 ||
+    normalizedHostname.includes("..") ||
+    normalizedHostname.includes(":") ||
+    normalizedHostname === "localhost" ||
+    isIpv4Address(normalizedHostname)
+  ) {
+    return false
+  }
+
+  const labels = normalizedHostname.split(".")
+  const tld = labels[labels.length - 1]
+
+  if (labels.length < 2 || tld.length < 2 || /^\d+$/.test(tld)) {
+    return false
+  }
+
+  return labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+}
+
+export function assertValidSiteDomain(input: string) {
+  const hostname = getDomainName(input)
+  if (!isValidDomainHostname(hostname)) {
+    throw new InvalidDomainError()
+  }
 }
 
 export function getDomainName(input: string) {
@@ -124,6 +171,8 @@ export async function updateDomainDetails(domainId: string, details: DomainDetai
 
 export async function createDomainForCrawl(input: { url: string; description: string }) {
   const siteUrl = normalizeSiteUrl(input.url)
+  assertValidSiteDomain(siteUrl)
+
   const domain = await prisma.domain.upsert({
     where: { domain: siteUrl },
     create: {

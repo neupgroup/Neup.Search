@@ -14,6 +14,7 @@ import {
   getManagedDomains,
   getNeupbotDashboardStats,
   getPagesForDomain,
+  InvalidDomainError,
   markDomainSummaryFailed,
   runCrawler,
   summarizeDomain,
@@ -54,6 +55,12 @@ export async function addSite(prevState: any, formData: FormData) {
     const { domain, siteUrl } = await createDomainForCrawl(validatedFields.data)
     runCrawler(domain.id, siteUrl).catch((error) => logError(error, "crawlSite_async"))
   } catch (error) {
+    if (error instanceof InvalidDomainError) {
+      return {
+        errors: { url: [error.message] },
+      }
+    }
+
     await logError(error, "addSite")
     return {
       errors: { _server: ["Could not add domain. Please try again."] },
