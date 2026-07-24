@@ -526,14 +526,14 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   })
 }
 
-function extractPageLinks($: cheerio.CheerioAPI) {
+function extractPageLinks($: cheerio.Root) {
   return $("a")
     .map((_: number, el: cheerio.Element) => $(el).attr("href"))
     .get()
     .filter(Boolean)
 }
 
-function extractPageAssets($: cheerio.CheerioAPI): PageAsset[] {
+function extractPageAssets($: cheerio.Root): PageAsset[] {
   const assets: PageAsset[] = []
 
   $("img[src]").each((_: number, el: cheerio.Element) => {
