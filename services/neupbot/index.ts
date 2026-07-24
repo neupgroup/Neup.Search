@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio"
 import { chromium } from "playwright"
+import type { Prisma } from "@prisma/client"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 import { logError } from "@/lib/logging"
 import { prisma } from "@/lib/prisma"
@@ -95,6 +96,40 @@ export type PaginatedContentItems = {
 type SitemapUrlEntry = {
   url: string
   sitemapUrl: string
+}
+
+type SitemapDiscoveryOptions = {
+  siteId?: string
+  referrer?: string
+}
+
+type DiscoveredPageInput = {
+  siteId: string
+  url: string
+  referrer?: string
+  source: "seed" | "sitemap" | "anchor" | "image" | "video" | "audio" | "iframe" | "asset" | "redirect"
+  kind?: ContentKind | "page" | "asset"
+  fileType?: string | null
+  sitemapReferences?: SitemapReference[]
+}
+
+type PageAsset = {
+  url: string
+  source: DiscoveredPageInput["source"]
+  kind?: ContentKind | "asset"
+  fileType?: string | null
+  alt?: string
+}
+
+type PersistedPageData = {
+  title?: string | null
+  description?: string | null
+  type: string
+  data: Prisma.InputJsonValue[]
+  fullContent?: string | null
+  status: ManagedPage["status"]
+  statusCode?: number | null
+  details?: Prisma.InputJsonValue
 }
 
 const imageFileTypes = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff"])
@@ -206,6 +241,31 @@ function readSitemapReferences(
   }))
 }
 
+async function recordSitemapDiscovery(siteId: string | undefined, sitemapUrl: string, referrer?: string) {
+  if (!siteId) return
+
+  try {
+    await prisma.sitemap.upsert({
+      where: {
+        siteId_sitemapUrl: {
+          siteId,
+          sitemapUrl,
+        },
+      },
+      create: {
+        siteId,
+        sitemapUrl,
+        referrer,
+      },
+      update: {
+        referrer,
+      },
+    })
+  } catch (error) {
+    await logError({ error, siteId, sitemapUrl, referrer }, "recordSitemapDiscovery")
+  }
+}
+
 function getUrlFileType(input: string): string | null {
   try {
     const pathname = new URL(input).pathname
@@ -226,6 +286,274 @@ function classifyContentUrl(url: string): { kind: ContentKind; fileType: string 
   if (textFileTypes.has(fileType)) return { kind: "text", fileType }
   if (documentFileTypes.has(fileType)) return { kind: "document", fileType }
   return null
+}
+
+function getUrlTitle(input: string) {
+  try {
+    const pathname = new URL(input).pathname
+    const fileName = pathname.split("/").filter(Boolean).pop()
+    return fileName ? decodeURIComponent(fileName) : input
+  } catch {
+    return input
+  }
+}
+
+function normalizeDiscoveredUrl(input: string, baseUrl: string) {
+  const url = new URL(input, baseUrl)
+  url.hash = ""
+  return url.toString()
+}
+
+function readContentLength(headers: Headers | Record<string, string | string[] | undefined>) {
+  const rawValue = headers instanceof Headers ? headers.get("content-length") : headers["content-length"]
+  const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
+  if (!value) return null
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+async function readStaticFileSize(response: Response) {
+  const headerSize = readContentLength(response.headers)
+  if (headerSize !== null) return headerSize
+
+  try {
+    return (await response.arrayBuffer()).byteLength
+  } catch {
+    return null
+  }
+}
+
+function buildDiscoveryDetails(input: DiscoveredPageInput): Prisma.InputJsonObject {
+  return {
+    discoveredFrom: input.referrer || null,
+    discoverySource: input.source,
+    kind: input.kind || classifyContentUrl(input.url)?.kind || "page",
+    fileType: input.fileType || classifyContentUrl(input.url)?.fileType || null,
+    sitemapReferences: input.sitemapReferences || [],
+  }
+}
+
+async function saveDiscoveredPage(input: DiscoveredPageInput) {
+  const content = classifyContentUrl(input.url)
+  const details = buildDiscoveryDetails(input)
+  const existingPage = await prisma.page.findFirst({
+    where: { domainId: input.siteId, url: input.url },
+    select: { id: true, status: true, details: true },
+  })
+
+  if (existingPage) {
+    await prisma.page.update({
+      where: { id: existingPage.id },
+      data: {
+        details: {
+          ...(existingPage.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details) ? existingPage.details : {}),
+          ...details,
+        },
+      },
+    })
+    return existingPage.id
+  }
+
+  const created = await prisma.page.create({
+    data: {
+      domainId: input.siteId,
+      url: input.url,
+      title: content ? getUrlTitle(input.url) : null,
+      description: null,
+      type: input.fileType || content?.fileType || "unknown",
+      data: [],
+      details,
+      fullContent: null,
+      status: "Pending",
+      statusCode: null,
+    },
+    select: { id: true },
+  })
+
+  return created.id
+}
+
+async function saveDiscoveredLink(siteId: string, sourceUrl: string, targetUrl: string) {
+  const targetHostname = getDomainName(targetUrl)
+  const targetDomain = await prisma.domain.upsert({
+    where: { domain: new URL(targetUrl).origin },
+    create: {
+      domain: new URL(targetUrl).origin,
+      name: targetHostname,
+      status: "Pending",
+      details: {
+        discoveredFrom: sourceUrl,
+      },
+    },
+    update: {},
+    select: { id: true },
+  })
+
+  await prisma.link.upsert({
+    where: {
+      linkFrom_linkTo_fromDomain_toDomain: {
+        linkFrom: sourceUrl,
+        linkTo: targetUrl,
+        fromDomain: siteId,
+        toDomain: targetDomain.id,
+      },
+    },
+    create: {
+      linkFrom: sourceUrl,
+      linkTo: targetUrl,
+      fromDomain: siteId,
+      toDomain: targetDomain.id,
+    },
+    update: {
+      linkFrom: sourceUrl,
+    },
+  })
+}
+
+async function saveDiscoveredLinksAndPages(
+  siteId: string,
+  sourceUrl: string,
+  links: string[],
+  sitemapReferencesByUrl: Map<string, Set<string>>,
+) {
+  const seen = new Set<string>()
+  for (const href of links) {
+    try {
+      const absoluteUrl = normalizeDiscoveredUrl(href, sourceUrl)
+      if (seen.has(absoluteUrl)) continue
+      seen.add(absoluteUrl)
+
+      await saveDiscoveredPage({
+        siteId,
+        url: absoluteUrl,
+        referrer: sourceUrl,
+        source: "anchor",
+        kind: classifyContentUrl(absoluteUrl)?.kind || "page",
+        fileType: classifyContentUrl(absoluteUrl)?.fileType,
+        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+      })
+      await saveDiscoveredLink(siteId, sourceUrl, absoluteUrl)
+    } catch {
+    }
+  }
+}
+
+async function saveDiscoveredAssets(
+  siteId: string,
+  sourceUrl: string,
+  assets: PageAsset[],
+  sitemapReferencesByUrl: Map<string, Set<string>>,
+) {
+  const seen = new Set<string>()
+  for (const asset of assets) {
+    try {
+      const absoluteUrl = normalizeDiscoveredUrl(asset.url, sourceUrl)
+      if (seen.has(absoluteUrl)) continue
+      seen.add(absoluteUrl)
+
+      const content = classifyContentUrl(absoluteUrl)
+      await saveDiscoveredPage({
+        siteId,
+        url: absoluteUrl,
+        referrer: sourceUrl,
+        source: asset.source,
+        kind: asset.kind || content?.kind || "asset",
+        fileType: asset.fileType || content?.fileType,
+        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+      })
+
+      if (asset.source === "iframe") {
+        await saveDiscoveredLink(siteId, sourceUrl, absoluteUrl)
+      }
+    } catch {
+    }
+  }
+}
+
+async function saveSitemapPages(
+  siteId: string,
+  entries: SitemapUrlEntry[],
+  sitemapReferencesByUrl: Map<string, Set<string>>,
+) {
+  for (const entry of entries) {
+    addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
+    await saveDiscoveredPage({
+      siteId,
+      url: entry.url,
+      referrer: entry.sitemapUrl,
+      source: "sitemap",
+      kind: classifyContentUrl(entry.url)?.kind || "page",
+      fileType: classifyContentUrl(entry.url)?.fileType,
+      sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, entry.url),
+    })
+  }
+}
+
+async function getNextPendingPage(siteId: string) {
+  return prisma.page.findFirst({
+    where: { domainId: siteId, status: "Pending" },
+    orderBy: { addedOn: "asc" },
+    select: { id: true, url: true },
+  })
+}
+
+async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
+  const existingPage = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { details: true },
+  })
+  const existingDetails = existingPage?.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details)
+    ? existingPage.details
+    : {}
+
+  await prisma.page.update({
+    where: { id: pageId },
+    data: {
+      title: pageData.title ?? null,
+      description: pageData.description ?? null,
+      type: pageData.type,
+      data: pageData.data,
+      fullContent: pageData.fullContent ?? null,
+      status: pageData.status,
+      statusCode: pageData.statusCode ?? null,
+      lastCrawled: new Date(),
+      details: {
+        ...existingDetails,
+        ...(pageData.details && typeof pageData.details === "object" && !Array.isArray(pageData.details) ? pageData.details : {}),
+      },
+    },
+  })
+}
+
+function extractPageLinks($: cheerio.CheerioAPI) {
+  return $("a")
+    .map((_: number, el: cheerio.Element) => $(el).attr("href"))
+    .get()
+    .filter(Boolean)
+}
+
+function extractPageAssets($: cheerio.CheerioAPI): PageAsset[] {
+  const assets: PageAsset[] = []
+
+  $("img[src]").each((_: number, el: cheerio.Element) => {
+    assets.push({ url: $(el).attr("src") || "", source: "image", kind: "image", alt: $(el).attr("alt") || undefined })
+  })
+  $("video[src], video source[src]").each((_: number, el: cheerio.Element) => {
+    assets.push({ url: $(el).attr("src") || "", source: "video", kind: "video" })
+  })
+  $("audio[src], audio source[src]").each((_: number, el: cheerio.Element) => {
+    assets.push({ url: $(el).attr("src") || "", source: "audio", kind: "audio" })
+  })
+  $("iframe[src]").each((_: number, el: cheerio.Element) => {
+    assets.push({ url: $(el).attr("src") || "", source: "iframe", kind: "iframe", fileType: "iframe" })
+  })
+  $("script[src], link[href], source[src], embed[src], object[data]").each((_: number, el: cheerio.Element) => {
+    const url = $(el).attr("src") || $(el).attr("href") || $(el).attr("data") || ""
+    assets.push({ url, source: "asset", kind: classifyContentUrl(url)?.kind || "asset", fileType: classifyContentUrl(url)?.fileType })
+  })
+
+  return assets.filter((asset) => asset.url)
 }
 
 function matchesContentTarget(content: { kind: ContentKind; fileType: string }, target: { kind?: ContentKind; fileType?: string }) {
@@ -603,10 +931,15 @@ function parseRobotsTxt(robotsTxt: string): { sitemaps: string[], disallow: RegE
   return { sitemaps, disallow }
 }
 
-async function getSitemapUrlEntries(sitemapUrl: string): Promise<SitemapUrlEntry[]> {
+async function getSitemapUrlEntries(
+  sitemapUrl: string,
+  discovery: SitemapDiscoveryOptions = {},
+): Promise<SitemapUrlEntry[]> {
   try {
     const response = await fetch(sitemapUrl, { headers: { "User-Agent": neupbotUserAgent } })
     if (!response.ok) return []
+
+    await recordSitemapDiscovery(discovery.siteId, sitemapUrl, discovery.referrer)
 
     const xml = await response.text()
     const $ = cheerio.load(xml, { xmlMode: true })
@@ -619,7 +952,10 @@ async function getSitemapUrlEntries(sitemapUrl: string): Promise<SitemapUrlEntry
     const nestedSitemaps = $("sitemap > loc").map((_: number, el: cheerio.Element) => $(el).text()).get()
 
     for (const nestedSitemap of nestedSitemaps) {
-      urls.push(...await getSitemapUrlEntries(nestedSitemap))
+      urls.push(...await getSitemapUrlEntries(nestedSitemap, {
+        siteId: discovery.siteId,
+        referrer: sitemapUrl,
+      }))
     }
 
     return urls
@@ -658,7 +994,6 @@ export async function runCrawler(siteId: string, siteUrl: string) {
     throw new Error("siteId and siteUrl are required.")
   }
 
-  const rootDomain = getDomainName(siteUrl)
   const crawledUrls = new Set<string>()
   const sitemapReferencesByUrl = new Map<string, Set<string>>()
   let pagesProcessed = 0
@@ -677,44 +1012,57 @@ export async function runCrawler(siteId: string, siteUrl: string) {
 
     const robotsTxt = await getRobotsTxt(siteUrl)
     const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
-    const urlQueue: string[] = []
+    const robotsUrl = new URL("/robots.txt", siteUrl).toString()
 
     if (sitemaps.length > 0) {
       await updateDomainDetails(siteId, { currentActivity: `Found ${sitemaps.length} sitemaps. Parsing...` })
       for (const sitemapUrl of sitemaps) {
-        const entries = await getSitemapUrlEntries(sitemapUrl)
-        for (const entry of entries) {
-          addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
-          urlQueue.push(entry.url)
-        }
+        const entries = await getSitemapUrlEntries(sitemapUrl, { siteId, referrer: robotsUrl })
+        await saveSitemapPages(siteId, entries, sitemapReferencesByUrl)
       }
     } else {
-      const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString())
+      const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString(), {
+        siteId,
+        referrer: siteUrl,
+      })
       if (sitemapEntries.length > 0) {
         await updateDomainDetails(siteId, { currentActivity: "Found default sitemap.xml. Parsing..." })
-        for (const entry of sitemapEntries) {
-          addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
-          urlQueue.push(entry.url)
-        }
+        await saveSitemapPages(siteId, sitemapEntries, sitemapReferencesByUrl)
       }
     }
 
-    if (urlQueue.length === 0) {
-      urlQueue.push(siteUrl)
-    }
+    await saveDiscoveredPage({ siteId, url: siteUrl, source: "seed", kind: "page" })
 
-    while (urlQueue.length > 0) {
+    while (true) {
       const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
       if (currentDomain?.status !== "Crawling") {
         await updateDomainDetails(siteId, { currentActivity: "Crawl cancelled." })
         break
       }
 
-      const currentUrl = urlQueue.shift()!
+      const pendingPage = await getNextPendingPage(siteId)
+      if (!pendingPage) break
+
+      const currentUrl = pendingPage.url
       const parsedCurrentUrl = new URL(currentUrl)
       const normalizedUrl = parsedCurrentUrl.origin + parsedCurrentUrl.pathname
 
       if (crawledUrls.has(normalizedUrl) || disallow.some((regex) => regex.test(parsedCurrentUrl.pathname))) {
+        await saveCrawledPage(pendingPage.id, {
+          title: getUrlTitle(currentUrl),
+          description: null,
+          type: "skipped",
+          data: [{
+            reason: crawledUrls.has(normalizedUrl) ? "Already crawled in this run." : "Blocked by robots.txt.",
+            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
+          }],
+          fullContent: null,
+          status: "Skipped",
+          statusCode: null,
+          details: {
+            skippedOn: new Date().toISOString(),
+          },
+        })
         continue
       }
 
@@ -734,16 +1082,13 @@ export async function runCrawler(siteId: string, siteUrl: string) {
         const redirectLocation = response.headers.get("location")
         if (response.status >= 300 && response.status < 400) {
           const targetUrl = redirectLocation ? new URL(redirectLocation, currentUrl).toString() : null
-          const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
           const data = [{
             contentType,
             headers: Object.fromEntries(response.headers.entries()),
             redirectLocation: targetUrl,
             sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
           }]
-          const pageData = {
-            domainId: siteId,
-            url: currentUrl,
+          await saveCrawledPage(pendingPage.id, {
             title: null,
             description: null,
             type: contentType || "redirect",
@@ -751,49 +1096,51 @@ export async function runCrawler(siteId: string, siteUrl: string) {
             fullContent: null,
             status: "Redirect",
             statusCode: response.status,
-            lastCrawled: new Date(),
-          }
+            details: {
+              contentType,
+              redirectLocation: targetUrl,
+            },
+          })
 
-          if (existingPage) {
-            await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
-          } else {
-            await prisma.page.create({ data: pageData })
-          }
-
-          if (targetUrl && getDomainName(targetUrl) === rootDomain) {
-            const normalizedTargetUrl = new URL(targetUrl).origin + new URL(targetUrl).pathname
-            if (!crawledUrls.has(normalizedTargetUrl) && !urlQueue.includes(targetUrl)) {
-              urlQueue.push(targetUrl)
-            }
+          if (targetUrl) {
+            await saveDiscoveredPage({
+              siteId,
+              url: targetUrl,
+              referrer: currentUrl,
+              source: "redirect",
+              kind: classifyContentUrl(targetUrl)?.kind || "page",
+              fileType: classifyContentUrl(targetUrl)?.fileType,
+            })
+            await saveDiscoveredLink(siteId, currentUrl, targetUrl)
           }
           continue
         }
 
         const isHtml = contentType?.includes("text/html") ?? false
         if (!response.ok || !isHtml) {
-          const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
+          const fileSize = !isHtml ? await readStaticFileSize(response) : readContentLength(response.headers)
+          const content = classifyContentUrl(currentUrl)
           const data = [{
             contentType,
             headers: Object.fromEntries(response.headers.entries()),
+            fileSize,
             sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
           }]
-          const pageData = {
-            domainId: siteId,
-            url: currentUrl,
-            title: null,
+          await saveCrawledPage(pendingPage.id, {
+            title: getUrlTitle(currentUrl),
             description: null,
             type: contentType || "unknown",
             data,
             fullContent: null,
             status: response.ok ? "Skipped" : "Error",
             statusCode: response.status,
-            lastCrawled: new Date(),
-          }
-          if (existingPage) {
-            await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
-          } else {
-            await prisma.page.create({ data: pageData })
-          }
+            details: {
+              contentType,
+              fileSize,
+              kind: content?.kind || "asset",
+              fileType: content?.fileType || getUrlFileType(currentUrl),
+            },
+          })
           continue
         }
 
@@ -820,9 +1167,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
           sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
         }]
 
-        const pageData = {
-          domainId: siteId,
-          url: currentUrl,
+        await saveCrawledPage(pendingPage.id, {
           title: pageTitle || null,
           description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
           type: "text/html",
@@ -830,75 +1175,31 @@ export async function runCrawler(siteId: string, siteUrl: string) {
           fullContent,
           status: "Indexed",
           statusCode: response.status,
-          lastCrawled: new Date(),
-        }
-
-        const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
-        if (existingPage) {
-          await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
-        } else {
-          await prisma.page.create({ data: pageData })
-        }
+          details: {
+            contentType,
+          },
+        })
 
         pagesProcessed++
-        const seenTargetUrls = new Set<string>()
-
-        for (const link of $("a").toArray()) {
-          const href = $(link).attr("href")
-          if (!href) continue
-          try {
-            const absoluteUrl = new URL(href, siteUrl).toString().split("#")[0]
-            if (seenTargetUrls.has(absoluteUrl)) continue
-            seenTargetUrls.add(absoluteUrl)
-
-            const targetHostname = getDomainName(absoluteUrl)
-            const isInternalLink = targetHostname === rootDomain
-            const targetDomain = isInternalLink
-              ? { id: siteId }
-              : await prisma.domain.upsert({
-                  where: { domain: new URL(absoluteUrl).origin },
-                  create: {
-                    domain: new URL(absoluteUrl).origin,
-                    name: targetHostname,
-                    status: "Pending",
-                    details: {
-                      discoveredFrom: currentUrl,
-                    },
-                  },
-                  update: {},
-                  select: { id: true },
-                })
-            await prisma.link.upsert({
-              where: {
-                linkFrom_linkTo_fromDomain_toDomain: {
-                  linkFrom: currentUrl,
-                  linkTo: absoluteUrl,
-                  fromDomain: siteId,
-                  toDomain: targetDomain.id,
-                },
-              },
-              create: {
-                linkFrom: currentUrl,
-                linkTo: absoluteUrl,
-                fromDomain: siteId,
-                toDomain: targetDomain.id,
-              },
-              update: {
-                linkFrom: currentUrl,
-              },
-            })
-
-            if (isInternalLink) {
-              const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname
-              if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
-                urlQueue.push(absoluteUrl)
-              }
-            }
-          } catch {
-          }
-        }
+        await saveDiscoveredLinksAndPages(siteId, currentUrl, extractPageLinks($), sitemapReferencesByUrl)
+        await saveDiscoveredAssets(siteId, currentUrl, extractPageAssets($), sitemapReferencesByUrl)
       } catch (fetchError) {
         await logError({ error: fetchError, currentUrl }, "crawlSite_fetch")
+        await saveCrawledPage(pendingPage.id, {
+          title: getUrlTitle(currentUrl),
+          description: null,
+          type: "fetch-error",
+          data: [{
+            error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
+          }],
+          fullContent: null,
+          status: "Error",
+          statusCode: null,
+          details: {
+            error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+          },
+        })
       }
 
       await sleep(100)
@@ -955,19 +1256,23 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
 
     const robotsTxt = await getRobotsTxt(siteUrl)
     const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
+    const robotsUrl = new URL("/robots.txt", siteUrl).toString()
     const urlQueue: string[] = []
 
     if (sitemaps.length > 0) {
       await updateDomainDetails(siteId, { currentActivity: `Found ${sitemaps.length} sitemaps. Parsing...` })
       for (const sitemapUrl of sitemaps) {
-        const entries = await getSitemapUrlEntries(sitemapUrl)
+        const entries = await getSitemapUrlEntries(sitemapUrl, { siteId, referrer: robotsUrl })
         for (const entry of entries) {
           addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
           urlQueue.push(entry.url)
         }
       }
     } else {
-      const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString())
+      const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString(), {
+        siteId,
+        referrer: siteUrl,
+      })
       if (sitemapEntries.length > 0) {
         await updateDomainDetails(siteId, { currentActivity: "Found default sitemap.xml. Parsing..." })
         for (const entry of sitemapEntries) {

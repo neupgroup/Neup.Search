@@ -32,10 +32,27 @@ model Domain {
   pages Page[]
   linksFrom Link[] @relation("FromDomainLinks")
   linksTo   Link[] @relation("ToDomainLinks")
+  sitemaps Sitemap[]
 
   @@index([addedOn])
   @@index([status])
   @@map("domains")
+}
+
+model Sitemap {
+  id         String   @id @default(cuid())
+  siteId     String
+  sitemapUrl String
+  referrer   String?
+  addedOn    DateTime @default(now())
+
+  site Domain @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, sitemapUrl])
+  @@index([addedOn])
+  @@index([siteId])
+  @@index([sitemapUrl])
+  @@map("sitemap")
 }
 
 model Page {
@@ -46,6 +63,7 @@ model Page {
   description String?
   type        String
   data        Json[]    @default([])
+  details     Json?
   fullContent String?   @db.Text
   status      String
   statusCode  Int?
