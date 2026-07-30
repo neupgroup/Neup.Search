@@ -7,6 +7,7 @@ Reusable property explorer UI for public and manage routes.
 */
 
 import Link from "next/link"
+import type { ReactNode } from "react"
 import {
   ArrowRightLeft,
   ExternalLink,
@@ -61,6 +62,7 @@ function PropertySelector({
   wrapInCard,
   showSelectField,
   pagination,
+  leadingCard,
 }: {
   properties: ManagedDomain[]
   selectedPropertyId?: string
@@ -82,8 +84,10 @@ function PropertySelector({
     search?: string
     selectedPropertyId?: string
   }
+  leadingCard?: ReactNode
 }) {
   const propertyHrefBase = cardsPath || basePath
+  const hasLeadingCard = Boolean(leadingCard)
   const visibleProperties = selectedCardOnly && selectedPropertyId
     ? [
         ...properties.filter((property) => property.id === selectedPropertyId),
@@ -129,9 +133,10 @@ function PropertySelector({
       ) : null}
 
       <div className="space-y-3">
+        {leadingCard}
         {visibleProperties.map((property, index) => {
           const isSelected = property.id === selectedPropertyId
-          const isFirst = index === 0
+          const isFirst = index === 0 && !hasLeadingCard
           const isLast = index === visibleProperties.length - 1
           const cornerClass = isFirst
             ? "rounded-t-lg rounded-b-none"
@@ -520,6 +525,7 @@ export function PropertiesExplorer({
   wrapSelectorInCard = true,
   showSelectField = true,
   pagination,
+  leadingCard,
 }: {
   properties: ManagedDomain[]
   selectedPropertyId?: string
@@ -543,6 +549,7 @@ export function PropertiesExplorer({
     search?: string
     selectedPropertyId?: string
   }
+  leadingCard?: ReactNode
 }) {
   return (
     <div className="space-y-8">
@@ -566,6 +573,7 @@ export function PropertiesExplorer({
         wrapInCard={wrapSelectorInCard}
         showSelectField={showSelectField}
         pagination={pagination}
+        leadingCard={leadingCard}
       />
 
       {showDashboard && dashboard ? <PropertyDashboardView dashboard={dashboard} selectedPropertyId={selectedPropertyId} /> : null}

@@ -8,8 +8,8 @@ Manage-scoped property selector and property dashboard.
 
 import { PropertiesExplorer } from "@/components/properties-explorer"
 import Link from "next/link"
-import { PlusCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { ArrowRight, Plus } from "lucide-react"
+import { Card, CardContent } from "@/components/ui/card"
 import { getPaginatedPropertyOptions } from "../../../../services/neupbot"
 
 export const dynamic = "force-dynamic"
@@ -41,14 +41,6 @@ export default async function ManagePropertiesPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Link href="/manage/properties/add">
-          <Button>
-            <PlusCircle className="mr-2 h-4 w-4" />
-            Add Property
-          </Button>
-        </Link>
-      </div>
       <PropertiesExplorer
         properties={pagination.properties}
         selectedPropertyId={selectedPropertyId}
@@ -63,6 +55,28 @@ export default async function ManagePropertiesPage({
         selectedCardOnly
         wrapSelectorInCard={false}
         showSelectField={false}
+        leadingCard={
+          <Link href="/manage/properties/add" className="block">
+            <Card className="w-full rounded-t-lg rounded-b-none border-border/60 transition-colors hover:bg-muted/40">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <Plus className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="font-semibold">Add your Property</div>
+                      <div className="text-sm text-muted-foreground">
+                        Add your property to see how people see!
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        }
         pagination={{
           page: pagination.page,
           totalPages: pagination.totalPages,
