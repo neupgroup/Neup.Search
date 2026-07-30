@@ -14,6 +14,7 @@ export type Page = {
   title: string
   siteUrl: string
   status: "Indexed" | "Error" | "Pending" | "Skipped" | "Redirect"
+  domainStatus?: "Pending" | "Active" | "Paused" | "Error" | "Crawling"
   statusCode: number | null
   lastIndexed: string | null
   createdAt: Date
@@ -71,6 +72,7 @@ type PageRow = {
   data?: unknown
   domain: {
     domain: string
+    status?: string
   }
 }
 
@@ -206,6 +208,7 @@ function mapPage(page: PageRow): Page {
     description: page.description || "No description",
     siteUrl: page.domain.domain,
     status: page.status as Page["status"],
+    domainStatus: page.domain.status as Page["domainStatus"],
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
@@ -244,7 +247,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
         orderBy: { addedOn: "desc" },
         skip: (resolvedPage - 1) * urlSearchLimit,
         take: urlSearchLimit,
-        include: { domain: { select: { domain: true } } },
+        include: { domain: { select: { domain: true, status: true } } },
       })
 
       return {
@@ -273,7 +276,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
         orderBy: { addedOn: "desc" },
         skip: (resolvedPage - 1) * urlSearchLimit,
         take: urlSearchLimit,
-        include: { domain: { select: { domain: true } } },
+        include: { domain: { select: { domain: true, status: true } } },
       })
 
       return {
@@ -294,7 +297,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
         orderBy: { addedOn: "desc" },
         skip: (resolvedPage - 1) * limit,
         take: limit,
-        include: { domain: { select: { domain: true } } },
+        include: { domain: { select: { domain: true, status: true } } },
       })
 
       return {
@@ -314,7 +317,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
       orderBy: { addedOn: "desc" },
       skip: (resolvedPage - 1) * limit,
       take: limit,
-      include: { domain: { select: { domain: true } } },
+      include: { domain: { select: { domain: true, status: true } } },
     })
 
     const pages = rows.map(mapPage)
@@ -336,7 +339,7 @@ export async function getPageById(pageId: string): Promise<Page | null> {
   try {
     const page = await prisma.page.findUnique({
       where: { id: pageId },
-      include: { domain: { select: { domain: true } } },
+      include: { domain: { select: { domain: true, status: true } } },
     })
 
     return page ? mapPage(page) : null

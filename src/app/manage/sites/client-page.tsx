@@ -6,10 +6,9 @@ import Link from "next/link"
 import Image from "next/image"
 import { useTransition, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Card, CardContent, CardTitle } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, PlusCircle, Search, Loader2, Play } from "lucide-react"
 import { crawlSite, type Site, crawlAllSites, deleteSite } from "./actions"
@@ -133,13 +132,25 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
     router.push(`${pathname}?${params.toString()}`);
   };
 
+  const getCornerClass = (index: number) => {
+    const isFirst = index === 0
+    const isLast = index === sites.length - 1
+
+    if (isFirst && isLast) return "rounded-lg"
+    if (isFirst) return "rounded-t-lg rounded-b-none"
+    if (isLast) return "rounded-b-lg rounded-t-none"
+    return "rounded-none"
+  }
+
   return (
-    <Card>
-      <CardHeader>
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <div className="space-y-1">
         <CardTitle>Crawled Sites</CardTitle>
-        <CardDescription>
+        <p className="text-sm text-muted-foreground">
           Manage the list of websites to be crawled and indexed.
-        </CardDescription>
+        </p>
+        </div>
         <div className="flex items-center justify-between pt-4 gap-2">
             <div className="relative flex-1 md:grow-0">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -161,96 +172,91 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
                 </Link>
             </div>
         </div>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>URL</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Last Crawled</TableHead>
-              <TableHead>
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-             {sites.length === 0 && (
-                <TableRow>
-                    <TableCell colSpan={4} className="h-24 text-center">
-                        No sites found.
-                    </TableCell>
-                </TableRow>
-            )}
-            {sites.map((site) => (
-              <TableRow key={site.id}>
-                <TableCell className="font-medium">
-                  <Link href={`/manage/sites/${site.id}`} className="hover:underline flex items-center gap-3">
-                     {site.logoUrl ? (
-                      <Image 
-                        src={site.logoUrl} 
-                        alt={`${site.name || site.url} logo`} 
-                        width={24} 
-                        height={24} 
-                        className="rounded-sm"
-                      />
-                    ) : (
-                      <div className="w-6 h-6 bg-muted rounded-sm" />
-                    )}
-                    <div>
-                      <div>{site.name || site.url}</div>
-                      {(site.status === 'Crawling' || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
-                        <div className="text-xs text-muted-foreground mt-1">
-                          [pages crawled: {site.pagesCrawled ?? 0} | currently: {site.currentlyCrawling ?? 'N/A'}]
-                        </div>
+      </div>
+      <div>
+        {sites.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            No sites found.
+          </div>
+        ) : (
+          <div className="space-y-0">
+            {sites.map((site, index) => {
+              const siteHref = `/manage/sites/${site.id}`
+
+              return (
+              <Card
+                key={site.id}
+                className={`w-full cursor-pointer border-border/60 transition-colors hover:border-primary hover:bg-muted/40 ${getCornerClass(index)}`}
+                onClick={() => router.push(siteHref)}
+              >
+                <CardContent className="p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      {site.logoUrl ? (
+                        <Image
+                          src={site.logoUrl}
+                          alt={`${site.name || site.url} logo`}
+                          width={24}
+                          height={24}
+                          className="rounded-sm"
+                        />
+                      ) : (
+                        <div className="h-6 w-6 shrink-0 rounded-sm bg-muted" />
                       )}
-                       {site.status === 'Error' && site.currentlyCrawling && (
-                         <div className="text-xs text-destructive mt-1">
+                      <div className="min-w-0 space-y-1">
+                        <div className="font-semibold">{site.name || site.url}</div>
+                        <div className="truncate text-sm text-muted-foreground">{site.url}</div>
+                        {(site.status === 'Crawling' || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
+                          <div className="text-xs text-muted-foreground">
+                            [pages crawled: {site.pagesCrawled ?? 0} | currently: {site.currentlyCrawling ?? 'N/A'}]
+                          </div>
+                        )}
+                        {site.status === 'Error' && site.currentlyCrawling && (
+                          <div className="text-xs text-destructive">
                             {site.currentlyCrawling}
-                        </div>
-                       )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={
-                      site.status === 'Active' ? 'default' 
-                      : site.status === 'Crawling' ? 'default'
-                      : site.status === 'Pending' ? 'outline'
-                      : site.status === 'Paused' ? 'secondary' 
-                      : 'destructive'
-                  }>
-                    {site.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>{site.lastCrawled}</TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button aria-haspopup="true" size="icon" variant="ghost">
-                        <MoreHorizontal className="h-4 w-4" />
-                        <span className="sr-only">Toggle menu</span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                       <CrawlButton siteId={site.id} siteUrl={site.url} isCrawling={site.status === 'Crawling'} />
-                      <DropdownMenuItem>Pause</DropdownMenuItem>
-                      <DropdownMenuItem>View Logs</DropdownMenuItem>
-                      <DeleteSiteMenuItem siteId={site.id} siteName={site.name || site.url} />
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-      <CardFooter>
+                    <div className="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                      <Badge variant={
+                        site.status === 'Active' ? 'default'
+                        : site.status === 'Crawling' ? 'default'
+                        : site.status === 'Pending' ? 'outline'
+                        : site.status === 'Paused' ? 'secondary'
+                        : 'destructive'
+                      }>
+                        {site.status}
+                      </Badge>
+                      <div className="text-sm text-muted-foreground">{site.lastCrawled}</div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button aria-haspopup="true" size="icon" variant="ghost">
+                            <MoreHorizontal className="h-4 w-4" />
+                            <span className="sr-only">Toggle menu</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <CrawlButton siteId={site.id} siteUrl={site.url} isCrawling={site.status === 'Crawling'} />
+                          <DropdownMenuItem>Pause</DropdownMenuItem>
+                          <DropdownMenuItem>View Logs</DropdownMenuItem>
+                          <DeleteSiteMenuItem siteId={site.id} siteName={site.name || site.url} />
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )})}
+          </div>
+        )}
+      </div>
+      <div>
         <div className="flex justify-end gap-2 w-full">
             <Button onClick={handlePreviousPage} disabled={!startAfter}>Previous</Button>
             <Button onClick={handleNextPage} disabled={!lastVisibleId || sites.length < 20}>Next</Button>
         </div>
-      </CardFooter>
-    </Card>
+      </div>
+    </div>
   )
 }

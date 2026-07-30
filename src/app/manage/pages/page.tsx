@@ -3,23 +3,21 @@
 import { Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ExternalLink, Search } from "lucide-react"
 import { getPages, type Page } from "./actions"
 import Link from "next/link"
 import { SearchInput } from "@/components/search-input"
 
-function getStatusLabel(page: Page) {
-    return page.statusCode && page.statusCode >= 400 ? String(page.statusCode) : page.status
-}
-
-function getStatusVariant(page: Page) {
-    if (page.statusCode && page.statusCode >= 400) return "destructive"
-    if (page.status === "Error") return "destructive"
-    if (page.status === "Indexed") return "default"
-    if (page.status === "Pending") return "outline"
-    return "secondary"
+function getStatusDotClass(page: Page) {
+    if (page.statusCode && page.statusCode >= 400) return "bg-red-500"
+    if (page.status === "Error") return "bg-red-500"
+    if (page.status === "Redirect" || page.status === "Skipped" || (page.statusCode && page.statusCode >= 300)) {
+        return "bg-orange-500"
+    }
+    if (page.status === "Indexed") return "bg-green-500"
+    if (page.status === "Pending" && page.domainStatus === "Crawling") return "bg-slate-400"
+    return "bg-blue-500"
 }
 
 function buildPageLink(params: { search?: string; page: number; pageSize: number }) {
@@ -32,6 +30,14 @@ function buildPageLink(params: { search?: string; page: number; pageSize: number
     }
 
     return `/manage/pages?${query.toString()}`
+}
+
+function buildPageDetailLink(pageId: string, propertyId?: string) {
+    if (!propertyId) return `/manage/pages/${pageId}`
+
+    const query = new URLSearchParams()
+    query.set("property", propertyId)
+    return `/manage/pages/${pageId}?${query.toString()}`
 }
 
 function readCountParam(value: string | string[] | undefined, fallback: number) {
@@ -52,7 +58,7 @@ function PagesListSkeleton() {
                                 <Skeleton className="h-5 w-full max-w-lg" />
                                 <Skeleton className="h-4 w-full max-w-2xl" />
                             </div>
-                            <Skeleton className="h-6 w-20 shrink-0 rounded-full" />
+                            <Skeleton className="h-3 w-3 shrink-0 rounded-full" />
                         </div>
                     </CardContent>
                 </Card>
@@ -61,8 +67,8 @@ function PagesListSkeleton() {
     )
 }
 
-function PageContent({search, page, pageSize}: {search?: string, page: number, pageSize: number}) {
-    const suspenseKey = `${search || ""}:${page}:${pageSize}`
+function PageContent({search, page, pageSize, propertyId}: {search?: string, page: number, pageSize: number, propertyId?: string}) {
+    const suspenseKey = `${search || ""}:${page}:${pageSize}:${propertyId || ""}`
 
     return (
         <div className="space-y-4">
@@ -83,13 +89,13 @@ function PageContent({search, page, pageSize}: {search?: string, page: number, p
                 </div>
             </div>
             <Suspense key={suspenseKey} fallback={<PagesListSkeleton />}>
-                <PagesList search={search} page={page} pageSize={pageSize} />
+                <PagesList search={search} page={page} pageSize={pageSize} propertyId={propertyId} />
             </Suspense>
         </div>
     )
 }
 
-async function PagesList({search, page, pageSize}: {search?: string, page: number, pageSize: number}) {
+async function PagesList({search, page, pageSize, propertyId}: {search?: string, page: number, pageSize: number, propertyId?: string}) {
     const pagination = await getPages(search, page, pageSize);
     const { pages, totalCount, totalPages } = pagination;
     const previousPage = Math.max(1, pagination.page - 1);
@@ -100,7 +106,7 @@ async function PagesList({search, page, pageSize}: {search?: string, page: numbe
 
     return (
         <div className="space-y-4">
-            <div className="space-y-3">
+            <div className="space-y-0">
                 {pages.length === 0 && (
                     <Card className="border-dashed">
                         <CardContent className="p-6 text-center text-sm text-muted-foreground">
@@ -108,34 +114,37 @@ async function PagesList({search, page, pageSize}: {search?: string, page: numbe
                         </CardContent>
                     </Card>
                 )}
-                {pages.map((page) => (
-                    <Card key={page.id} className="transition-colors hover:bg-muted/50">
-                        <CardContent className="p-4">
+                {pages.map((page, index) => {
+                    const isFirst = index === 0
+                    const isLast = index === pages.length - 1
+                    const cornerClass = isFirst
+                        ? "rounded-t-lg rounded-b-none"
+                        : isLast
+                            ? "rounded-b-lg rounded-t-none"
+                            : "rounded-none"
+
+                    return (
+                    <Link key={page.id} href={buildPageDetailLink(page.id, propertyId)} className="block">
+                    <Card className={`border-border/60 transition-colors hover:border-primary hover:bg-muted/40 ${cornerClass}`}>
+                        <CardContent className="p-3">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div className="min-w-0 space-y-2">
-                                    <Link
-                                        href={`/manage/pages/${page.id}`}
-                                        className="block truncate text-base font-semibold leading-tight hover:underline"
-                                    >
+                                    <div className="flex items-center gap-3">
+                                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${getStatusDotClass(page)}`} />
+                                        <div className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold leading-tight">
                                         {page.title}
-                                    </Link>
-                                    <a
-                                        href={page.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex min-w-0 items-center gap-2 break-all text-sm text-muted-foreground hover:text-primary"
-                                    >
-                                        <span>{page.url}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground">
+                                        <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{page.url}</span>
                                         <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                                    </a>
+                                    </div>
                                 </div>
-                                <Badge variant={getStatusVariant(page)} className="w-fit shrink-0">
-                                    {getStatusLabel(page)}
-                                </Badge>
                             </div>
                         </CardContent>
                     </Card>
-                ))}
+                    </Link>
+                )})}
             </div>
             <div>
                  <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -160,10 +169,11 @@ async function PagesList({search, page, pageSize}: {search?: string, page: numbe
 export default async function ManagePagesPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const resolvedSearchParams = await searchParams;
   const search = resolvedSearchParams.q as string | undefined;
+  const propertyId = resolvedSearchParams.property as string | undefined;
   const page = readCountParam(resolvedSearchParams.page, 1);
   const pageSize = readCountParam(resolvedSearchParams.pagesize, 20);
 
   return (
-    <PageContent search={search} page={page} pageSize={pageSize} />
+    <PageContent search={search} page={page} pageSize={pageSize} propertyId={propertyId} />
   )
 }
