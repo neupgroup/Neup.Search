@@ -3,17 +3,38 @@
 "use client"
 
 import Link from "next/link"
-import Image from "next/image"
-import { useTransition, useEffect, useRef } from "react"
+import { useState, useTransition, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardTitle } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { MoreHorizontal, PlusCircle, Search, Loader2, Play } from "lucide-react"
+import { MoreHorizontal, PlusCircle, Search, Loader2, Play, Globe } from "lucide-react"
 import { crawlSite, type Site, crawlAllSites, deleteSite } from "./actions"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { useDebouncedCallback } from "use-debounce"
+
+function SiteIcon({ site }: { site: Site }) {
+  const [hasImageError, setHasImageError] = useState(!site.appIconUrl)
+
+  return (
+    <div
+      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/40 bg-muted"
+      style={site.appIconBackgroundColor ? { backgroundColor: site.appIconBackgroundColor } : undefined}
+    >
+      {site.appIconUrl && !hasImageError ? (
+        <img
+          src={site.appIconUrl}
+          alt={`${site.name || site.url} icon`}
+          className="h-6 w-6 object-contain"
+          onError={() => setHasImageError(true)}
+        />
+      ) : (
+        <Globe className="h-5 w-5 text-muted-foreground" />
+      )}
+    </div>
+  )
+}
 
 function CrawlButton({ siteId, siteUrl, isCrawling }: { siteId: string, siteUrl: string, isCrawling: boolean }) {
   const [isPending, startTransition] = useTransition();
@@ -94,6 +115,10 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const startAfter = searchParams.get('startAfter');
+  const propertyId = searchParams.get("property");
+  const addSiteHref = propertyId
+    ? `/manage/sites/new?property=${encodeURIComponent(propertyId)}`
+    : "/manage/sites/new";
 
   const handleSearch = useDebouncedCallback((term: string) => {
     const params = new URLSearchParams(searchParams);
@@ -164,7 +189,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
             </div>
             <div className="flex gap-2">
                 <CrawlAllButton />
-                <Link href="/manage/sites/new">
+                <Link href={addSiteHref}>
                     <Button>
                         <PlusCircle className="h-4 w-4 mr-2" />
                         Add New Site
@@ -192,17 +217,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
                 <CardContent className="p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-3">
-                      {site.logoUrl ? (
-                        <Image
-                          src={site.logoUrl}
-                          alt={`${site.name || site.url} logo`}
-                          width={24}
-                          height={24}
-                          className="rounded-sm"
-                        />
-                      ) : (
-                        <div className="h-6 w-6 shrink-0 rounded-sm bg-muted" />
-                      )}
+                      <SiteIcon site={site} />
                       <div className="min-w-0 space-y-1">
                         <div className="font-semibold">{site.name || site.url}</div>
                         <div className="truncate text-sm text-muted-foreground">{site.url}</div>

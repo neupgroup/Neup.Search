@@ -25,9 +25,17 @@ import {
 } from "../../../../services/neupbot"
 
 const DomainSchema = z.object({
-  url: z.string().url({ message: "Please enter a valid URL." }),
-  description: z.string().min(1, { message: "Description is required." }),
+  url: z.string()
+    .trim()
+    .min(1, { message: "Please enter a domain." })
+    .refine((value) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(value), {
+      message: "Enter only the domain or IP address without http:// or https://.",
+    }),
 })
+
+function normalizeDomainInput(input: string) {
+  return `https://${input.trim()}`
+}
 
 export type Site = ManagedDomain
 
@@ -45,9 +53,9 @@ export type PaginatedSitePages = {
 }
 
 export async function addSite(prevState: any, formData: FormData) {
+  const propertyId = typeof formData.get("property") === "string" ? formData.get("property") as string : undefined
   const validatedFields = DomainSchema.safeParse({
     url: formData.get("url"),
-    description: formData.get("description"),
   })
 
   if (!validatedFields.success) {
@@ -57,7 +65,8 @@ export async function addSite(prevState: any, formData: FormData) {
   }
 
   try {
-    const { domain, siteUrl } = await createDomainForCrawl(validatedFields.data)
+    const normalizedUrl = normalizeDomainInput(validatedFields.data.url)
+    const { domain, siteUrl } = await createDomainForCrawl({ url: normalizedUrl })
     runCrawler(domain.id, siteUrl).catch((error) => logError(error, "crawlSite_async"))
   } catch (error) {
     if (error instanceof InvalidDomainError) {
@@ -73,7 +82,7 @@ export async function addSite(prevState: any, formData: FormData) {
   }
 
   revalidatePath("/manage/sites")
-  redirect("/manage/sites")
+  redirect(propertyId ? `/manage/sites?property=${encodeURIComponent(propertyId)}` : "/manage/sites")
 }
 
 export async function summarizeSiteAction(formData: FormData) {

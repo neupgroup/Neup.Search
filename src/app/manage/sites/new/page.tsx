@@ -3,6 +3,7 @@
 
 import { useActionState } from "react"
 import { useFormStatus } from "react-dom"
+import { useSearchParams } from "next/navigation"
 import { addSite } from "@/app/manage/sites/actions"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,8 +15,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 
 function SubmitButton() {
   const { pending } = useFormStatus()
@@ -27,6 +27,8 @@ function SubmitButton() {
 }
 
 export default function AddNewSitePage() {
+  const searchParams = useSearchParams()
+  const propertyId = searchParams.get("property") || ""
   const initialState: { errors: Record<string, string[]> } = { errors: {} };
   const [state, dispatch] = useActionState(addSite, initialState);
 
@@ -39,37 +41,24 @@ export default function AddNewSitePage() {
               <CardHeader>
                 <CardTitle>Add New Site</CardTitle>
                 <CardDescription>
-                  Enter the details of the site you want to crawl and index.
+                  Enter the domain name you want to crawl and index.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <form action={dispatch} className="space-y-6">
+                  <input type="hidden" name="property" value={propertyId} />
                   <div className="space-y-2">
                     <Label htmlFor="url">Site URL</Label>
                     <Input
                       id="url"
                       name="url"
-                      type="url"
-                      placeholder="https://example.com"
+                      type="text"
+                      placeholder="example.com"
                       aria-describedby="url-error"
                     />
                      {state.errors?.url && (
                       <p id="url-error" className="text-sm font-medium text-destructive">
                         {state.errors.url[0]}
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      name="description"
-                      placeholder="A brief description of the website."
-                      aria-describedby="description-error"
-                    />
-                    {state.errors?.description && (
-                      <p id="description-error" className="text-sm font-medium text-destructive">
-                        {state.errors.description[0]}
                       </p>
                     )}
                   </div>
@@ -92,7 +81,7 @@ export default function AddNewSitePage() {
                     <div className="grid gap-6">
                         <div className="grid gap-3">
                             <p className="text-sm text-muted-foreground">
-                                - Provide the full URL of the site, including `http://` or `https://`.
+                                - Enter only the domain or IP address. Protocol is added automatically.
                             </p>
                             <p className="text-sm text-muted-foreground">
                                 - The crawler will start from the homepage and follow links to discover other pages.

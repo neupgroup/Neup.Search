@@ -12,6 +12,8 @@ export type DomainDetails = {
   description?: string
   summary?: string
   logoUrl?: string
+  appIconUrl?: string
+  appIconBackgroundColor?: string
   discoveredFrom?: string
   locations?: string[]
   currentActivity?: string
@@ -36,6 +38,8 @@ export type ManagedDomain = {
   name?: string
   summary?: string
   logoUrl?: string
+  appIconUrl?: string
+  appIconBackgroundColor?: string
 }
 
 export type ManagedPage = {
@@ -1099,6 +1103,134 @@ function getPrimaryLocation(details: DomainDetails, propertyAddress: string) {
   return primaryLocation || `https://${propertyAddress}`
 }
 
+function readManifestColor(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function getManifestIconScore(icon: { sizes?: unknown; purpose?: unknown }) {
+  const sizes = typeof icon.sizes === "string" ? icon.sizes.split(/\s+/) : []
+  const largestSize = sizes.reduce((maxSize, size) => {
+    if (size === "any") return Math.max(maxSize, 4096)
+    const match = size.match(/^(\d+)x(\d+)$/i)
+    if (!match) return maxSize
+    return Math.max(maxSize, Number.parseInt(match[1], 10), Number.parseInt(match[2], 10))
+  }, 0)
+  const purposeBonus = typeof icon.purpose === "string" && icon.purpose.includes("maskable") ? 10_000 : 0
+
+  return purposeBonus + largestSize
+}
+
+function readManifestIconUrl(manifest: unknown, manifestUrl: string) {
+  if (!manifest || typeof manifest !== "object" || !("icons" in manifest) || !Array.isArray(manifest.icons)) {
+    return undefined
+  }
+
+  const icons = manifest.icons
+    .filter(
+      (icon): icon is { src: string; sizes?: unknown; purpose?: unknown } =>
+        !!icon && typeof icon === "object" && "src" in icon && typeof icon.src === "string" && icon.src.trim().length > 0,
+    )
+    .sort((left, right) => getManifestIconScore(right) - getManifestIconScore(left))
+
+  const selectedIcon = icons[0]
+  if (!selectedIcon) return undefined
+
+  try {
+    return new URL(selectedIcon.src, manifestUrl).toString()
+  } catch {
+    return undefined
+  }
+}
+
+async function readManifestBranding(manifestUrl: string) {
+  try {
+    const response = await fetch(manifestUrl, {
+      headers: { "user-agent": neupbotUserAgent },
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(3000),
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    const manifest = await response.json().catch(() => null)
+    if (!manifest || typeof manifest !== "object") {
+      return null
+    }
+
+    return {
+      appIconUrl: readManifestIconUrl(manifest, response.url),
+      appIconBackgroundColor:
+        readManifestColor("background_color" in manifest ? manifest.background_color : undefined) ||
+        readManifestColor("theme_color" in manifest ? manifest.theme_color : undefined),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function resolveExistingAssetUrl(urls: string[]) {
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: "HEAD",
+        headers: { "user-agent": neupbotUserAgent },
+        cache: "no-store",
+        redirect: "follow",
+        signal: AbortSignal.timeout(3000),
+      })
+
+      if (response.ok) {
+        return response.url || url
+      }
+    } catch {
+    }
+  }
+
+  return undefined
+}
+
+async function resolveManagedDomainBranding(propertyAddress: string, currentBackgroundColor?: string) {
+  const httpsBaseUrl = `https://${propertyAddress}`
+  const httpBaseUrl = `http://${propertyAddress}`
+
+  for (const baseUrl of [httpsBaseUrl, httpBaseUrl]) {
+    for (const manifestPath of ["/manifest.json", "/manifest.webmanifest"]) {
+      const manifestUrl = new URL(manifestPath, baseUrl).toString()
+      const manifestBranding = await readManifestBranding(manifestUrl)
+
+      if (manifestBranding?.appIconUrl || manifestBranding?.appIconBackgroundColor) {
+        return {
+          appIconUrl: manifestBranding.appIconUrl || new URL("/favicon.ico", baseUrl).toString(),
+          appIconBackgroundColor: manifestBranding.appIconBackgroundColor || currentBackgroundColor,
+        }
+      }
+    }
+  }
+
+  const faviconUrl = await resolveExistingAssetUrl([
+    new URL("/favicon.ico", httpsBaseUrl).toString(),
+    new URL("/favicon.ico", httpBaseUrl).toString(),
+  ])
+
+  return {
+    appIconUrl: faviconUrl,
+    appIconBackgroundColor: currentBackgroundColor,
+  }
+}
+
+async function enrichManagedDomainBranding(site: ManagedDomain): Promise<ManagedDomain> {
+  const branding = await resolveManagedDomainBranding(site.id, site.appIconBackgroundColor)
+
+  return {
+    ...site,
+    appIconUrl: branding.appIconUrl,
+    appIconBackgroundColor: branding.appIconBackgroundColor,
+  }
+}
+
 async function upsertDomainRecord(input: {
   url: string
   name: string
@@ -1171,6 +1303,8 @@ function mapDomainToSite(domain: {
     currentCrawlUrl: details.currentCrawlUrl,
     name: domain.name || undefined,
     logoUrl: details.logoUrl,
+    appIconUrl: details.appIconUrl,
+    appIconBackgroundColor: details.appIconBackgroundColor,
     summary: details.summary,
   }
 }
@@ -1191,13 +1325,13 @@ export async function updateDomainDetails(domainId: string, details: DomainDetai
   })
 }
 
-export async function createDomainForCrawl(input: { url: string; description: string }) {
+export async function createDomainForCrawl(input: { url: string; description?: string }) {
   const { domain, siteUrl } = await upsertDomainRecord({
     url: input.url,
     name: getPropertyAddress(input.url),
     status: "Pending",
     details: {
-      description: input.description,
+      description: input.description || "",
       currentActivity: "Queued for crawl.",
       pagesCrawled: 0,
     },
@@ -1262,7 +1396,7 @@ export async function getManagedDomains(search?: string, startAfterDocId?: strin
 
   const startIndex = search && startAfterDocId ? rows.findIndex((domain) => domain.id === startAfterDocId) + 1 : 0
   const slice = search ? rows.slice(Math.max(startIndex, 0), Math.max(startIndex, 0) + take) : rows
-  const sites = slice.map(mapDomainToSite)
+  const sites = await Promise.all(slice.map(async (domain) => enrichManagedDomainBranding(mapDomainToSite(domain))))
 
   return {
     sites,
@@ -2381,7 +2515,7 @@ export async function getManagedDomainById(siteId: string): Promise<ManagedDomai
     where: { id: siteId },
     include: { _count: { select: { pages: true } } },
   })
-  return domain ? mapDomainToSite(domain) : null
+  return domain ? enrichManagedDomainBranding(mapDomainToSite(domain)) : null
 }
 
 export async function getActiveNeupbotCrawls(): Promise<NeupbotCrawlActivity[]> {
