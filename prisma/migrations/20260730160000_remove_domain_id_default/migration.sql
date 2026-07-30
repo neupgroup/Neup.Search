@@ -1,0 +1,2 @@
+ALTER TABLE "domains"
+ALTER COLUMN "id" DROP DEFAULT;
