@@ -10,7 +10,6 @@ Shared manage form for creating a new crawled property.
 
 import { useActionState } from "react"
 import { useFormStatus } from "react-dom"
-import { useSearchParams } from "next/navigation"
 import { addSite } from "@/app/manage/sites/actions"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -38,13 +37,13 @@ export function ManagedPropertyCreateForm({
   title,
   description,
   submitLabel,
+  propertyId = "",
 }: {
   title: string
   description: string
   submitLabel: string
+  propertyId?: string
 }) {
-  const searchParams = useSearchParams()
-  const propertyId = searchParams.get("property") || ""
   const initialState: { errors: Record<string, string[]> } = { errors: {} }
   const [state, dispatch] = useActionState(addSite, initialState)
 

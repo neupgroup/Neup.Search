@@ -11,7 +11,12 @@ type CrawlActivity = Awaited<ReturnType<typeof getLiveNeupbotCrawls>>[number]
 
 const refreshIntervalMs = 500
 
-function CrawlCard({ crawl }: { crawl: CrawlActivity }) {
+function buildProfileHref(siteId: string, propertyId?: string) {
+  if (!propertyId) return `/manage/property/${siteId}`
+  return `/manage/property/${siteId}?property=${encodeURIComponent(propertyId)}`
+}
+
+function CrawlCard({ crawl, propertyId }: { crawl: CrawlActivity, propertyId?: string }) {
   return (
     <Card className="transition-colors hover:bg-muted/50">
       <CardContent className="p-4">
@@ -19,7 +24,7 @@ function CrawlCard({ crawl }: { crawl: CrawlActivity }) {
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge>{crawl.status}</Badge>
-              <Link href={`/manage/sites/${crawl.siteId}`} className="font-semibold hover:underline">
+              <Link href={buildProfileHref(crawl.siteId, propertyId)} className="font-semibold hover:underline">
                 {crawl.siteName || crawl.siteUrl}
               </Link>
             </div>
@@ -62,7 +67,13 @@ function CrawlCard({ crawl }: { crawl: CrawlActivity }) {
   )
 }
 
-export function NeupbotLivePanel({ initialCrawls }: { initialCrawls: CrawlActivity[] }) {
+export function NeupbotLivePanel({
+  initialCrawls,
+  propertyId,
+}: {
+  initialCrawls: CrawlActivity[]
+  propertyId?: string
+}) {
   const [crawls, setCrawls] = useState(initialCrawls)
 
   useEffect(() => {
@@ -109,7 +120,7 @@ export function NeupbotLivePanel({ initialCrawls }: { initialCrawls: CrawlActivi
       ) : (
         <div className="space-y-3">
           {crawls.map((crawl) => (
-            <CrawlCard key={crawl.siteId} crawl={crawl} />
+            <CrawlCard key={crawl.siteId} crawl={crawl} propertyId={propertyId} />
           ))}
         </div>
       )}

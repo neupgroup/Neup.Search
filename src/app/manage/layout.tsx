@@ -2,7 +2,7 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect } from "react"
+import { Suspense, useEffect } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   Home,
@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import HeaderS2V2 from "@/components/header.s2.v2"
 
-export default function ManageLayout({
+function ManageLayoutContent({
   children,
 }: {
   children: React.ReactNode
@@ -44,6 +44,7 @@ export default function ManageLayout({
 
   const buildManageHref = (href: string) => {
     if (href === "#" || !selectedPropertyId) return href
+    if (href === "/manage/neupbot") return href
     const separator = href.includes("?") ? "&" : "?"
     return `${href}${separator}property=${encodeURIComponent(selectedPropertyId)}`
   }
@@ -96,5 +97,17 @@ export default function ManageLayout({
         </main>
       </div>
     </div>
+  )
+}
+
+export default function ManageLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <Suspense fallback={null}>
+      <ManageLayoutContent>{children}</ManageLayoutContent>
+    </Suspense>
   )
 }

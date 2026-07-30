@@ -56,12 +56,13 @@ export async function addSite(prevState: any, formData: FormData) {
     }
   }
 
+  let createdDomainId = ""
+
   try {
     const normalizedUrl = normalizeDomainInput(validatedFields.data.url)
     const { domain, siteUrl } = await createDomainForCrawl({ url: normalizedUrl })
+    createdDomainId = domain.id
     runCrawler(domain.id, siteUrl).catch((error) => logError(error, "crawlSite_async"))
-    revalidatePath("/manage/properties")
-    redirect(`/manage/properties?property=${encodeURIComponent(domain.id)}`)
   } catch (error) {
     if (error instanceof InvalidDomainError) {
       return {
@@ -74,6 +75,9 @@ export async function addSite(prevState: any, formData: FormData) {
       errors: { _server: ["Could not add domain. Please try again."] },
     }
   }
+
+  revalidatePath("/manage/properties")
+  redirect(`/manage/properties?property=${encodeURIComponent(createdDomainId)}`)
 }
 
 export async function summarizeSiteAction(formData: FormData) {
