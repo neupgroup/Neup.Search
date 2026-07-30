@@ -21,7 +21,7 @@ model Account {
 }
 
 model Domain {
-  id          String    @id @default(cuid())
+  id          String    @id
   domain      String    @unique
   name        String
   lastCrawled DateTime?

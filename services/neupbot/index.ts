@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio"
+import { isIP } from "node:net"
 import { chromium } from "playwright"
 import type { Prisma } from "@prisma/client"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
@@ -11,6 +12,8 @@ export type DomainDetails = {
   description?: string
   summary?: string
   logoUrl?: string
+  discoveredFrom?: string
+  locations?: string[]
   currentActivity?: string
   currentCrawlUrl?: string
   pagesCrawled?: number
@@ -252,18 +255,18 @@ export class InvalidDomainError extends Error {
 export function normalizeSiteUrl(input: string) {
   const url = new URL(input)
   url.hash = ""
-  url.pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "")
-  url.search = ""
+  if (url.pathname === "/") {
+    url.pathname = ""
+  }
   return url.toString()
 }
 
-function isIpv4Address(hostname: string) {
-  const parts = hostname.split(".")
-  return parts.length === 4 && parts.every((part) => {
-    if (!/^\d+$/.test(part)) return false
-    const value = Number(part)
-    return value >= 0 && value <= 255 && String(value) === part
-  })
+export function getDomainId(input: string) {
+  return getPropertyAddress(input)
+}
+
+export function getPropertyAddress(input: string) {
+  return new URL(input).hostname.toLowerCase().replace(/\.$/, "")
 }
 
 export function isValidDomainHostname(hostname: string) {
@@ -273,9 +276,7 @@ export function isValidDomainHostname(hostname: string) {
     !normalizedHostname ||
     normalizedHostname.length > 253 ||
     normalizedHostname.includes("..") ||
-    normalizedHostname.includes(":") ||
-    normalizedHostname === "localhost" ||
-    isIpv4Address(normalizedHostname)
+    normalizedHostname === "localhost"
   ) {
     return false
   }
@@ -291,8 +292,8 @@ export function isValidDomainHostname(hostname: string) {
 }
 
 export function assertValidSiteDomain(input: string) {
-  const hostname = getDomainName(input)
-  if (!isValidDomainHostname(hostname)) {
+  const hostname = getPropertyAddress(input)
+  if (!(isIP(hostname) || isValidDomainHostname(hostname))) {
     throw new InvalidDomainError()
   }
 }
@@ -504,19 +505,15 @@ async function saveDiscoveredLink(input: DiscoveredLinkInput) {
   const { siteId, sourceUrl, targetUrl } = input
   if (isIgnoredCrawlUrl(targetUrl)) return
 
-  const targetHostname = getDomainName(targetUrl)
-  const targetDomain = await prisma.domain.upsert({
-    where: { domain: new URL(targetUrl).origin },
-    create: {
-      domain: new URL(targetUrl).origin,
-      name: targetHostname,
-      status: "Pending",
-      details: {
-        discoveredFrom: sourceUrl,
-      },
+  const normalizedTargetSiteUrl = normalizeSiteUrl(targetUrl)
+  const targetHostname = getPropertyAddress(normalizedTargetSiteUrl)
+  const targetDomain = await upsertDomainRecord({
+    url: normalizedTargetSiteUrl,
+    name: targetHostname,
+    status: "Pending",
+    details: {
+      discoveredFrom: sourceUrl,
     },
-    update: {},
-    select: { id: true },
   })
   const sourcePageId = input.sourcePageId ?? (await prisma.page.findFirst({
     where: { domainId: siteId, url: sourceUrl },
@@ -538,14 +535,14 @@ async function saveDiscoveredLink(input: DiscoveredLinkInput) {
         linkFrom: sourceUrl,
         linkTo: targetUrl,
         fromDomain: siteId,
-        toDomain: targetDomain.id,
+        toDomain: targetDomain.domain.id,
       },
     },
     create: {
       linkFrom: sourceUrl,
       linkTo: targetUrl,
       fromDomain: siteId,
-      toDomain: targetDomain.id,
+      toDomain: targetDomain.domain.id,
       ...metadata,
     },
     update: {
@@ -1010,6 +1007,68 @@ export function readDetails(details: unknown): DomainDetails {
   return details && typeof details === "object" && !Array.isArray(details) ? details as DomainDetails : {}
 }
 
+function mergeLocations(existingLocations: string[] | undefined, nextLocation: string) {
+  const normalizedExistingLocations = Array.isArray(existingLocations)
+    ? existingLocations.filter((location): location is string => typeof location === "string" && location.length > 0)
+    : []
+
+  return normalizedExistingLocations.includes(nextLocation)
+    ? normalizedExistingLocations
+    : [nextLocation, ...normalizedExistingLocations]
+}
+
+function getPrimaryLocation(details: DomainDetails, propertyAddress: string) {
+  const primaryLocation = Array.isArray(details.locations) ? details.locations[0] : undefined
+  return primaryLocation || `https://${propertyAddress}`
+}
+
+async function upsertDomainRecord(input: {
+  url: string
+  name: string
+  status: string
+  details?: DomainDetails
+}) {
+  const siteUrl = normalizeSiteUrl(input.url)
+  const propertyAddress = getPropertyAddress(siteUrl)
+  assertValidSiteDomain(siteUrl)
+
+  const existing = await prisma.domain.findUnique({
+    where: { domain: propertyAddress },
+    select: {
+      id: true,
+      name: true,
+      details: true,
+    },
+  })
+
+  const existingDetails = readDetails(existing?.details)
+  const mergedDetails: DomainDetails = {
+    ...existingDetails,
+    ...input.details,
+    locations: mergeLocations(existingDetails.locations, siteUrl),
+  }
+
+  const domain = existing
+    ? await prisma.domain.update({
+        where: { id: existing.id },
+        data: {
+          name: existing.name || input.name,
+          details: mergedDetails,
+        },
+      })
+    : await prisma.domain.create({
+        data: {
+          id: propertyAddress,
+          domain: propertyAddress,
+          name: input.name,
+          status: input.status,
+          details: mergedDetails,
+        },
+      })
+
+  return { domain, siteUrl, propertyAddress }
+}
+
 function mapDomainToSite(domain: {
   id: string
   domain: string
@@ -1023,7 +1082,7 @@ function mapDomainToSite(domain: {
   const details = readDetails(domain.details)
   return {
     id: domain.id,
-    url: domain.domain,
+    url: getPrimaryLocation(details, domain.domain),
     description: details.description || "",
     status: domain.status as ManagedDomain["status"],
     lastCrawled: domain.lastCrawled ? domain.lastCrawled.toLocaleDateString() : "Never",
@@ -1056,26 +1115,14 @@ export async function updateDomainDetails(domainId: string, details: DomainDetai
 }
 
 export async function createDomainForCrawl(input: { url: string; description: string }) {
-  const siteUrl = normalizeSiteUrl(input.url)
-  assertValidSiteDomain(siteUrl)
-
-  const domain = await prisma.domain.upsert({
-    where: { domain: siteUrl },
-    create: {
-      domain: siteUrl,
-      name: getDomainName(siteUrl),
-      status: "Pending",
-      details: {
-        description: input.description,
-        currentActivity: "Queued for crawl.",
-        pagesCrawled: 0,
-      },
-    },
-    update: {
-      details: {
-        description: input.description,
-        currentActivity: "Queued for crawl.",
-      },
+  const { domain, siteUrl } = await upsertDomainRecord({
+    url: input.url,
+    name: getPropertyAddress(input.url),
+    status: "Pending",
+    details: {
+      description: input.description,
+      currentActivity: "Queued for crawl.",
+      pagesCrawled: 0,
     },
   })
 
