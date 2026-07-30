@@ -5,7 +5,7 @@ import { logError } from "@/lib/logging"
 import { revalidatePath } from "next/cache"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
 import type { Prisma } from "@prisma/client"
-import { findSitemapReferencesForUrl, neupbotUserAgent, type SitemapReference } from "../../../../services/neupbot"
+import { findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "../../../../services/neupbot"
 
 export type Page = {
   id: string
@@ -455,5 +455,22 @@ export async function summarizePageAction(pageId: string, pageContent: string) {
     await logError({ error, pageId }, "summarizePageAction")
   } finally {
     revalidatePath(`/manage/pages/${pageId}`)
+  }
+}
+
+export async function crawlPageAction(formData: FormData) {
+  const pageId = String(formData.get("pageId") || "")
+
+  if (!pageId) {
+    throw new Error("pageId is required.")
+  }
+
+  try {
+    await runPageCrawler(pageId)
+  } catch (error) {
+    await logError({ error, pageId }, "crawlPageAction")
+  } finally {
+    revalidatePath(`/manage/pages/${pageId}`)
+    revalidatePath("/manage/pages")
   }
 }

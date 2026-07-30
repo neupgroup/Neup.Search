@@ -1,7 +1,7 @@
 
 
 import { notFound } from "next/navigation"
-import { getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
+import { crawlPageAction, getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
@@ -33,16 +33,24 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
                 </Link>
               </CardDescription>
             </div>
-            <form action={async () => {
+            <div className="flex shrink-0 flex-wrap justify-end gap-2">
+              <form action={crawlPageAction}>
+                <input type="hidden" name="pageId" value={page.id} />
+                <Button type="submit" variant="default">
+                  Crawl Page
+                </Button>
+              </form>
+              <form action={async () => {
                 "use server"
                 if (page.content) {
                     await summarizePageAction(page.id, page.content)
                 }
-            }}>
+              }}>
                 <Button type="submit" variant="outline" disabled={!page.content || !!page.summary}>
                     {page.summary ? "Summary Generated" : "Generate Summary"}
                 </Button>
-            </form>
+              </form>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

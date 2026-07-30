@@ -991,6 +991,229 @@ export async function findSitemapReferencesForUrl(pageUrl: string, siteUrl: stri
   }
 }
 
+type CrawlStoredPageInput = {
+  siteId: string
+  pageId: string
+  pageUrl: string
+  disallow: RegExp[]
+  sitemapReferencesByUrl: Map<string, Set<string>>
+  crawledUrls?: Set<string>
+}
+
+async function crawlStoredPage({
+  siteId,
+  pageId,
+  pageUrl,
+  disallow,
+  sitemapReferencesByUrl,
+  crawledUrls = new Set<string>(),
+}: CrawlStoredPageInput) {
+  const parsedCurrentUrl = new URL(pageUrl)
+  const normalizedUrl = parsedCurrentUrl.origin + parsedCurrentUrl.pathname
+
+  if (crawledUrls.has(normalizedUrl) || disallow.some((regex) => regex.test(parsedCurrentUrl.pathname))) {
+    await saveCrawledPage(pageId, {
+      title: getUrlTitle(pageUrl),
+      description: null,
+      type: "skipped",
+      data: [{
+        reason: crawledUrls.has(normalizedUrl) ? "Already crawled in this run." : "Blocked by robots.txt.",
+        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
+      }],
+      fullContent: null,
+      status: "Skipped",
+      statusCode: null,
+      details: {
+        skippedOn: new Date().toISOString(),
+      },
+    })
+    return false
+  }
+
+  try {
+    const response = await fetch(pageUrl, {
+      headers: { "User-Agent": neupbotUserAgent },
+      redirect: "manual",
+    })
+    crawledUrls.add(normalizedUrl)
+
+    const contentType = response.headers.get("content-type")
+    const redirectLocation = response.headers.get("location")
+    if (response.status >= 300 && response.status < 400) {
+      const targetUrl = redirectLocation ? new URL(redirectLocation, pageUrl).toString() : null
+      const data = [{
+        contentType,
+        headers: Object.fromEntries(response.headers.entries()),
+        redirectLocation: targetUrl,
+        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
+      }]
+      await saveCrawledPage(pageId, {
+        title: null,
+        description: null,
+        type: contentType || "redirect",
+        data,
+        fullContent: null,
+        status: "Redirect",
+        statusCode: response.status,
+        details: {
+          contentType,
+          redirectLocation: targetUrl,
+        },
+      })
+
+      if (targetUrl) {
+        await saveDiscoveredPage({
+          siteId,
+          url: targetUrl,
+          referrer: pageUrl,
+          source: "redirect",
+          kind: classifyContentUrl(targetUrl)?.kind || "page",
+          fileType: classifyContentUrl(targetUrl)?.fileType,
+        })
+        await saveDiscoveredLink(siteId, pageUrl, targetUrl)
+      }
+      return false
+    }
+
+    const isHtml = contentType?.includes("text/html") ?? false
+    if (!response.ok || !isHtml) {
+      const fileSize = !isHtml ? await readStaticFileSize(response) : readContentLength(response.headers)
+      const content = classifyContentUrl(pageUrl)
+      const data = [{
+        contentType,
+        headers: Object.fromEntries(response.headers.entries()),
+        fileSize,
+        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
+      }]
+      await saveCrawledPage(pageId, {
+        title: getUrlTitle(pageUrl),
+        description: null,
+        type: contentType || "unknown",
+        data,
+        fullContent: null,
+        status: response.ok ? "Skipped" : "Error",
+        statusCode: response.status,
+        details: {
+          contentType,
+          fileSize,
+          kind: content?.kind || "asset",
+          fileType: content?.fileType || getUrlFileType(pageUrl),
+        },
+      })
+      return false
+    }
+
+    const html = await response.text()
+    const $ = cheerio.load(html)
+    const pageTitle = $("title").text() || $("h1").first().text()
+    const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
+    const data = [{
+      keywords: $("meta[name=\"keywords\"]").attr("content") || "",
+      bodyHtml: $("body").html() || "",
+      httpHeaders: Object.fromEntries(response.headers.entries()),
+      canonicalUrl: $("link[rel=\"canonical\"]").attr("href") || null,
+      lang: $("html").attr("lang") || null,
+      openGraph: {
+        title: $("meta[property=\"og:title\"]").attr("content") || null,
+        type: $("meta[property=\"og:type\"]").attr("content") || null,
+        image: $("meta[property=\"og:image\"]").attr("content") || null,
+        url: $("meta[property=\"og:url\"]").attr("content") || null,
+      },
+      images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
+      videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+      audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+      iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
+      sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
+    }]
+
+    await saveCrawledPage(pageId, {
+      title: pageTitle || null,
+      description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
+      type: "text/html",
+      data,
+      fullContent,
+      status: "Indexed",
+      statusCode: response.status,
+      details: {
+        contentType,
+      },
+    })
+
+    await saveDiscoveredLinksAndPages(siteId, pageUrl, extractPageLinks($), sitemapReferencesByUrl)
+    await saveDiscoveredAssets(siteId, pageUrl, extractPageAssets($), sitemapReferencesByUrl)
+    return true
+  } catch (fetchError) {
+    await logError({ error: fetchError, currentUrl: pageUrl }, "crawlSite_fetch")
+    await saveCrawledPage(pageId, {
+      title: getUrlTitle(pageUrl),
+      description: null,
+      type: "fetch-error",
+      data: [{
+        error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
+      }],
+      fullContent: null,
+      status: "Error",
+      statusCode: null,
+      details: {
+        error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+      },
+    })
+    return false
+  }
+}
+
+export async function runPageCrawler(pageId: string) {
+  if (!pageId) {
+    throw new Error("pageId is required.")
+  }
+
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: {
+      id: true,
+      url: true,
+      domainId: true,
+      domain: { select: { domain: true } },
+    },
+  })
+
+  if (!page) {
+    throw new Error("Page not found.")
+  }
+
+  const sitemapReferencesByUrl = new Map<string, Set<string>>()
+  const robotsTxt = await getRobotsTxt(page.domain.domain)
+  const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
+
+  for (const reference of await findSitemapReferencesForUrl(page.url, page.domain.domain)) {
+    addSitemapReference(sitemapReferencesByUrl, page.url, reference.sitemapUrl)
+  }
+
+  await updateDomainDetails(page.domainId, {
+    currentActivity: `Crawling ${page.url}`,
+  })
+
+  await crawlStoredPage({
+    siteId: page.domainId,
+    pageId: page.id,
+    pageUrl: page.url,
+    disallow,
+    sitemapReferencesByUrl,
+  })
+
+  await prisma.domain.update({
+    where: { id: page.domainId },
+    data: {
+      lastCrawled: new Date(),
+      details: {
+        ...readDetails((await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } }))?.details),
+        currentActivity: "Page crawl complete.",
+      },
+    },
+  })
+}
+
 export async function runCrawler(siteId: string, siteUrl: string) {
   if (!siteId || !siteUrl) {
     throw new Error("siteId and siteUrl are required.")
@@ -1045,163 +1268,21 @@ export async function runCrawler(siteId: string, siteUrl: string) {
       const pendingPage = await getNextPendingPage(siteId)
       if (!pendingPage) break
 
-      const currentUrl = pendingPage.url
-      const parsedCurrentUrl = new URL(currentUrl)
-      const normalizedUrl = parsedCurrentUrl.origin + parsedCurrentUrl.pathname
-
-      if (crawledUrls.has(normalizedUrl) || disallow.some((regex) => regex.test(parsedCurrentUrl.pathname))) {
-        await saveCrawledPage(pendingPage.id, {
-          title: getUrlTitle(currentUrl),
-          description: null,
-          type: "skipped",
-          data: [{
-            reason: crawledUrls.has(normalizedUrl) ? "Already crawled in this run." : "Blocked by robots.txt.",
-            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-          }],
-          fullContent: null,
-          status: "Skipped",
-          statusCode: null,
-          details: {
-            skippedOn: new Date().toISOString(),
-          },
-        })
-        continue
-      }
-
       await updateDomainDetails(siteId, {
-        currentActivity: `Crawling ${currentUrl}`,
+        currentActivity: `Crawling ${pendingPage.url}`,
         pagesCrawled: pagesProcessed,
       })
 
-      try {
-        const response = await fetch(currentUrl, {
-          headers: { "User-Agent": neupbotUserAgent },
-          redirect: "manual",
-        })
-        crawledUrls.add(normalizedUrl)
-
-        const contentType = response.headers.get("content-type")
-        const redirectLocation = response.headers.get("location")
-        if (response.status >= 300 && response.status < 400) {
-          const targetUrl = redirectLocation ? new URL(redirectLocation, currentUrl).toString() : null
-          const data = [{
-            contentType,
-            headers: Object.fromEntries(response.headers.entries()),
-            redirectLocation: targetUrl,
-            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-          }]
-          await saveCrawledPage(pendingPage.id, {
-            title: null,
-            description: null,
-            type: contentType || "redirect",
-            data,
-            fullContent: null,
-            status: "Redirect",
-            statusCode: response.status,
-            details: {
-              contentType,
-              redirectLocation: targetUrl,
-            },
-          })
-
-          if (targetUrl) {
-            await saveDiscoveredPage({
-              siteId,
-              url: targetUrl,
-              referrer: currentUrl,
-              source: "redirect",
-              kind: classifyContentUrl(targetUrl)?.kind || "page",
-              fileType: classifyContentUrl(targetUrl)?.fileType,
-            })
-            await saveDiscoveredLink(siteId, currentUrl, targetUrl)
-          }
-          continue
-        }
-
-        const isHtml = contentType?.includes("text/html") ?? false
-        if (!response.ok || !isHtml) {
-          const fileSize = !isHtml ? await readStaticFileSize(response) : readContentLength(response.headers)
-          const content = classifyContentUrl(currentUrl)
-          const data = [{
-            contentType,
-            headers: Object.fromEntries(response.headers.entries()),
-            fileSize,
-            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-          }]
-          await saveCrawledPage(pendingPage.id, {
-            title: getUrlTitle(currentUrl),
-            description: null,
-            type: contentType || "unknown",
-            data,
-            fullContent: null,
-            status: response.ok ? "Skipped" : "Error",
-            statusCode: response.status,
-            details: {
-              contentType,
-              fileSize,
-              kind: content?.kind || "asset",
-              fileType: content?.fileType || getUrlFileType(currentUrl),
-            },
-          })
-          continue
-        }
-
-        const html = await response.text()
-        const $ = cheerio.load(html)
-        const pageTitle = $("title").text() || $("h1").first().text()
-        const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
-        const data = [{
-          keywords: $("meta[name=\"keywords\"]").attr("content") || "",
-          bodyHtml: $("body").html() || "",
-          httpHeaders: Object.fromEntries(response.headers.entries()),
-          canonicalUrl: $("link[rel=\"canonical\"]").attr("href") || null,
-          lang: $("html").attr("lang") || null,
-          openGraph: {
-            title: $("meta[property=\"og:title\"]").attr("content") || null,
-            type: $("meta[property=\"og:type\"]").attr("content") || null,
-            image: $("meta[property=\"og:image\"]").attr("content") || null,
-            url: $("meta[property=\"og:url\"]").attr("content") || null,
-          },
-          images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
-          videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-          audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-          iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-          sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-        }]
-
-        await saveCrawledPage(pendingPage.id, {
-          title: pageTitle || null,
-          description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
-          type: "text/html",
-          data,
-          fullContent,
-          status: "Indexed",
-          statusCode: response.status,
-          details: {
-            contentType,
-          },
-        })
-
+      const crawledHtmlPage = await crawlStoredPage({
+        siteId,
+        pageId: pendingPage.id,
+        pageUrl: pendingPage.url,
+        disallow,
+        sitemapReferencesByUrl,
+        crawledUrls,
+      })
+      if (crawledHtmlPage) {
         pagesProcessed++
-        await saveDiscoveredLinksAndPages(siteId, currentUrl, extractPageLinks($), sitemapReferencesByUrl)
-        await saveDiscoveredAssets(siteId, currentUrl, extractPageAssets($), sitemapReferencesByUrl)
-      } catch (fetchError) {
-        await logError({ error: fetchError, currentUrl }, "crawlSite_fetch")
-        await saveCrawledPage(pendingPage.id, {
-          title: getUrlTitle(currentUrl),
-          description: null,
-          type: "fetch-error",
-          data: [{
-            error: fetchError instanceof Error ? fetchError.message : String(fetchError),
-            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-          }],
-          fullContent: null,
-          status: "Error",
-          statusCode: null,
-          details: {
-            error: fetchError instanceof Error ? fetchError.message : String(fetchError),
-          },
-        })
       }
 
       await sleep(100)
