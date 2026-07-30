@@ -590,8 +590,16 @@ async function saveSitemapPages(
   siteId: string,
   entries: SitemapUrlEntry[],
   sitemapReferencesByUrl: Map<string, Set<string>>,
+  rootHostname: string,
+  stats?: CrawlResourceStats,
 ) {
   for (const entry of entries) {
+    if (!isInternalCrawlUrl(entry.url, rootHostname)) {
+      if (stats) stats.externalResourcesFound++
+      continue
+    }
+
+    if (stats) stats.internalResourcesFound++
     addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
     await saveDiscoveredPage({
       siteId,
@@ -930,7 +938,7 @@ function mapDomainToSite(domain: {
     status: domain.status as ManagedDomain["status"],
     lastCrawled: domain.lastCrawled ? domain.lastCrawled.toLocaleDateString() : "Never",
     createdAt: domain.addedOn,
-    pagesCrawled: domain._count?.pages ?? details.pagesCrawled ?? 0,
+    pagesCrawled: details.pagesCrawled ?? domain._count?.pages ?? 0,
     internalResourcesFound: details.internalResourcesFound ?? 0,
     externalResourcesFound: details.externalResourcesFound ?? 0,
     currentlyCrawling: details.currentActivity,
@@ -1148,8 +1156,10 @@ type CrawlStoredPageInput = {
   siteId: string
   pageId: string
   pageUrl: string
+  rootHostname: string
   disallow: RegExp[]
   sitemapReferencesByUrl: Map<string, Set<string>>
+  stats: CrawlResourceStats
   crawledUrls?: Set<string>
 }
 
@@ -1157,8 +1167,10 @@ async function crawlStoredPage({
   siteId,
   pageId,
   pageUrl,
+  rootHostname,
   disallow,
   sitemapReferencesByUrl,
+  stats,
   crawledUrls = new Set<string>(),
 }: CrawlStoredPageInput) {
   const parsedCurrentUrl = new URL(pageUrl)
@@ -1299,8 +1311,8 @@ async function crawlStoredPage({
       },
     })
 
-    await saveDiscoveredLinksAndPages(siteId, pageUrl, extractPageLinks($), sitemapReferencesByUrl, pageId)
-    await saveDiscoveredAssets(siteId, pageUrl, extractPageAssets($), sitemapReferencesByUrl, pageId)
+    await saveDiscoveredLinksAndPages(siteId, pageUrl, extractPageLinks($), sitemapReferencesByUrl, rootHostname, stats, pageId)
+    await saveDiscoveredAssets(siteId, pageUrl, extractPageAssets($), sitemapReferencesByUrl, rootHostname, stats, pageId)
     return true
   } catch (fetchError) {
     await logError({ error: fetchError, currentUrl: pageUrl }, "crawlSite_fetch")
@@ -1343,6 +1355,7 @@ export async function runPageCrawler(pageId: string) {
   }
 
   const sitemapReferencesByUrl = new Map<string, Set<string>>()
+  const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
   const robotsTxt = await getRobotsTxt(page.domain.domain)
   const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
 
@@ -1352,14 +1365,17 @@ export async function runPageCrawler(pageId: string) {
 
   await updateDomainDetails(page.domainId, {
     currentActivity: `Crawling ${page.url}`,
+    currentCrawlUrl: page.url,
   })
 
   await crawlStoredPage({
     siteId: page.domainId,
     pageId: page.id,
     pageUrl: page.url,
+    rootHostname: getDomainName(page.domain.domain),
     disallow,
     sitemapReferencesByUrl,
+    stats,
   })
 
   await prisma.domain.update({
@@ -1369,6 +1385,9 @@ export async function runPageCrawler(pageId: string) {
       details: {
         ...readDetails((await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } }))?.details),
         currentActivity: "Page crawl complete.",
+        currentCrawlUrl: "",
+        internalResourcesFound: stats.internalResourcesFound,
+        externalResourcesFound: stats.externalResourcesFound,
       },
     },
   })
@@ -1376,7 +1395,9 @@ export async function runPageCrawler(pageId: string) {
 
 async function crawlPendingPagesForDomain(
   siteId: string,
+  rootHostname: string,
   disallow: RegExp[],
+  stats: CrawlResourceStats,
   sitemapReferencesByUrl = new Map<string, Set<string>>(),
 ) {
   const crawledUrls = new Set<string>()
@@ -1394,20 +1415,31 @@ async function crawlPendingPagesForDomain(
 
     await updateDomainDetails(siteId, {
       currentActivity: `Crawling ${pendingPage.url}`,
+      currentCrawlUrl: pendingPage.url,
       pagesCrawled: pagesProcessed,
+      internalResourcesFound: stats.internalResourcesFound,
+      externalResourcesFound: stats.externalResourcesFound,
     })
 
     const crawledHtmlPage = await crawlStoredPage({
       siteId,
       pageId: pendingPage.id,
       pageUrl: pendingPage.url,
+      rootHostname,
       disallow,
       sitemapReferencesByUrl,
+      stats,
       crawledUrls,
     })
     if (crawledHtmlPage) {
       pagesProcessed++
     }
+
+    await updateDomainDetails(siteId, {
+      pagesCrawled: pagesProcessed,
+      internalResourcesFound: stats.internalResourcesFound,
+      externalResourcesFound: stats.externalResourcesFound,
+    })
 
     await sleep(100)
   }
@@ -1432,21 +1464,29 @@ export async function resumePendingCrawler(siteId: string) {
     if (!domain) {
       throw new Error("Domain not found.")
     }
+    const details = readDetails(domain.details)
+    const stats: CrawlResourceStats = {
+      internalResourcesFound: details.internalResourcesFound ?? 0,
+      externalResourcesFound: details.externalResourcesFound ?? 0,
+    }
 
     await prisma.domain.update({
       where: { id: siteId },
       data: {
         status: "Crawling",
         details: {
-          ...readDetails(domain.details),
+          ...details,
           currentActivity: "Resuming pending crawl queue...",
+          currentCrawlUrl: "",
+          internalResourcesFound: stats.internalResourcesFound,
+          externalResourcesFound: stats.externalResourcesFound,
         },
       },
     })
 
     const robotsTxt = await getRobotsTxt(domain.domain)
     const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
-    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, disallow)
+    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, getDomainName(domain.domain), disallow, stats)
 
     await prisma.domain.update({
       where: { id: siteId },
@@ -1457,6 +1497,9 @@ export async function resumePendingCrawler(siteId: string) {
           ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
           pagesCrawled: crawledUrls.size,
           currentActivity: "Pending crawl complete.",
+          currentCrawlUrl: "",
+          internalResourcesFound: stats.internalResourcesFound,
+          externalResourcesFound: stats.externalResourcesFound,
         },
       },
     })
@@ -1480,6 +1523,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
   }
 
   const sitemapReferencesByUrl = new Map<string, Set<string>>()
+  const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
 
   try {
     await prisma.domain.update({
@@ -1489,6 +1533,10 @@ export async function runCrawler(siteId: string, siteUrl: string) {
         details: {
           ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
           currentActivity: "Fetching robots.txt...",
+          currentCrawlUrl: "",
+          pagesCrawled: 0,
+          internalResourcesFound: 0,
+          externalResourcesFound: 0,
         },
       },
     })
@@ -1501,7 +1549,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
       await updateDomainDetails(siteId, { currentActivity: `Found ${sitemaps.length} sitemaps. Parsing...` })
       for (const sitemapUrl of sitemaps) {
         const entries = await getSitemapUrlEntries(sitemapUrl, { siteId, referrer: robotsUrl })
-        await saveSitemapPages(siteId, entries, sitemapReferencesByUrl)
+        await saveSitemapPages(siteId, entries, sitemapReferencesByUrl, getDomainName(siteUrl), stats)
       }
     } else {
       const sitemapEntries = await getSitemapUrlEntries(new URL("/sitemap.xml", siteUrl).toString(), {
@@ -1510,13 +1558,13 @@ export async function runCrawler(siteId: string, siteUrl: string) {
       })
       if (sitemapEntries.length > 0) {
         await updateDomainDetails(siteId, { currentActivity: "Found default sitemap.xml. Parsing..." })
-        await saveSitemapPages(siteId, sitemapEntries, sitemapReferencesByUrl)
+        await saveSitemapPages(siteId, sitemapEntries, sitemapReferencesByUrl, getDomainName(siteUrl), stats)
       }
     }
 
     await saveDiscoveredPage({ siteId, url: siteUrl, source: "seed", kind: "page" })
 
-    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, disallow, sitemapReferencesByUrl)
+    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, getDomainName(siteUrl), disallow, stats, sitemapReferencesByUrl)
 
     await prisma.domain.update({
       where: { id: siteId },
@@ -1527,6 +1575,9 @@ export async function runCrawler(siteId: string, siteUrl: string) {
           ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
           pagesCrawled: crawledUrls.size,
           currentActivity: "Crawl complete.",
+          currentCrawlUrl: "",
+          internalResourcesFound: stats.internalResourcesFound,
+          externalResourcesFound: stats.externalResourcesFound,
         },
       },
     })
@@ -1552,6 +1603,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
   const rootDomain = getDomainName(siteUrl)
   const crawledUrls = new Set<string>()
   const sitemapReferencesByUrl = new Map<string, Set<string>>()
+  const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
   let pagesProcessed = 0
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
 
@@ -1563,6 +1615,10 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
         details: {
           ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
           currentActivity: "Starting JavaScript crawler...",
+          currentCrawlUrl: "",
+          pagesCrawled: 0,
+          internalResourcesFound: 0,
+          externalResourcesFound: 0,
         },
       },
     })
@@ -1577,6 +1633,11 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
       for (const sitemapUrl of sitemaps) {
         const entries = await getSitemapUrlEntries(sitemapUrl, { siteId, referrer: robotsUrl })
         for (const entry of entries) {
+          if (!isInternalCrawlUrl(entry.url, rootDomain)) {
+            stats.externalResourcesFound++
+            continue
+          }
+          stats.internalResourcesFound++
           addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
           urlQueue.push(entry.url)
         }
@@ -1589,6 +1650,11 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
       if (sitemapEntries.length > 0) {
         await updateDomainDetails(siteId, { currentActivity: "Found default sitemap.xml. Parsing..." })
         for (const entry of sitemapEntries) {
+          if (!isInternalCrawlUrl(entry.url, rootDomain)) {
+            stats.externalResourcesFound++
+            continue
+          }
+          stats.internalResourcesFound++
           addSitemapReference(sitemapReferencesByUrl, entry.url, entry.sitemapUrl)
           urlQueue.push(entry.url)
         }
@@ -1623,7 +1689,10 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
 
       await updateDomainDetails(siteId, {
         currentActivity: `Rendering ${currentUrl}`,
+        currentCrawlUrl: currentUrl,
         pagesCrawled: pagesProcessed,
+        internalResourcesFound: stats.internalResourcesFound,
+        externalResourcesFound: stats.externalResourcesFound,
       })
 
       try {
@@ -1730,15 +1799,22 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
 
             const targetHostname = getDomainName(absoluteUrl)
             const isInternalLink = targetHostname === rootDomain
-            const targetPageId = await saveDiscoveredPage({
-              siteId,
-              url: absoluteUrl,
-              referrer: currentUrl,
-              source: "anchor",
-              kind: classifyContentUrl(absoluteUrl)?.kind || "page",
-              fileType: classifyContentUrl(absoluteUrl)?.fileType,
-              sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
-            })
+            if (isInternalLink) {
+              stats.internalResourcesFound++
+            } else {
+              stats.externalResourcesFound++
+            }
+            const targetPageId = isInternalLink
+              ? await saveDiscoveredPage({
+                  siteId,
+                  url: absoluteUrl,
+                  referrer: currentUrl,
+                  source: "anchor",
+                  kind: classifyContentUrl(absoluteUrl)?.kind || "page",
+                  fileType: classifyContentUrl(absoluteUrl)?.fileType,
+                  sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+                })
+              : undefined
             await saveDiscoveredLink({
               siteId,
               sourceUrl: currentUrl,
@@ -1761,7 +1837,12 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           }
         }
 
-        await saveDiscoveredAssets(siteId, currentUrl, extractPageAssets($), sitemapReferencesByUrl, sourcePageId)
+        await saveDiscoveredAssets(siteId, currentUrl, extractPageAssets($), sitemapReferencesByUrl, rootDomain, stats, sourcePageId)
+        await updateDomainDetails(siteId, {
+          pagesCrawled: pagesProcessed,
+          internalResourcesFound: stats.internalResourcesFound,
+          externalResourcesFound: stats.externalResourcesFound,
+        })
       } catch (renderError) {
         await logError({ error: renderError, currentUrl }, "runJavascriptCrawler_render")
       }
@@ -1782,6 +1863,9 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
           pagesCrawled: crawledUrls.size,
           currentActivity: "JavaScript crawl complete.",
+          currentCrawlUrl: "",
+          internalResourcesFound: stats.internalResourcesFound,
+          externalResourcesFound: stats.externalResourcesFound,
         },
       },
     })

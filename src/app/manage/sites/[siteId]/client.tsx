@@ -1,7 +1,9 @@
 
 "use client"
 
+import { useEffect } from "react"
 import { useFormStatus } from "react-dom"
+import { useRouter } from "next/navigation"
 import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite, resumePendingCrawl } from "@/app/manage/sites/actions"
 import { Button } from "@/components/ui/button"
 import { Braces, Loader2 } from "lucide-react"
@@ -25,6 +27,22 @@ function SubmitButton({ children, variant = "default", ...props }: { children: R
             {children}
         </Button>
     )
+}
+
+export function SiteAutoRefresh({ enabled }: { enabled: boolean }) {
+    const router = useRouter()
+
+    useEffect(() => {
+        if (!enabled) return
+
+        const interval = window.setInterval(() => {
+            router.refresh()
+        }, 3000)
+
+        return () => window.clearInterval(interval)
+    }, [enabled, router])
+
+    return null
 }
 
 export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, siteUrl: string, status: string }) {
@@ -52,12 +70,12 @@ export function JavascriptCrawlButton({ siteId, siteUrl, status }: { siteId: str
     )
 }
 
-export function ResumeCrawlButton({ siteId }: { siteId: string }) {
+export function ResumeCrawlButton({ siteId, status }: { siteId: string, status: string }) {
     return (
         <form action={resumePendingCrawl}>
             <input type="hidden" name="siteId" value={siteId} />
-            <SubmitButton variant="outline">
-                Resume Crawling
+            <SubmitButton variant="outline" disabled={status === "Crawling"}>
+                {status === "Crawling" ? "Crawling..." : "Resume Crawling"}
             </SubmitButton>
         </form>
     )

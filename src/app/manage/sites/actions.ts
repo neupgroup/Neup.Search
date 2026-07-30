@@ -145,6 +145,27 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
   }
 }
 
+export async function getSiteCrawlStatus(siteId: string) {
+  try {
+    const site = await getManagedDomainById(siteId)
+    if (!site) return null
+
+    return {
+      status: site.status,
+      lastCrawled: site.lastCrawled,
+      pagesCrawled: site.pagesCrawled ?? 0,
+      internalResourcesFound: site.internalResourcesFound ?? 0,
+      externalResourcesFound: site.externalResourcesFound ?? 0,
+      currentlyCrawling: site.currentlyCrawling,
+      currentCrawlUrl: site.currentCrawlUrl,
+      createdAt: site.createdAt.toISOString(),
+    }
+  } catch (error) {
+    await logError({ error, siteId }, "getSiteCrawlStatus")
+    return null
+  }
+}
+
 export async function getPagesForSite(siteId: string, page?: number, pageSize?: number): Promise<PaginatedSitePages> {
   try {
     return await getPagesForDomain(siteId, page, pageSize)

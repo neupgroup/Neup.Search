@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { notFound, redirect } from "next/navigation"
-import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton, ResumeCrawlButton } from "./client"
+import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton, ResumeCrawlButton, SiteAutoRefresh } from "./client"
 
 function readPositiveInteger(value: string | string[] | undefined, fallback: number) {
   const rawValue = Array.isArray(value) ? value[0] : value
@@ -41,6 +41,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
 
   return (
     <div className="grid gap-6">
+      <SiteAutoRefresh enabled={site.status === "Crawling"} />
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -61,7 +62,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           <div className="flex flex-col gap-2 items-end shrink-0">
              <div className="flex gap-2">
                 <RecrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
-                <ResumeCrawlButton siteId={site.id} />
+                <ResumeCrawlButton siteId={site.id} status={site.status} />
                 <JavascriptCrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
                 {site.status === "Crawling" && (
                    <CancelCrawlButton siteId={site.id} />
@@ -74,7 +75,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-6">
             <div>
               <p className="font-semibold">Status</p>
               <Badge variant={
@@ -92,8 +93,16 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
               <p>{site.lastCrawled}</p>
             </div>
             <div>
-              <p className="font-semibold">Pages Indexed</p>
-              <p>{site.pagesCrawled}</p>
+              <p className="font-semibold">Found Internal</p>
+              <p>{(site.internalResourcesFound ?? 0).toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="font-semibold">Found External</p>
+              <p>{(site.externalResourcesFound ?? 0).toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="font-semibold">Crawled Internal</p>
+              <p>{(site.pagesCrawled ?? 0).toLocaleString()}</p>
             </div>
             <div>
               <p className="font-semibold">Date Added</p>
@@ -104,6 +113,12 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
              <div className="mt-4 text-sm">
                 <p className="font-semibold">Current Activity</p>
                 <p className="text-muted-foreground break-all">{site.currentlyCrawling}</p>
+            </div>
+          )}
+          {site.status === "Crawling" && site.currentCrawlUrl && (
+             <div className="mt-4 text-sm">
+                <p className="font-semibold">Crawling Page</p>
+                <p className="text-muted-foreground break-all">{site.currentCrawlUrl}</p>
             </div>
           )}
            {site.status === 'Error' && site.currentlyCrawling && (
