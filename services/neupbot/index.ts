@@ -68,6 +68,19 @@ export type CrawlIssue = {
   addedOn: Date
 }
 
+export type PageIssueKind = "link" | "file" | "image-alt" | "image-caption" | "video-alt" | "iframe"
+
+export type PageIssue = {
+  id: string
+  kind: PageIssueKind
+  severity: "error" | "warning"
+  title: string
+  message: string
+  url?: string
+  status?: string
+  statusCode?: number | null
+}
+
 export type SitemapReference = {
   sitemapUrl: string
 }
@@ -1678,6 +1691,245 @@ function readRedirectTarget(data: unknown): string | undefined {
   return redirectEntry && typeof redirectEntry === "object" && "redirectLocation" in redirectEntry && typeof redirectEntry.redirectLocation === "string"
     ? redirectEntry.redirectLocation
     : undefined
+}
+
+function readPageBodyHtml(data: unknown) {
+  if (!Array.isArray(data)) return null
+
+  for (const entry of data) {
+    if (entry && typeof entry === "object" && "bodyHtml" in entry && typeof entry.bodyHtml === "string") {
+      return entry.bodyHtml
+    }
+  }
+
+  return null
+}
+
+function hasCrawlError(page: { status: string; statusCode: number | null }) {
+  return (page.statusCode !== null && page.statusCode >= 400) || page.status === "Error"
+}
+
+function isIframeUrl(url: string) {
+  try {
+    return new URL(url).pathname.toLowerCase().split(".").pop() === "iframe"
+  } catch {
+    return false
+  }
+}
+
+function getMediaIssuesFromHtml(bodyHtml: string | null, pageUrl: string): PageIssue[] {
+  if (!bodyHtml) return []
+
+  const $ = cheerio.load(bodyHtml)
+  const issues: PageIssue[] = []
+  const seen = new Set<string>()
+
+  $("img[src]").each((index: number, el: cheerio.Element) => {
+    const src = $(el).attr("src")
+    if (!src) return
+
+    let url: string
+    try {
+      url = new URL(src, pageUrl).toString()
+    } catch {
+      return
+    }
+    const alt = $(el).attr("alt")?.trim()
+    const caption = $(el).closest("figure").find("figcaption").first().text().trim()
+
+    if (!alt) {
+      const id = `image-alt:${url}:${index}`
+      if (!seen.has(id)) {
+        seen.add(id)
+        issues.push({
+          id,
+          kind: "image-alt",
+          severity: "warning",
+          title: "Image missing alt text",
+          message: "This image does not have alt text.",
+          url,
+        })
+      }
+    }
+
+    if (!caption) {
+      const id = `image-caption:${url}:${index}`
+      if (!seen.has(id)) {
+        seen.add(id)
+        issues.push({
+          id,
+          kind: "image-caption",
+          severity: "warning",
+          title: "Image missing caption",
+          message: "This image is not inside a figure with a figcaption.",
+          url,
+        })
+      }
+    }
+  })
+
+  $("video, video source[src]").each((index: number, el: cheerio.Element) => {
+    const node = $(el).is("source") ? $(el).closest("video") : $(el)
+    const src = $(el).attr("src") || node.attr("src")
+    if (!src) return
+
+    const accessibleLabel = node.attr("aria-label")?.trim() || node.attr("title")?.trim()
+    if (!accessibleLabel) {
+      let url: string
+      try {
+        url = new URL(src, pageUrl).toString()
+      } catch {
+        return
+      }
+      const id = `video-alt:${url}:${index}`
+      if (!seen.has(id)) {
+        seen.add(id)
+        issues.push({
+          id,
+          kind: "video-alt",
+          severity: "warning",
+          title: "Video missing label",
+          message: "This video does not have a title or aria-label.",
+          url,
+        })
+      }
+    }
+  })
+
+  return issues
+}
+
+function getMediaIssuesFromStoredAssets(data: unknown, pageUrl: string): PageIssue[] {
+  if (readPageBodyHtml(data)) return []
+
+  return readContentAssets(data, pageUrl).flatMap((asset, index): PageIssue[] => {
+    const content = asset.kind && asset.fileType ? { kind: asset.kind, fileType: asset.fileType } : classifyContentUrl(asset.url)
+    if (content?.kind !== "image") return []
+
+    const issues: PageIssue[] = []
+    if (!asset.alt?.trim()) {
+      issues.push({
+        id: `image-alt:${asset.url}:${index}`,
+        kind: "image-alt",
+        severity: "warning",
+        title: "Image missing alt text",
+        message: "This image does not have alt text.",
+        url: asset.url,
+      })
+    }
+    issues.push({
+      id: `image-caption:${asset.url}:${index}`,
+      kind: "image-caption",
+      severity: "warning",
+      title: "Image missing caption",
+      message: "No caption data was found for this image.",
+      url: asset.url,
+    })
+
+    return issues
+  })
+}
+
+export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
+  try {
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: {
+        id: true,
+        url: true,
+        domainId: true,
+        data: true,
+      },
+    })
+
+    if (!page) return []
+
+    const bodyHtml = readPageBodyHtml(page.data)
+    const issues = [
+      ...getMediaIssuesFromHtml(bodyHtml, page.url),
+      ...getMediaIssuesFromStoredAssets(page.data, page.url),
+    ]
+
+    const outboundLinks = await prisma.link.findMany({
+      where: {
+        fromDomain: page.domainId,
+        linkFrom: page.url,
+      },
+      select: {
+        id: true,
+        linkTo: true,
+      },
+    })
+    const targetUrls = [...new Set([
+      ...outboundLinks.map((link) => link.linkTo),
+      ...readContentAssets(page.data, page.url).map((asset) => asset.url),
+    ])]
+
+    if (targetUrls.length === 0) return issues
+
+    const targetPages = await prisma.page.findMany({
+      where: { url: { in: targetUrls } },
+      select: {
+        id: true,
+        url: true,
+        title: true,
+        status: true,
+        statusCode: true,
+        type: true,
+        details: true,
+      },
+    })
+    const targetPageByUrl = new Map(targetPages.map((targetPage) => [targetPage.url, targetPage]))
+
+    for (const link of outboundLinks) {
+      const targetPage = targetPageByUrl.get(link.linkTo)
+      if (!targetPage || !hasCrawlError(targetPage)) continue
+
+      const content = classifyContentUrl(link.linkTo)
+      issues.push({
+        id: `link:${link.id}`,
+        kind: content ? "file" : "link",
+        severity: "error",
+        title: content ? "Linked file has a crawl error" : "Linked page has a crawl error",
+        message: targetPage.statusCode === 404 ? "This linked URL returned 404." : "This linked URL returned a crawl error.",
+        url: link.linkTo,
+        status: targetPage.status,
+        statusCode: targetPage.statusCode,
+      })
+    }
+
+    for (const asset of readContentAssets(page.data, page.url)) {
+      const targetPage = targetPageByUrl.get(asset.url)
+      if (!targetPage || !hasCrawlError(targetPage)) continue
+
+      const content = asset.kind && asset.fileType
+        ? { kind: asset.kind, fileType: asset.fileType }
+        : classifyContentUrl(asset.url)
+      const kind = content?.kind === "iframe" || isIframeUrl(asset.url) ? "iframe" : "file"
+
+      issues.push({
+        id: `${kind}:${targetPage.id}:${asset.url}`,
+        kind,
+        severity: "error",
+        title: kind === "iframe" ? "Iframe has a crawl error" : "Embedded file has a crawl error",
+        message: targetPage.statusCode === 404 ? "This embedded URL returned 404." : "This embedded URL returned a crawl error.",
+        url: asset.url,
+        status: targetPage.status,
+        statusCode: targetPage.statusCode,
+      })
+    }
+
+    const seen = new Set<string>()
+    return issues.filter((issue) => {
+      const key = `${issue.kind}:${issue.url || issue.id}:${issue.statusCode || ""}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  } catch (error) {
+    await logError({ error, pageId }, "getPageIssues")
+    return []
+  }
 }
 
 export async function getCrawlIssues(): Promise<CrawlIssue[]> {

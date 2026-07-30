@@ -4,8 +4,87 @@ import { notFound } from "next/navigation"
 import { crawlPageAction, getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
+import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"
+import { getPageIssues, type PageIssue } from "../../../../../services/neupbot"
+
+function getIssueKindLabel(kind: PageIssue["kind"]) {
+  if (kind === "link") return "Link"
+  if (kind === "file") return "File"
+  if (kind === "image-alt") return "Image alt"
+  if (kind === "image-caption") return "Image caption"
+  if (kind === "video-alt") return "Video label"
+  return "Iframe"
+}
+
+function PageIssuesPanel({ issues }: { issues: PageIssue[] }) {
+  const errorCount = issues.filter((issue) => issue.severity === "error").length
+  const warningCount = issues.length - errorCount
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <h2 className="text-xl font-semibold leading-none tracking-tight">Page Issues</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Broken links, missing files, media accessibility gaps, and iframe errors found on this page.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant={errorCount > 0 ? "destructive" : "secondary"}>{errorCount} errors</Badge>
+          <Badge variant="outline">{warningCount} warnings</Badge>
+        </div>
+      </div>
+
+      {issues.length === 0 ? (
+        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No link, file, image, video, or iframe issues found for this page.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {issues.map((issue) => (
+            <Card key={issue.id} className="transition-colors hover:bg-muted/50">
+              <CardContent className="p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={issue.severity === "error" ? "destructive" : "secondary"}>
+                        {getIssueKindLabel(issue.kind)}
+                      </Badge>
+                      {issue.statusCode && <Badge variant="outline">{issue.statusCode}</Badge>}
+                      <span className="font-medium">{issue.title}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{issue.message}</p>
+                    {issue.url && (
+                      <Link
+                        href={issue.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block break-all text-sm text-muted-foreground hover:text-primary"
+                      >
+                        {issue.url}
+                      </Link>
+                    )}
+                  </div>
+                  {issue.status && (
+                    <Badge variant={issue.severity === "error" ? "destructive" : "outline"} className="w-fit shrink-0">
+                      {issue.status}
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
 
 export default async function PageDetailPage({ params }: { params: Promise<{ pageId: string }> }) {
   const resolvedParams = await params;
@@ -15,9 +94,10 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
     notFound()
   }
 
-  const [backlinks, sitemapReferences] = await Promise.all([
+  const [backlinks, sitemapReferences, issues] = await Promise.all([
     getBacklinks(page.url),
     getPageSitemapReferences(page),
+    getPageIssues(page.id),
   ])
 
   return (
@@ -62,6 +142,8 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
       </Card>
 
       <CrawlerDataPanel url={page.url} />
+
+      <PageIssuesPanel issues={issues} />
 
       <section className="space-y-3">
         <div className="space-y-1">
