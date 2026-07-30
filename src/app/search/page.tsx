@@ -1,6 +1,6 @@
 
 import { Suspense } from 'react'
-import Header from '@/components/header'
+import HeaderS2V2 from '@/components/header.s2.v2'
 import AIQA from '@/components/ai-qa'
 import SearchResultsTabs from '@/components/search-results-tabs'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,7 +24,7 @@ export default async function SearchPage({
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
-      <Header initialQuery={query} />
+      <HeaderS2V2 initialQuery={query} showSearch />
       <main className="flex-1 p-4 md:p-6 lg:p-8">
         <div className="max-w-6xl mx-auto grid gap-8">
           <Suspense fallback={<AIQASkeleton />}>

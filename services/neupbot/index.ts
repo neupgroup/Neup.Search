@@ -120,6 +120,41 @@ export type ContentItem = {
   alt?: string
 }
 
+export type PropertyLinkPreview = {
+  id: string
+  sourceUrl: string
+  targetUrl: string
+  sourceDomain: string
+  targetDomain: string
+  sourceType?: string | null
+  anchorText?: string | null
+  firstCrawlOn: Date
+}
+
+export type PropertyDashboard = {
+  property: ManagedDomain
+  counts: {
+    totalPages: number
+    indexedPages: number
+    links: number
+    crawlErrors: number
+    contentSamples: number
+  }
+  recentPages: ManagedPage[]
+  indexedPages: ManagedPage[]
+  crawlErrors: CrawlIssue[]
+  links: PropertyLinkPreview[]
+  content: ContentItem[]
+}
+
+export type PaginatedPropertyOptions = {
+  properties: ManagedDomain[]
+  page: number
+  pageSize: number
+  totalCount: number
+  totalPages: number
+}
+
 export type PaginatedContentItems = {
   items: ContentItem[]
   page: number
@@ -1110,6 +1145,280 @@ export async function getManagedDomains(search?: string, startAfterDocId?: strin
     lastVisibleId: (search ? rows.length > Math.max(startIndex, 0) + take : sites.length === take)
       ? sites[sites.length - 1]?.id || null
       : null,
+  }
+}
+
+export async function getPropertyOptions(search?: string): Promise<ManagedDomain[]> {
+  const trimmedSearch = search?.trim()
+  const domains = await prisma.domain.findMany({
+    where: trimmedSearch
+      ? {
+          OR: [
+            { domain: { contains: trimmedSearch, mode: "insensitive" as const } },
+            { name: { contains: trimmedSearch, mode: "insensitive" as const } },
+            { status: { contains: trimmedSearch, mode: "insensitive" as const } },
+          ],
+        }
+      : undefined,
+    orderBy: [
+      { name: "asc" },
+      { domain: "asc" },
+    ],
+    include: { _count: { select: { pages: true } } },
+  })
+
+  return domains.map(mapDomainToSite)
+}
+
+export async function getPaginatedPropertyOptions(input?: {
+  search?: string
+  page?: number
+  pageSize?: number
+  selectedPropertyId?: string
+}): Promise<PaginatedPropertyOptions> {
+  const trimmedSearch = input?.search?.trim()
+  const requestedPageSize = input?.pageSize ?? 10
+  const pageSize = Math.min(100, Math.max(1, Math.floor(requestedPageSize)))
+  const where = trimmedSearch
+    ? {
+        OR: [
+          { domain: { contains: trimmedSearch, mode: "insensitive" as const } },
+          { name: { contains: trimmedSearch, mode: "insensitive" as const } },
+          { status: { contains: trimmedSearch, mode: "insensitive" as const } },
+        ],
+      }
+    : undefined
+
+  const domains = await prisma.domain.findMany({
+    where,
+    orderBy: [
+      { name: "asc" },
+      { domain: "asc" },
+    ],
+    include: { _count: { select: { pages: true } } },
+  })
+
+  const mappedDomains = domains.map(mapDomainToSite)
+  const orderedDomains = input?.selectedPropertyId
+    ? [
+        ...mappedDomains.filter((property) => property.id === input.selectedPropertyId),
+        ...mappedDomains.filter((property) => property.id !== input.selectedPropertyId),
+      ]
+    : mappedDomains
+
+  const totalCount = orderedDomains.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const page = Math.min(Math.max(1, Math.floor(input?.page ?? 1)), totalPages)
+  const start = (page - 1) * pageSize
+
+  return {
+    properties: orderedDomains.slice(start, start + pageSize),
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+  }
+}
+
+export async function getPropertyDashboard(propertyId: string): Promise<PropertyDashboard | null> {
+  const domain = await prisma.domain.findUnique({
+    where: { id: propertyId },
+    include: { _count: { select: { pages: true } } },
+  })
+
+  if (!domain) return null
+
+  const property = mapDomainToSite(domain)
+  const [totalPages, indexedPagesCount, linksCount, crawlErrorsCount, recentPageRows, indexedPageRows, crawlErrorRows, linkRows, contentPageRows] = await Promise.all([
+    prisma.page.count({ where: { domainId: propertyId } }),
+    prisma.page.count({ where: { domainId: propertyId, status: "Indexed" } }),
+    prisma.link.count({ where: { OR: [{ fromDomain: propertyId }, { toDomain: propertyId }] } }),
+    prisma.page.count({
+      where: {
+        domainId: propertyId,
+        OR: [
+          { statusCode: { gte: 300 } },
+          { status: { in: ["Error", "Redirect", "Skipped"] } },
+        ],
+      },
+    }),
+    prisma.page.findMany({
+      where: { domainId: propertyId },
+      orderBy: [
+        { lastCrawled: "desc" },
+        { addedOn: "desc" },
+      ],
+      take: 8,
+      include: { domain: { select: { domain: true, name: true } } },
+    }),
+    prisma.page.findMany({
+      where: { domainId: propertyId, status: "Indexed" },
+      orderBy: [
+        { lastCrawled: "desc" },
+        { addedOn: "desc" },
+      ],
+      take: 8,
+      include: { domain: { select: { domain: true, name: true } } },
+    }),
+    prisma.page.findMany({
+      where: {
+        domainId: propertyId,
+        OR: [
+          { statusCode: { gte: 300 } },
+          { status: { in: ["Error", "Redirect", "Skipped"] } },
+        ],
+      },
+      orderBy: [
+        { lastCrawled: "desc" },
+        { addedOn: "desc" },
+      ],
+      take: 8,
+      include: { domain: { select: { domain: true } } },
+    }),
+    prisma.link.findMany({
+      where: { OR: [{ fromDomain: propertyId }, { toDomain: propertyId }] },
+      orderBy: { firstCrawlOn: "desc" },
+      take: 10,
+      include: {
+        from: { select: { domain: true } },
+        to: { select: { domain: true } },
+      },
+    }),
+    prisma.page.findMany({
+      where: { domainId: propertyId },
+      orderBy: [
+        { lastCrawled: "desc" },
+        { addedOn: "desc" },
+      ],
+      take: 200,
+      select: {
+        id: true,
+        url: true,
+        title: true,
+        type: true,
+        data: true,
+        status: true,
+        statusCode: true,
+        domain: {
+          select: {
+            domain: true,
+          },
+        },
+      },
+    }),
+  ])
+
+  const contentItems: ContentItem[] = []
+  const seenContentUrls = new Set<string>()
+
+  for (const page of contentPageRows) {
+    if (contentItems.length >= 12) break
+
+    const sourcePageTitle = page.title || page.url
+    const directContent = classifyContentUrl(page.url)
+    if (directContent && !seenContentUrls.has(page.url)) {
+      seenContentUrls.add(page.url)
+      contentItems.push({
+        id: `${page.id}:direct`,
+        url: page.url,
+        kind: directContent.kind,
+        fileType: directContent.fileType,
+        sourcePageId: page.id,
+        sourcePageUrl: page.url,
+        sourcePageTitle,
+        siteUrl: page.domain.domain,
+        status: page.status,
+        statusCode: page.statusCode,
+      })
+    }
+
+    if (contentItems.length >= 12) break
+
+    for (const asset of readContentAssets(page.data, page.url)) {
+      if (contentItems.length >= 12) break
+
+      const assetContent = asset.kind && asset.fileType
+        ? { kind: asset.kind, fileType: asset.fileType }
+        : classifyContentUrl(asset.url)
+      if (!assetContent || seenContentUrls.has(asset.url)) continue
+
+      seenContentUrls.add(asset.url)
+      contentItems.push({
+        id: `${page.id}:${asset.url}`,
+        url: asset.url,
+        kind: assetContent.kind,
+        fileType: assetContent.fileType,
+        sourcePageId: page.id,
+        sourcePageUrl: page.url,
+        sourcePageTitle,
+        siteUrl: page.domain.domain,
+        status: page.status,
+        statusCode: page.statusCode,
+        alt: asset.alt,
+      })
+    }
+  }
+
+  return {
+    property,
+    counts: {
+      totalPages,
+      indexedPages: indexedPagesCount,
+      links: linksCount,
+      crawlErrors: crawlErrorsCount,
+      contentSamples: contentItems.length,
+    },
+    recentPages: recentPageRows.map((page): ManagedPage => ({
+      id: page.id,
+      url: page.url,
+      title: page.title || "No title",
+      description: page.description || "No description",
+      siteUrl: page.domain.domain,
+      status: page.status as ManagedPage["status"],
+      statusCode: page.statusCode,
+      lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
+      createdAt: page.addedOn,
+      content: page.fullContent || undefined,
+    })),
+    indexedPages: indexedPageRows.map((page): ManagedPage => ({
+      id: page.id,
+      url: page.url,
+      title: page.title || "No title",
+      description: page.description || "No description",
+      siteUrl: page.domain.domain,
+      status: page.status as ManagedPage["status"],
+      statusCode: page.statusCode,
+      lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
+      createdAt: page.addedOn,
+      content: page.fullContent || undefined,
+    })),
+    crawlErrors: crawlErrorRows.map((page) => {
+      const isRedirect = page.statusCode !== null && page.statusCode >= 300 && page.statusCode < 400
+      const isError = page.statusCode !== null && page.statusCode >= 400
+      return {
+        id: page.id,
+        domain: page.domain.domain,
+        url: page.url,
+        title: page.title || "No title",
+        status: page.status,
+        statusCode: page.statusCode,
+        type: isRedirect ? "Redirect" : isError ? "Error" : "Skipped",
+        targetUrl: readRedirectTarget(page.data),
+        lastCrawled: page.lastCrawled,
+        addedOn: page.addedOn,
+      }
+    }),
+    links: linkRows.map((link) => ({
+      id: link.id,
+      sourceUrl: link.linkFrom,
+      targetUrl: link.linkTo,
+      sourceDomain: link.from.domain,
+      targetDomain: link.to.domain,
+      sourceType: link.sourceType,
+      anchorText: link.anchorText,
+      firstCrawlOn: link.firstCrawlOn,
+    })),
+    content: contentItems,
   }
 }
 

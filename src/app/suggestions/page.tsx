@@ -1,9 +1,9 @@
-import Header from "@/components/header"
+import HeaderS2V2 from "@/components/header.s2.v2"
 
 export default function SuggestionsPage() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <Header />
+      <HeaderS2V2 />
       <main className="flex-1 p-4 md:p-6 lg:p-8">
         <div className="space-y-6">
           <div className="space-y-1">
