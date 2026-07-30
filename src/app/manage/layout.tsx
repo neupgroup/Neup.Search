@@ -13,6 +13,7 @@ import {
   Globe,
   AlertTriangle,
   Files,
+  Bot,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -36,6 +37,7 @@ export default function ManageLayout({
 
   const navLinks: { href: string; label: string; icon: any; badge?: string }[] = [
     { href: "/manage", label: "Dashboard", icon: Home },
+    { href: "/manage/neupbot", label: "NeupBot", icon: Bot },
     { href: "/manage/sites", label: "Crawled Sites", icon: Globe },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
     { href: "/manage/content", label: "Content", icon: Files },

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { notFound, redirect } from "next/navigation"
-import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton, ResumeCrawlButton, SiteAutoRefresh } from "./client"
+import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton, ResumeCrawlButton, LiveCrawlStatus } from "./client"
 
 function readPositiveInteger(value: string | string[] | undefined, fallback: number) {
   const rawValue = Array.isArray(value) ? value[0] : value
@@ -41,7 +41,6 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
 
   return (
     <div className="grid gap-6">
-      <SiteAutoRefresh enabled={site.status === "Crawling"} />
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -75,58 +74,19 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-6">
-            <div>
-              <p className="font-semibold">Status</p>
-              <Badge variant={
-                  site.status === 'Active' ? 'default' 
-                  : site.status === 'Crawling' ? 'default'
-                  : site.status === 'Pending' ? 'outline'
-                  : site.status === 'Paused' ? 'secondary' 
-                  : 'destructive'
-              }>
-                {site.status}
-              </Badge>
-            </div>
-            <div>
-              <p className="font-semibold">Last Crawled</p>
-              <p>{site.lastCrawled}</p>
-            </div>
-            <div>
-              <p className="font-semibold">Found Internal</p>
-              <p>{(site.internalResourcesFound ?? 0).toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="font-semibold">Found External</p>
-              <p>{(site.externalResourcesFound ?? 0).toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="font-semibold">Crawled Internal</p>
-              <p>{(site.pagesCrawled ?? 0).toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="font-semibold">Date Added</p>
-              <p>{site.createdAt.toLocaleDateString()}</p>
-            </div>
-          </div>
-          {(site.status === "Crawling" || (site.currentlyCrawling && site.currentlyCrawling !== "Crawl complete.")) && (
-             <div className="mt-4 text-sm">
-                <p className="font-semibold">Current Activity</p>
-                <p className="text-muted-foreground break-all">{site.currentlyCrawling}</p>
-            </div>
-          )}
-          {site.status === "Crawling" && site.currentCrawlUrl && (
-             <div className="mt-4 text-sm">
-                <p className="font-semibold">Crawling Page</p>
-                <p className="text-muted-foreground break-all">{site.currentCrawlUrl}</p>
-            </div>
-          )}
-           {site.status === 'Error' && site.currentlyCrawling && (
-             <div className="mt-4 text-sm text-destructive">
-                <p className="font-semibold">Error Details</p>
-                <p>{site.currentlyCrawling}</p>
-            </div>
-            )}
+          <LiveCrawlStatus
+            siteId={site.id}
+            initialStatus={{
+              status: site.status,
+              lastCrawled: site.lastCrawled,
+              pagesCrawled: site.pagesCrawled ?? 0,
+              internalResourcesFound: site.internalResourcesFound ?? 0,
+              externalResourcesFound: site.externalResourcesFound ?? 0,
+              currentlyCrawling: site.currentlyCrawling,
+              currentCrawlUrl: site.currentCrawlUrl,
+              createdAt: site.createdAt.toISOString(),
+            }}
+          />
         </CardContent>
       </Card>
 

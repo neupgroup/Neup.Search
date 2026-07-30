@@ -53,6 +53,19 @@ export type PaginatedDomains = {
   lastVisibleId: string | null
 }
 
+export type NeupbotCrawlActivity = {
+  siteId: string
+  siteUrl: string
+  siteName?: string
+  status: ManagedDomain["status"]
+  currentActivity?: string
+  currentCrawlUrl?: string
+  pagesCrawled: number
+  internalResourcesFound: number
+  externalResourcesFound: number
+  lastCrawled: string | null
+}
+
 export type PaginatedDomainPages = {
   pages: ManagedPage[]
   page: number
@@ -1893,6 +1906,43 @@ export async function getManagedDomainById(siteId: string): Promise<ManagedDomai
     include: { _count: { select: { pages: true } } },
   })
   return domain ? mapDomainToSite(domain) : null
+}
+
+export async function getActiveNeupbotCrawls(): Promise<NeupbotCrawlActivity[]> {
+  const domains = await prisma.domain.findMany({
+    where: { status: "Crawling" },
+    orderBy: { addedOn: "asc" },
+    select: {
+      id: true,
+      domain: true,
+      name: true,
+      status: true,
+      lastCrawled: true,
+      addedOn: true,
+      details: true,
+      _count: {
+        select: {
+          pages: true,
+        },
+      },
+    },
+  })
+
+  return domains.map((domain) => {
+    const site = mapDomainToSite(domain)
+    return {
+      siteId: site.id,
+      siteUrl: site.url,
+      siteName: site.name,
+      status: site.status,
+      currentActivity: site.currentlyCrawling,
+      currentCrawlUrl: site.currentCrawlUrl,
+      pagesCrawled: site.pagesCrawled ?? 0,
+      internalResourcesFound: site.internalResourcesFound ?? 0,
+      externalResourcesFound: site.externalResourcesFound ?? 0,
+      lastCrawled: site.lastCrawled,
+    }
+  })
 }
 
 export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20): Promise<PaginatedDomainPages> {
