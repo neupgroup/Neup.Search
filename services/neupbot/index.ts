@@ -1003,6 +1003,83 @@ export async function getContentItemsByFileTypeSlug(
   }
 }
 
+export async function getContentItemById(contentItemId: string): Promise<ContentItem | null> {
+  const separatorIndex = contentItemId.indexOf(":")
+  if (separatorIndex === -1) return null
+
+  const pageId = contentItemId.slice(0, separatorIndex)
+  const contentKey = contentItemId.slice(separatorIndex + 1)
+
+  try {
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: {
+        id: true,
+        url: true,
+        title: true,
+        data: true,
+        status: true,
+        statusCode: true,
+        domain: {
+          select: {
+            domain: true,
+          },
+        },
+      },
+    })
+
+    if (!page) return null
+
+    const sourcePageTitle = page.title || page.url
+
+    if (contentKey === "direct") {
+      const directContent = classifyContentUrl(page.url)
+      if (!directContent) return null
+
+      return {
+        id: `${page.id}:direct`,
+        url: page.url,
+        kind: directContent.kind,
+        fileType: directContent.fileType,
+        sourcePageId: page.id,
+        sourcePageUrl: page.url,
+        sourcePageTitle,
+        siteUrl: page.domain.domain,
+        status: page.status,
+        statusCode: page.statusCode,
+      }
+    }
+
+    for (const asset of readContentAssets(page.data, page.url)) {
+      if (`${page.id}:${asset.url}` !== contentItemId) continue
+
+      const assetContent = asset.kind && asset.fileType
+        ? { kind: asset.kind, fileType: asset.fileType }
+        : classifyContentUrl(asset.url)
+      if (!assetContent) return null
+
+      return {
+        id: `${page.id}:${asset.url}`,
+        url: asset.url,
+        kind: assetContent.kind,
+        fileType: assetContent.fileType,
+        sourcePageId: page.id,
+        sourcePageUrl: page.url,
+        sourcePageTitle,
+        siteUrl: page.domain.domain,
+        status: page.status,
+        statusCode: page.statusCode,
+        alt: asset.alt,
+      }
+    }
+
+    return null
+  } catch (error) {
+    await logError({ error, contentItemId }, "getContentItemById")
+    return null
+  }
+}
+
 export function readDetails(details: unknown): DomainDetails {
   return details && typeof details === "object" && !Array.isArray(details) ? details as DomainDetails : {}
 }

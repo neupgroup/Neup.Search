@@ -62,11 +62,6 @@ function readPageParam(value: string | string[] | undefined) {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 1
 }
 
-function readViewParam(value: string | string[] | undefined) {
-  const rawValue = Array.isArray(value) ? value[0] : value
-  return rawValue === "list" ? "list" : "grid"
-}
-
 export default async function ManageContentPage({
   searchParams,
 }: {
@@ -77,7 +72,6 @@ export default async function ManageContentPage({
   const extension = readFilterValue(resolvedSearchParams.extension)
   const search = readFilterValue(resolvedSearchParams.q)
   const propertyId = readFilterValue(resolvedSearchParams.property)
-  const view = readViewParam(resolvedSearchParams.view)
   const slug = extension || type || "content"
   const contentTarget = classifyContentSlug(slug)
 
@@ -103,11 +97,7 @@ export default async function ManageContentPage({
   const basePath = appendQueryParam(rawBasePath, "property", propertyId)
   const tags = contentTags.map((tag) => ({
     ...tag,
-    href: appendQueryParam(
-      `${tag.href}${tag.href.includes("?") ? "&" : "?"}view=${view}`,
-      "property",
-      propertyId
-    ),
+    href: appendQueryParam(tag.href, "property", propertyId),
   }))
 
   return (
@@ -127,7 +117,7 @@ export default async function ManageContentPage({
       basePath={basePath}
       tags={tags}
       search={search}
-      view={view}
+      propertyId={propertyId}
     />
   )
 }
