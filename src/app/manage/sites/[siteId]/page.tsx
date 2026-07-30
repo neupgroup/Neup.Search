@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { notFound, redirect } from "next/navigation"
-import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton } from "./client"
+import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton, ResumeCrawlButton } from "./client"
 
 function readPositiveInteger(value: string | string[] | undefined, fallback: number) {
   const rawValue = Array.isArray(value) ? value[0] : value
@@ -61,6 +61,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           <div className="flex flex-col gap-2 items-end shrink-0">
              <div className="flex gap-2">
                 <RecrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
+                <ResumeCrawlButton siteId={site.id} />
                 <JavascriptCrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
                 {site.status === "Crawling" && (
                    <CancelCrawlButton siteId={site.id} />

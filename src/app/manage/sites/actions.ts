@@ -16,6 +16,7 @@ import {
   getPagesForDomain,
   InvalidDomainError,
   markDomainSummaryFailed,
+  resumePendingCrawler,
   runCrawler,
   runJavascriptCrawler,
   summarizeDomain,
@@ -117,6 +118,19 @@ export async function crawlJavascriptSite(formData: FormData) {
   const siteUrl = formData.get("siteUrl") as string
 
   await runJavascriptCrawler(siteId, siteUrl)
+  revalidatePath(`/manage/sites/${siteId}`)
+  revalidatePath("/manage/sites")
+  revalidatePath("/manage/pages")
+}
+
+export async function resumePendingCrawl(formData: FormData) {
+  const siteId = formData.get("siteId") as string
+
+  if (!siteId) {
+    throw new Error("siteId is required.")
+  }
+
+  await resumePendingCrawler(siteId)
   revalidatePath(`/manage/sites/${siteId}`)
   revalidatePath("/manage/sites")
   revalidatePath("/manage/pages")

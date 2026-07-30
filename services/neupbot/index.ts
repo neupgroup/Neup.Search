@@ -1227,14 +1227,112 @@ export async function runPageCrawler(pageId: string) {
   })
 }
 
+async function crawlPendingPagesForDomain(
+  siteId: string,
+  disallow: RegExp[],
+  sitemapReferencesByUrl = new Map<string, Set<string>>(),
+) {
+  const crawledUrls = new Set<string>()
+  let pagesProcessed = 0
+
+  while (true) {
+    const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
+    if (currentDomain?.status !== "Crawling") {
+      await updateDomainDetails(siteId, { currentActivity: "Crawl cancelled." })
+      break
+    }
+
+    const pendingPage = await getNextPendingPage(siteId)
+    if (!pendingPage) break
+
+    await updateDomainDetails(siteId, {
+      currentActivity: `Crawling ${pendingPage.url}`,
+      pagesCrawled: pagesProcessed,
+    })
+
+    const crawledHtmlPage = await crawlStoredPage({
+      siteId,
+      pageId: pendingPage.id,
+      pageUrl: pendingPage.url,
+      disallow,
+      sitemapReferencesByUrl,
+      crawledUrls,
+    })
+    if (crawledHtmlPage) {
+      pagesProcessed++
+    }
+
+    await sleep(100)
+  }
+
+  return {
+    pagesProcessed,
+    crawledUrls,
+  }
+}
+
+export async function resumePendingCrawler(siteId: string) {
+  if (!siteId) {
+    throw new Error("siteId is required.")
+  }
+
+  try {
+    const domain = await prisma.domain.findUnique({
+      where: { id: siteId },
+      select: { domain: true, details: true },
+    })
+
+    if (!domain) {
+      throw new Error("Domain not found.")
+    }
+
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Crawling",
+        details: {
+          ...readDetails(domain.details),
+          currentActivity: "Resuming pending crawl queue...",
+        },
+      },
+    })
+
+    const robotsTxt = await getRobotsTxt(domain.domain)
+    const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
+    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, disallow)
+
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Active",
+        lastCrawled: new Date(),
+        details: {
+          ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
+          pagesCrawled: crawledUrls.size,
+          currentActivity: "Pending crawl complete.",
+        },
+      },
+    })
+  } catch (error: any) {
+    await logError(error, "resumePendingCrawler")
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Error",
+        details: {
+          currentActivity: `Pending crawl failed: ${error.message}`,
+        },
+      },
+    })
+  }
+}
+
 export async function runCrawler(siteId: string, siteUrl: string) {
   if (!siteId || !siteUrl) {
     throw new Error("siteId and siteUrl are required.")
   }
 
-  const crawledUrls = new Set<string>()
   const sitemapReferencesByUrl = new Map<string, Set<string>>()
-  let pagesProcessed = 0
 
   try {
     await prisma.domain.update({
@@ -1271,35 +1369,7 @@ export async function runCrawler(siteId: string, siteUrl: string) {
 
     await saveDiscoveredPage({ siteId, url: siteUrl, source: "seed", kind: "page" })
 
-    while (true) {
-      const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
-      if (currentDomain?.status !== "Crawling") {
-        await updateDomainDetails(siteId, { currentActivity: "Crawl cancelled." })
-        break
-      }
-
-      const pendingPage = await getNextPendingPage(siteId)
-      if (!pendingPage) break
-
-      await updateDomainDetails(siteId, {
-        currentActivity: `Crawling ${pendingPage.url}`,
-        pagesCrawled: pagesProcessed,
-      })
-
-      const crawledHtmlPage = await crawlStoredPage({
-        siteId,
-        pageId: pendingPage.id,
-        pageUrl: pendingPage.url,
-        disallow,
-        sitemapReferencesByUrl,
-        crawledUrls,
-      })
-      if (crawledHtmlPage) {
-        pagesProcessed++
-      }
-
-      await sleep(100)
-    }
+    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, disallow, sitemapReferencesByUrl)
 
     await prisma.domain.update({
       where: { id: siteId },

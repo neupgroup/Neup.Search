@@ -2,7 +2,7 @@
 "use client"
 
 import { useFormStatus } from "react-dom"
-import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite } from "@/app/manage/sites/actions"
+import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite, resumePendingCrawl } from "@/app/manage/sites/actions"
 import { Button } from "@/components/ui/button"
 import { Braces, Loader2 } from "lucide-react"
 import {
@@ -47,6 +47,17 @@ export function JavascriptCrawlButton({ siteId, siteUrl, status }: { siteId: str
             <SubmitButton variant="outline" disabled={status === "Crawling"}>
                 <Braces className="mr-2 h-4 w-4" />
                 {status === "Crawling" ? "Crawling..." : "JS Crawl"}
+            </SubmitButton>
+        </form>
+    )
+}
+
+export function ResumeCrawlButton({ siteId }: { siteId: string }) {
+    return (
+        <form action={resumePendingCrawl}>
+            <input type="hidden" name="siteId" value={siteId} />
+            <SubmitButton variant="outline">
+                Resume Crawling
             </SubmitButton>
         </form>
     )
