@@ -86,6 +86,10 @@ function PageIssuesPanel({ issues }: { issues: PageIssue[] }) {
   )
 }
 
+function getBacklinkDisplayText(link: { anchorText?: string | null; altText?: string | null; titleText?: string | null }) {
+  return link.anchorText || link.altText || link.titleText || null
+}
+
 export default async function PageDetailPage({ params }: { params: Promise<{ pageId: string }> }) {
   const resolvedParams = await params;
   const page = await getPageById(resolvedParams.pageId)
@@ -177,6 +181,14 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
                       >
                         {link.sourceUrl}
                       </Link>
+                      {(link.sourceType || getBacklinkDisplayText(link)) && (
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          {link.sourceType && <Badge variant="outline">{link.sourceType}</Badge>}
+                          {getBacklinkDisplayText(link) && (
+                            <span className="break-all">{getBacklinkDisplayText(link)}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

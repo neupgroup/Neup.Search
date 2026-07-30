@@ -85,6 +85,13 @@ model Link {
   linkTo       String
   fromDomain   String
   toDomain     String
+  sourcePageId String?
+  targetPageId String?
+  sourceType   String?
+  anchorText   String?
+  altText      String?
+  titleText    String?
+  rel          String?
   firstCrawlOn DateTime @default(now())
 
   from Domain @relation("FromDomainLinks", fields: [fromDomain], references: [id], onDelete: Cascade)
@@ -94,6 +101,9 @@ model Link {
   @@index([firstCrawlOn])
   @@index([fromDomain])
   @@index([toDomain])
+  @@index([sourcePageId])
+  @@index([targetPageId])
+  @@index([sourceType])
   @@index([linkFrom])
   @@index([linkTo])
   @@map("Links")

@@ -27,6 +27,10 @@ export type Backlink = {
   sourceUrl: string
   sourceTitle: string
   sourcePageId?: string
+  sourceType?: string | null
+  anchorText?: string | null
+  altText?: string | null
+  titleText?: string | null
 }
 
 export type PageSitemapReference = SitemapReference
@@ -351,6 +355,10 @@ export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
       select: {
         id: true,
         linkFrom: true,
+        sourceType: true,
+        anchorText: true,
+        altText: true,
+        titleText: true,
       },
     })
 
@@ -372,6 +380,10 @@ export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
       sourceUrl: link.linkFrom,
       sourceTitle: sourcePageByUrl.get(link.linkFrom)?.title || link.linkFrom,
       sourcePageId: sourcePageByUrl.get(link.linkFrom)?.id,
+      sourceType: link.sourceType,
+      anchorText: link.anchorText,
+      altText: link.altText,
+      titleText: link.titleText,
     }))
   } catch (error) {
     await logError({ error, pageUrl }, "getBacklinks")

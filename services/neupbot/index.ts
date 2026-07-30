@@ -12,7 +12,10 @@ export type DomainDetails = {
   summary?: string
   logoUrl?: string
   currentActivity?: string
+  currentCrawlUrl?: string
   pagesCrawled?: number
+  internalResourcesFound?: number
+  externalResourcesFound?: number
 }
 
 export type ManagedDomain = {
@@ -23,7 +26,10 @@ export type ManagedDomain = {
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number
+  internalResourcesFound?: number
+  externalResourcesFound?: number
   currentlyCrawling?: string
+  currentCrawlUrl?: string
   name?: string
   summary?: string
   logoUrl?: string
@@ -128,12 +134,28 @@ type DiscoveredPageInput = {
   sitemapReferences?: SitemapReference[]
 }
 
+type PageLink = {
+  url: string
+  anchorText?: string
+  titleText?: string
+  rel?: string
+  sourceType?: string
+}
+
 type PageAsset = {
   url: string
   source: DiscoveredPageInput["source"]
   kind?: ContentKind | "asset"
   fileType?: string | null
   alt?: string
+  titleText?: string
+  anchorText?: string
+  rel?: string
+}
+
+type CrawlResourceStats = {
+  internalResourcesFound: number
+  externalResourcesFound: number
 }
 
 type PersistedPageData = {
@@ -229,6 +251,10 @@ export function assertValidSiteDomain(input: string) {
 
 export function getDomainName(input: string) {
   return new URL(input).hostname
+}
+
+function isInternalCrawlUrl(targetUrl: string, rootHostname: string) {
+  return getDomainName(targetUrl) === rootHostname
 }
 
 function normalizeCrawlTarget(input: string) {
@@ -389,7 +415,26 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
   return created.id
 }
 
-async function saveDiscoveredLink(siteId: string, sourceUrl: string, targetUrl: string) {
+type DiscoveredLinkInput = {
+  siteId: string
+  sourceUrl: string
+  targetUrl: string
+  sourcePageId?: string
+  targetPageId?: string
+  sourceType?: string
+  anchorText?: string
+  altText?: string
+  titleText?: string
+  rel?: string
+}
+
+function cleanLinkText(value?: string | null) {
+  const text = value?.replace(/\s\s+/g, " ").trim()
+  return text || undefined
+}
+
+async function saveDiscoveredLink(input: DiscoveredLinkInput) {
+  const { siteId, sourceUrl, targetUrl } = input
   const targetHostname = getDomainName(targetUrl)
   const targetDomain = await prisma.domain.upsert({
     where: { domain: new URL(targetUrl).origin },
@@ -404,6 +449,19 @@ async function saveDiscoveredLink(siteId: string, sourceUrl: string, targetUrl: 
     update: {},
     select: { id: true },
   })
+  const sourcePageId = input.sourcePageId ?? (await prisma.page.findFirst({
+    where: { domainId: siteId, url: sourceUrl },
+    select: { id: true },
+  }))?.id
+  const metadata = {
+    sourcePageId,
+    targetPageId: input.targetPageId,
+    sourceType: input.sourceType,
+    anchorText: cleanLinkText(input.anchorText),
+    altText: cleanLinkText(input.altText),
+    titleText: cleanLinkText(input.titleText),
+    rel: cleanLinkText(input.rel),
+  }
 
   await prisma.link.upsert({
     where: {
@@ -419,9 +477,10 @@ async function saveDiscoveredLink(siteId: string, sourceUrl: string, targetUrl: 
       linkTo: targetUrl,
       fromDomain: siteId,
       toDomain: targetDomain.id,
+      ...metadata,
     },
     update: {
-      linkFrom: sourceUrl,
+      ...metadata,
     },
   })
 }
@@ -429,26 +488,47 @@ async function saveDiscoveredLink(siteId: string, sourceUrl: string, targetUrl: 
 async function saveDiscoveredLinksAndPages(
   siteId: string,
   sourceUrl: string,
-  links: string[],
+  links: PageLink[],
   sitemapReferencesByUrl: Map<string, Set<string>>,
+  rootHostname: string,
+  stats: CrawlResourceStats,
+  sourcePageId?: string,
 ) {
   const seen = new Set<string>()
-  for (const href of links) {
+  for (const link of links) {
     try {
-      const absoluteUrl = normalizeDiscoveredUrl(href, sourceUrl)
+      const absoluteUrl = normalizeDiscoveredUrl(link.url, sourceUrl)
       if (seen.has(absoluteUrl)) continue
       seen.add(absoluteUrl)
+      const isInternal = isInternalCrawlUrl(absoluteUrl, rootHostname)
+      if (isInternal) {
+        stats.internalResourcesFound++
+      } else {
+        stats.externalResourcesFound++
+      }
 
-      await saveDiscoveredPage({
+      const targetPageId = isInternal
+        ? await saveDiscoveredPage({
+            siteId,
+            url: absoluteUrl,
+            referrer: sourceUrl,
+            source: "anchor",
+            kind: classifyContentUrl(absoluteUrl)?.kind || "page",
+            fileType: classifyContentUrl(absoluteUrl)?.fileType,
+            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+          })
+        : undefined
+      await saveDiscoveredLink({
         siteId,
-        url: absoluteUrl,
-        referrer: sourceUrl,
-        source: "anchor",
-        kind: classifyContentUrl(absoluteUrl)?.kind || "page",
-        fileType: classifyContentUrl(absoluteUrl)?.fileType,
-        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+        sourceUrl,
+        targetUrl: absoluteUrl,
+        sourcePageId,
+        targetPageId,
+        sourceType: link.sourceType || "anchor",
+        anchorText: link.anchorText,
+        titleText: link.titleText,
+        rel: link.rel,
       })
-      await saveDiscoveredLink(siteId, sourceUrl, absoluteUrl)
     } catch {
     }
   }
@@ -459,6 +539,9 @@ async function saveDiscoveredAssets(
   sourceUrl: string,
   assets: PageAsset[],
   sitemapReferencesByUrl: Map<string, Set<string>>,
+  rootHostname: string,
+  stats: CrawlResourceStats,
+  sourcePageId?: string,
 ) {
   const seen = new Set<string>()
   for (const asset of assets) {
@@ -466,21 +549,38 @@ async function saveDiscoveredAssets(
       const absoluteUrl = normalizeDiscoveredUrl(asset.url, sourceUrl)
       if (seen.has(absoluteUrl)) continue
       seen.add(absoluteUrl)
+      const isInternal = isInternalCrawlUrl(absoluteUrl, rootHostname)
+      if (isInternal) {
+        stats.internalResourcesFound++
+      } else {
+        stats.externalResourcesFound++
+      }
 
       const content = classifyContentUrl(absoluteUrl)
-      await saveDiscoveredPage({
-        siteId,
-        url: absoluteUrl,
-        referrer: sourceUrl,
-        source: asset.source,
-        kind: asset.kind || content?.kind || "asset",
-        fileType: asset.fileType || content?.fileType,
-        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
-      })
+      const targetPageId = isInternal
+        ? await saveDiscoveredPage({
+            siteId,
+            url: absoluteUrl,
+            referrer: sourceUrl,
+            source: asset.source,
+            kind: asset.kind || content?.kind || "asset",
+            fileType: asset.fileType || content?.fileType,
+            sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+          })
+        : undefined
 
-      if (asset.source === "iframe") {
-        await saveDiscoveredLink(siteId, sourceUrl, absoluteUrl)
-      }
+      await saveDiscoveredLink({
+        siteId,
+        sourceUrl,
+        targetUrl: absoluteUrl,
+        sourcePageId,
+        targetPageId,
+        sourceType: asset.source,
+        anchorText: asset.anchorText,
+        altText: asset.alt,
+        titleText: asset.titleText,
+        rel: asset.rel,
+      })
     } catch {
     }
   }
@@ -541,31 +641,68 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   })
 }
 
-function extractPageLinks($: cheerio.Root) {
+function extractPageLinks($: cheerio.Root): PageLink[] {
   return $("a")
-    .map((_: number, el: cheerio.Element) => $(el).attr("href"))
+    .map((_: number, el: cheerio.Element): PageLink => ({
+      url: $(el).attr("href") || "",
+      anchorText: $(el).text(),
+      titleText: $(el).attr("title") || undefined,
+      rel: $(el).attr("rel") || undefined,
+      sourceType: "anchor",
+    }))
     .get()
-    .filter(Boolean)
+    .filter((link: PageLink) => !!link.url)
 }
 
 function extractPageAssets($: cheerio.Root): PageAsset[] {
   const assets: PageAsset[] = []
 
   $("img[src]").each((_: number, el: cheerio.Element) => {
-    assets.push({ url: $(el).attr("src") || "", source: "image", kind: "image", alt: $(el).attr("alt") || undefined })
+    assets.push({
+      url: $(el).attr("src") || "",
+      source: "image",
+      kind: "image",
+      alt: $(el).attr("alt") || undefined,
+      titleText: $(el).attr("title") || undefined,
+    })
   })
   $("video[src], video source[src]").each((_: number, el: cheerio.Element) => {
-    assets.push({ url: $(el).attr("src") || "", source: "video", kind: "video" })
+    const video = $(el).is("source") ? $(el).closest("video") : $(el)
+    assets.push({
+      url: $(el).attr("src") || "",
+      source: "video",
+      kind: "video",
+      titleText: video.attr("title") || video.attr("aria-label") || undefined,
+    })
   })
   $("audio[src], audio source[src]").each((_: number, el: cheerio.Element) => {
-    assets.push({ url: $(el).attr("src") || "", source: "audio", kind: "audio" })
+    const audio = $(el).is("source") ? $(el).closest("audio") : $(el)
+    assets.push({
+      url: $(el).attr("src") || "",
+      source: "audio",
+      kind: "audio",
+      titleText: audio.attr("title") || audio.attr("aria-label") || undefined,
+    })
   })
   $("iframe[src]").each((_: number, el: cheerio.Element) => {
-    assets.push({ url: $(el).attr("src") || "", source: "iframe", kind: "iframe", fileType: "iframe" })
+    assets.push({
+      url: $(el).attr("src") || "",
+      source: "iframe",
+      kind: "iframe",
+      fileType: "iframe",
+      titleText: $(el).attr("title") || $(el).attr("aria-label") || undefined,
+    })
   })
   $("script[src], link[href], source[src], embed[src], object[data]").each((_: number, el: cheerio.Element) => {
     const url = $(el).attr("src") || $(el).attr("href") || $(el).attr("data") || ""
-    assets.push({ url, source: "asset", kind: classifyContentUrl(url)?.kind || "asset", fileType: classifyContentUrl(url)?.fileType })
+    assets.push({
+      url,
+      source: "asset",
+      kind: classifyContentUrl(url)?.kind || "asset",
+      fileType: classifyContentUrl(url)?.fileType,
+      titleText: $(el).attr("title") || undefined,
+      rel: $(el).attr("rel") || undefined,
+    })
   })
 
   return assets.filter((asset) => asset.url)
@@ -794,7 +931,10 @@ function mapDomainToSite(domain: {
     lastCrawled: domain.lastCrawled ? domain.lastCrawled.toLocaleDateString() : "Never",
     createdAt: domain.addedOn,
     pagesCrawled: domain._count?.pages ?? details.pagesCrawled ?? 0,
+    internalResourcesFound: details.internalResourcesFound ?? 0,
+    externalResourcesFound: details.externalResourcesFound ?? 0,
     currentlyCrawling: details.currentActivity,
+    currentCrawlUrl: details.currentCrawlUrl,
     name: domain.name || undefined,
     logoUrl: details.logoUrl,
     summary: details.summary,
@@ -1075,7 +1215,7 @@ async function crawlStoredPage({
       })
 
       if (targetUrl) {
-        await saveDiscoveredPage({
+        const targetPageId = await saveDiscoveredPage({
           siteId,
           url: targetUrl,
           referrer: pageUrl,
@@ -1083,7 +1223,14 @@ async function crawlStoredPage({
           kind: classifyContentUrl(targetUrl)?.kind || "page",
           fileType: classifyContentUrl(targetUrl)?.fileType,
         })
-        await saveDiscoveredLink(siteId, pageUrl, targetUrl)
+        await saveDiscoveredLink({
+          siteId,
+          sourceUrl: pageUrl,
+          targetUrl,
+          sourcePageId: pageId,
+          targetPageId,
+          sourceType: "redirect",
+        })
       }
       return false
     }
@@ -1152,8 +1299,8 @@ async function crawlStoredPage({
       },
     })
 
-    await saveDiscoveredLinksAndPages(siteId, pageUrl, extractPageLinks($), sitemapReferencesByUrl)
-    await saveDiscoveredAssets(siteId, pageUrl, extractPageAssets($), sitemapReferencesByUrl)
+    await saveDiscoveredLinksAndPages(siteId, pageUrl, extractPageLinks($), sitemapReferencesByUrl, pageId)
+    await saveDiscoveredAssets(siteId, pageUrl, extractPageAssets($), sitemapReferencesByUrl, pageId)
     return true
   } catch (fetchError) {
     await logError({ error: fetchError, currentUrl: pageUrl }, "crawlSite_fetch")
@@ -1562,10 +1709,12 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
         }
 
         const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
+        let sourcePageId: string
         if (existingPage) {
           await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
+          sourcePageId = existingPage.id
         } else {
-          await prisma.page.create({ data: pageData })
+          sourcePageId = (await prisma.page.create({ data: pageData, select: { id: true } })).id
         }
 
         pagesProcessed++
@@ -1581,40 +1730,25 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
 
             const targetHostname = getDomainName(absoluteUrl)
             const isInternalLink = targetHostname === rootDomain
-            const targetDomain = isInternalLink
-              ? { id: siteId }
-              : await prisma.domain.upsert({
-                  where: { domain: new URL(absoluteUrl).origin },
-                  create: {
-                    domain: new URL(absoluteUrl).origin,
-                    name: targetHostname,
-                    status: "Pending",
-                    details: {
-                      discoveredFrom: currentUrl,
-                    },
-                  },
-                  update: {},
-                  select: { id: true },
-                })
-
-            await prisma.link.upsert({
-              where: {
-                linkFrom_linkTo_fromDomain_toDomain: {
-                  linkFrom: currentUrl,
-                  linkTo: absoluteUrl,
-                  fromDomain: siteId,
-                  toDomain: targetDomain.id,
-                },
-              },
-              create: {
-                linkFrom: currentUrl,
-                linkTo: absoluteUrl,
-                fromDomain: siteId,
-                toDomain: targetDomain.id,
-              },
-              update: {
-                linkFrom: currentUrl,
-              },
+            const targetPageId = await saveDiscoveredPage({
+              siteId,
+              url: absoluteUrl,
+              referrer: currentUrl,
+              source: "anchor",
+              kind: classifyContentUrl(absoluteUrl)?.kind || "page",
+              fileType: classifyContentUrl(absoluteUrl)?.fileType,
+              sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, absoluteUrl),
+            })
+            await saveDiscoveredLink({
+              siteId,
+              sourceUrl: currentUrl,
+              targetUrl: absoluteUrl,
+              sourcePageId,
+              targetPageId,
+              sourceType: "anchor",
+              anchorText: $(link).text(),
+              titleText: $(link).attr("title") || undefined,
+              rel: $(link).attr("rel") || undefined,
             })
 
             if (isInternalLink) {
@@ -1626,6 +1760,8 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           } catch {
           }
         }
+
+        await saveDiscoveredAssets(siteId, currentUrl, extractPageAssets($), sitemapReferencesByUrl, sourcePageId)
       } catch (renderError) {
         await logError({ error: renderError, currentUrl }, "runJavascriptCrawler_render")
       }
