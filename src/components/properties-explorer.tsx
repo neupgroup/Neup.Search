@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 
 import { SearchInput } from "@/components/search-input"
+import { SiteAppIcon } from "@/components/site-app-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -152,9 +153,17 @@ function PropertySelector({
               >
                 <CardContent className="p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 space-y-1">
-                      <div className="font-semibold">{property.name || property.url}</div>
-                      <div className="truncate text-sm text-muted-foreground">{property.url}</div>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <SiteAppIcon
+                        name={property.name}
+                        url={property.url}
+                        appIconUrl={property.appIconUrl}
+                        appIconBackgroundColor={property.appIconBackgroundColor}
+                      />
+                      <div className="min-w-0 space-y-1">
+                        <div className="font-semibold">{property.name || property.url}</div>
+                        <div className="truncate text-sm text-muted-foreground">{property.url}</div>
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {isSelected ? <Badge>Selected</Badge> : null}

@@ -7,6 +7,9 @@ Manage-scoped property selector and property dashboard.
 */
 
 import { PropertiesExplorer } from "@/components/properties-explorer"
+import Link from "next/link"
+import { PlusCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { getPaginatedPropertyOptions } from "../../../../services/neupbot"
 
 export const dynamic = "force-dynamic"
@@ -37,29 +40,39 @@ export default async function ManagePropertiesPage({
   })
 
   return (
-    <PropertiesExplorer
-      properties={pagination.properties}
-      selectedPropertyId={selectedPropertyId}
-      dashboard={null}
-      basePath="/manage/properties"
-      cardsPath="/manage"
-      title=""
-      description=""
-      search={search}
-      showSearch
-      showDashboard={false}
-      selectedCardOnly
-      wrapSelectorInCard={false}
-      showSelectField={false}
-      pagination={{
-        page: pagination.page,
-        totalPages: pagination.totalPages,
-        totalCount: pagination.totalCount,
-        pageSize: pagination.pageSize,
-        basePath: "/manage/properties",
-        search,
-        selectedPropertyId,
-      }}
-    />
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Link href="/manage/properties/add">
+          <Button>
+            <PlusCircle className="mr-2 h-4 w-4" />
+            Add Property
+          </Button>
+        </Link>
+      </div>
+      <PropertiesExplorer
+        properties={pagination.properties}
+        selectedPropertyId={selectedPropertyId}
+        dashboard={null}
+        basePath="/manage/properties"
+        cardsPath="/manage"
+        title=""
+        description=""
+        search={search}
+        showSearch
+        showDashboard={false}
+        selectedCardOnly
+        wrapSelectorInCard={false}
+        showSelectField={false}
+        pagination={{
+          page: pagination.page,
+          totalPages: pagination.totalPages,
+          totalCount: pagination.totalCount,
+          pageSize: pagination.pageSize,
+          basePath: "/manage/properties",
+          search,
+          selectedPropertyId,
+        }}
+      />
+    </div>
   )
 }

@@ -18,15 +18,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import HeaderS2V2 from "@/components/header.s2.v2"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 
 export default function ManageLayout({
   children,
@@ -39,7 +31,7 @@ export default function ManageLayout({
   const selectedPropertyId = searchParams.get("property") || undefined
 
   useEffect(() => {
-    if (pathname === "/manage/properties") return
+    if (pathname === "/manage/properties" || pathname === "/manage/properties/add") return
     if (selectedPropertyId) return
 
     router.replace("/manage/properties")
@@ -92,22 +84,6 @@ export default function ManageLayout({
                 </Link>
               ))}
             </nav>
-            <div className="mt-auto pt-4">
-              <Card className="border-border/60 bg-white">
-                <CardHeader className="p-2 pt-0 md:p-4">
-                  <CardTitle>Upgrade to Pro</CardTitle>
-                  <CardDescription>
-                    Unlock all features and get unlimited access to our support
-                    team.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-2 pt-0 md:p-4 md:pt-0">
-                  <Button size="sm" className="w-full">
-                    Upgrade
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
           </div>
         </aside>
         <main className="flex min-h-0 flex-col gap-4 bg-white p-4 md:pl-[252px] lg:gap-6 lg:p-8 lg:pl-[312px]">

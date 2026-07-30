@@ -1,10 +1,11 @@
 import * as cheerio from "cheerio"
 import { isIP } from "node:net"
-import { chromium } from "playwright"
+import { chromium, type Page as PlaywrightPage } from "playwright"
 import type { Prisma } from "@prisma/client"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 import { logError } from "@/lib/logging"
 import { prisma } from "@/lib/prisma"
+import { getFavicon } from "../properties/getFavicon"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
 
@@ -398,12 +399,34 @@ function normalizeDiscoveredUrl(input: string, baseUrl: string) {
   return url.toString()
 }
 
+function isPlaceholderLinkValue(input: string) {
+  const normalizedInput = input.trim().toLowerCase()
+
+  return (
+    normalizedInput.length === 0 ||
+    normalizedInput === "#" ||
+    normalizedInput === "/" ||
+    normalizedInput === "null" ||
+    normalizedInput === "undefined" ||
+    normalizedInput === "void(0)" ||
+    normalizedInput === "javascript:void(0)" ||
+    normalizedInput === "javascript:void(0);" ||
+    normalizedInput === "javascript:;" ||
+    normalizedInput.startsWith("javascript:") ||
+    normalizedInput.startsWith("mailto:") ||
+    normalizedInput.startsWith("tel:") ||
+    normalizedInput.startsWith("data:")
+  )
+}
+
 function isIgnoredCrawlUrl(input: string) {
   try {
     const url = new URL(input)
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, "")
     const pathname = url.pathname.toLowerCase()
     const fileType = getUrlFileType(url.toString())
 
+    if (hostname === "localhost") return true
     if (pathname === "/_next" || pathname.startsWith("/_next/")) return true
     if (pathname === "/__nextjs" || pathname.startsWith("/__nextjs/")) return true
     if (pathname.endsWith(".hot-update.js") || pathname.endsWith(".hot-update.json")) return true
@@ -433,6 +456,91 @@ async function readStaticFileSize(response: Response) {
   } catch {
     return null
   }
+}
+
+type ClickResolvedLink = {
+  targetUrl: string
+  anchorText?: string
+  titleText?: string
+  rel?: string
+}
+
+async function discoverClientSideNavigationLinks(
+  renderedPage: PlaywrightPage,
+  currentUrl: string,
+) {
+  const candidates = await renderedPage.evaluate(() => {
+    return Array.from(document.querySelectorAll("a"))
+      .map((anchor, index) => ({
+        index,
+        href: anchor.getAttribute("href") || "",
+        anchorText: anchor.textContent || "",
+        titleText: anchor.getAttribute("title") || "",
+        rel: anchor.getAttribute("rel") || "",
+      }))
+      .filter((candidate) => {
+        const normalizedHref = candidate.href.trim().toLowerCase()
+        return (
+          normalizedHref === "#" ||
+          normalizedHref === "null" ||
+          normalizedHref === "undefined" ||
+          normalizedHref === "void(0)" ||
+          normalizedHref === "javascript:void(0)" ||
+          normalizedHref === "javascript:void(0);" ||
+          normalizedHref === "javascript:;" ||
+          normalizedHref.startsWith("javascript:")
+        )
+      })
+  })
+
+  const resolvedLinks: ClickResolvedLink[] = []
+  const seenTargetUrls = new Set<string>()
+
+  for (const candidate of candidates) {
+    try {
+      await renderedPage.goto(currentUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 30000,
+      })
+      await renderedPage.waitForTimeout(500)
+
+      const locator = renderedPage.locator("a").nth(candidate.index)
+      if (await locator.count() === 0) continue
+
+      const navigationPromise = renderedPage.waitForURL(
+        (url: URL) => buildCrawlUrlKey(url.toString()) !== buildCrawlUrlKey(currentUrl),
+        { timeout: 4000 },
+      ).then(() => renderedPage.url()).catch(() => null)
+
+      await locator.click({ timeout: 4000 }).catch(() => null)
+      const targetUrl = await navigationPromise
+      if (!targetUrl) continue
+
+      const normalizedTargetUrl = normalizeSiteUrl(targetUrl)
+      const targetUrlKey = buildCrawlUrlKey(normalizedTargetUrl)
+      if (seenTargetUrls.has(targetUrlKey) || isIgnoredCrawlUrl(normalizedTargetUrl)) {
+        continue
+      }
+
+      seenTargetUrls.add(targetUrlKey)
+      resolvedLinks.push({
+        targetUrl: normalizedTargetUrl,
+        anchorText: cleanLinkText(candidate.anchorText),
+        titleText: cleanLinkText(candidate.titleText),
+        rel: cleanLinkText(candidate.rel),
+      })
+    } catch {
+    }
+  }
+
+  if (candidates.length > 0) {
+    await renderedPage.goto(currentUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    }).catch(() => null)
+  }
+
+  return resolvedLinks
 }
 
 function buildDiscoveryDetails(input: DiscoveredPageInput): Prisma.InputJsonObject {
@@ -505,6 +613,12 @@ function cleanLinkText(value?: string | null) {
   return text || undefined
 }
 
+function buildCrawlUrlKey(input: string) {
+  const url = new URL(input)
+  url.hash = ""
+  return url.origin + url.pathname + url.search
+}
+
 async function saveDiscoveredLink(input: DiscoveredLinkInput) {
   const { siteId, sourceUrl, targetUrl } = input
   if (isIgnoredCrawlUrl(targetUrl)) return
@@ -566,11 +680,14 @@ async function saveDiscoveredLinksAndPages(
 ) {
   const seen = new Set<string>()
   for (const link of links) {
+    if (isPlaceholderLinkValue(link.url)) continue
+
     try {
       const absoluteUrl = normalizeDiscoveredUrl(link.url, sourceUrl)
       if (isIgnoredCrawlUrl(absoluteUrl)) continue
-      if (seen.has(absoluteUrl)) continue
-      seen.add(absoluteUrl)
+      const absoluteUrlKey = buildCrawlUrlKey(absoluteUrl)
+      if (seen.has(absoluteUrlKey)) continue
+      seen.add(absoluteUrlKey)
       const isInternal = isInternalCrawlUrl(absoluteUrl, rootHostname)
       if (isInternal) {
         stats.internalResourcesFound++
@@ -616,11 +733,14 @@ async function saveDiscoveredAssets(
 ) {
   const seen = new Set<string>()
   for (const asset of assets) {
+    if (isPlaceholderLinkValue(asset.url)) continue
+
     try {
       const absoluteUrl = normalizeDiscoveredUrl(asset.url, sourceUrl)
       if (isIgnoredCrawlUrl(absoluteUrl)) continue
-      if (seen.has(absoluteUrl)) continue
-      seen.add(absoluteUrl)
+      const absoluteUrlKey = buildCrawlUrlKey(absoluteUrl)
+      if (seen.has(absoluteUrlKey)) continue
+      seen.add(absoluteUrlKey)
       const isInternal = isInternalCrawlUrl(absoluteUrl, rootHostname)
       if (isInternal) {
         stats.internalResourcesFound++
@@ -1103,122 +1223,11 @@ function getPrimaryLocation(details: DomainDetails, propertyAddress: string) {
   return primaryLocation || `https://${propertyAddress}`
 }
 
-function readManifestColor(value: unknown) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
-}
-
-function getManifestIconScore(icon: { sizes?: unknown; purpose?: unknown }) {
-  const sizes = typeof icon.sizes === "string" ? icon.sizes.split(/\s+/) : []
-  const largestSize = sizes.reduce((maxSize, size) => {
-    if (size === "any") return Math.max(maxSize, 4096)
-    const match = size.match(/^(\d+)x(\d+)$/i)
-    if (!match) return maxSize
-    return Math.max(maxSize, Number.parseInt(match[1], 10), Number.parseInt(match[2], 10))
-  }, 0)
-  const purposeBonus = typeof icon.purpose === "string" && icon.purpose.includes("maskable") ? 10_000 : 0
-
-  return purposeBonus + largestSize
-}
-
-function readManifestIconUrl(manifest: unknown, manifestUrl: string) {
-  if (!manifest || typeof manifest !== "object" || !("icons" in manifest) || !Array.isArray(manifest.icons)) {
-    return undefined
-  }
-
-  const icons = manifest.icons
-    .filter(
-      (icon): icon is { src: string; sizes?: unknown; purpose?: unknown } =>
-        !!icon && typeof icon === "object" && "src" in icon && typeof icon.src === "string" && icon.src.trim().length > 0,
-    )
-    .sort((left, right) => getManifestIconScore(right) - getManifestIconScore(left))
-
-  const selectedIcon = icons[0]
-  if (!selectedIcon) return undefined
-
-  try {
-    return new URL(selectedIcon.src, manifestUrl).toString()
-  } catch {
-    return undefined
-  }
-}
-
-async function readManifestBranding(manifestUrl: string) {
-  try {
-    const response = await fetch(manifestUrl, {
-      headers: { "user-agent": neupbotUserAgent },
-      cache: "no-store",
-      redirect: "follow",
-      signal: AbortSignal.timeout(3000),
-    })
-
-    if (!response.ok) {
-      return null
-    }
-
-    const manifest = await response.json().catch(() => null)
-    if (!manifest || typeof manifest !== "object") {
-      return null
-    }
-
-    return {
-      appIconUrl: readManifestIconUrl(manifest, response.url),
-      appIconBackgroundColor:
-        readManifestColor("background_color" in manifest ? manifest.background_color : undefined) ||
-        readManifestColor("theme_color" in manifest ? manifest.theme_color : undefined),
-    }
-  } catch {
-    return null
-  }
-}
-
-async function resolveExistingAssetUrl(urls: string[]) {
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, {
-        method: "HEAD",
-        headers: { "user-agent": neupbotUserAgent },
-        cache: "no-store",
-        redirect: "follow",
-        signal: AbortSignal.timeout(3000),
-      })
-
-      if (response.ok) {
-        return response.url || url
-      }
-    } catch {
-    }
-  }
-
-  return undefined
-}
-
 async function resolveManagedDomainBranding(propertyAddress: string, currentBackgroundColor?: string) {
-  const httpsBaseUrl = `https://${propertyAddress}`
-  const httpBaseUrl = `http://${propertyAddress}`
-
-  for (const baseUrl of [httpsBaseUrl, httpBaseUrl]) {
-    for (const manifestPath of ["/manifest.json", "/manifest.webmanifest"]) {
-      const manifestUrl = new URL(manifestPath, baseUrl).toString()
-      const manifestBranding = await readManifestBranding(manifestUrl)
-
-      if (manifestBranding?.appIconUrl || manifestBranding?.appIconBackgroundColor) {
-        return {
-          appIconUrl: manifestBranding.appIconUrl || new URL("/favicon.ico", baseUrl).toString(),
-          appIconBackgroundColor: manifestBranding.appIconBackgroundColor || currentBackgroundColor,
-        }
-      }
-    }
-  }
-
-  const faviconUrl = await resolveExistingAssetUrl([
-    new URL("/favicon.ico", httpsBaseUrl).toString(),
-    new URL("/favicon.ico", httpBaseUrl).toString(),
-  ])
-
-  return {
-    appIconUrl: faviconUrl,
-    appIconBackgroundColor: currentBackgroundColor,
-  }
+  return getFavicon(propertyAddress, {
+    currentBackgroundColor,
+    userAgent: neupbotUserAgent,
+  })
 }
 
 async function enrichManagedDomainBranding(site: ManagedDomain): Promise<ManagedDomain> {
@@ -1456,7 +1465,9 @@ export async function getPaginatedPropertyOptions(input?: {
     include: { _count: { select: { pages: true } } },
   })
 
-  const mappedDomains = domains.map(mapDomainToSite)
+  const mappedDomains = await Promise.all(
+    domains.map(async (domain) => enrichManagedDomainBranding(mapDomainToSite(domain))),
+  )
   const orderedDomains = input?.selectedPropertyId
     ? [
         ...mappedDomains.filter((property) => property.id === input.selectedPropertyId),
@@ -2413,12 +2424,13 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
 
         for (const link of $("a").toArray()) {
           const href = $(link).attr("href")
-          if (!href) continue
+          if (!href || isPlaceholderLinkValue(href)) continue
           try {
-            const absoluteUrl = new URL(href, currentUrl).toString().split("#")[0]
+            const absoluteUrl = normalizeDiscoveredUrl(href, currentUrl)
             if (isIgnoredCrawlUrl(absoluteUrl)) continue
-            if (seenTargetUrls.has(absoluteUrl)) continue
-            seenTargetUrls.add(absoluteUrl)
+            const absoluteUrlKey = buildCrawlUrlKey(absoluteUrl)
+            if (seenTargetUrls.has(absoluteUrlKey)) continue
+            seenTargetUrls.add(absoluteUrlKey)
 
             const targetHostname = getDomainName(absoluteUrl)
             const isInternalLink = targetHostname === rootDomain
@@ -2454,6 +2466,54 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
               const normalizedInternalUrl = new URL(absoluteUrl).origin + new URL(absoluteUrl).pathname
               if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(absoluteUrl)) {
                 urlQueue.push(absoluteUrl)
+              }
+            }
+          } catch {
+          }
+        }
+
+        for (const link of await discoverClientSideNavigationLinks(renderedPage, currentUrl)) {
+          try {
+            const targetUrlKey = buildCrawlUrlKey(link.targetUrl)
+            if (seenTargetUrls.has(targetUrlKey)) continue
+            seenTargetUrls.add(targetUrlKey)
+
+            const targetHostname = getDomainName(link.targetUrl)
+            const isInternalLink = targetHostname === rootDomain
+            if (isInternalLink) {
+              stats.internalResourcesFound++
+            } else {
+              stats.externalResourcesFound++
+            }
+
+            const targetPageId = isInternalLink
+              ? await saveDiscoveredPage({
+                  siteId,
+                  url: link.targetUrl,
+                  referrer: currentUrl,
+                  source: "anchor",
+                  kind: classifyContentUrl(link.targetUrl)?.kind || "page",
+                  fileType: classifyContentUrl(link.targetUrl)?.fileType,
+                  sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, link.targetUrl),
+                })
+              : undefined
+
+            await saveDiscoveredLink({
+              siteId,
+              sourceUrl: currentUrl,
+              targetUrl: link.targetUrl,
+              sourcePageId,
+              targetPageId,
+              sourceType: "anchor",
+              anchorText: link.anchorText,
+              titleText: link.titleText,
+              rel: link.rel,
+            })
+
+            if (isInternalLink) {
+              const normalizedInternalUrl = new URL(link.targetUrl).origin + new URL(link.targetUrl).pathname
+              if (!crawledUrls.has(normalizedInternalUrl) && !urlQueue.includes(link.targetUrl)) {
+                urlQueue.push(link.targetUrl)
               }
             }
           } catch {
