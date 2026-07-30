@@ -127,9 +127,16 @@ function PropertySelector({
         </div>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {visibleProperties.map((property) => {
+      <div className="space-y-3">
+        {visibleProperties.map((property, index) => {
           const isSelected = property.id === selectedPropertyId
+          const isFirst = index === 0
+          const isLast = index === visibleProperties.length - 1
+          const cornerClass = isFirst
+            ? "rounded-t-lg rounded-b-none"
+            : isLast
+              ? "rounded-b-lg rounded-t-none"
+              : "rounded-none"
 
           return (
             <Link
@@ -139,23 +146,19 @@ function PropertySelector({
               <Card
                 className={
                   isSelected
-                    ? "h-full border-primary/60 shadow-sm transition-colors hover:bg-muted/40"
-                    : "h-full border-border/60 transition-colors hover:bg-muted/40"
+                    ? `w-full border-2 border-primary bg-primary/5 shadow-sm transition-colors hover:bg-primary/5 ${cornerClass}`
+                    : `w-full border-border/60 transition-colors hover:bg-muted/40 ${cornerClass}`
                 }
               >
-                <CardContent className="space-y-3 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
+                <CardContent className="p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 space-y-1">
                       <div className="font-semibold">{property.name || property.url}</div>
-                      <div className="text-sm text-muted-foreground">{property.url}</div>
+                      <div className="truncate text-sm text-muted-foreground">{property.url}</div>
                     </div>
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex shrink-0 items-center gap-2">
                       {isSelected ? <Badge>Selected</Badge> : null}
-                      <Badge variant="outline">{property.status}</Badge>
                     </div>
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {property.pagesCrawled?.toLocaleString() || 0} pages crawled
                   </div>
                 </CardContent>
               </Card>
@@ -535,10 +538,6 @@ export function PropertiesExplorer({
   return (
     <div className="space-y-8">
       <div className="space-y-3">
-        <div className="inline-flex items-center gap-2 rounded-full border border-border/60 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          <Search className="h-3.5 w-3.5" />
-          Properties
-        </div>
         <h1 className="text-3xl font-semibold tracking-tight">Property Explorer</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
           Choose a domain and inspect its pages, indexed pages, links, crawl errors, and content from one place.

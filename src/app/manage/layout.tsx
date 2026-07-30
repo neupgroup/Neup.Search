@@ -68,10 +68,10 @@ export default function ManageLayout({
   return (
     <div className="min-h-screen bg-white">
       <HeaderS2V2 />
-      <div className="px-4 py-6 lg:px-6 lg:py-8">
-        <div className="mx-auto grid w-full max-w-[1440px] md:grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]">
+      <div className="h-[calc(100vh-4rem)]">
+        <div className="mx-auto grid h-full w-full max-w-[1440px] md:grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]">
           <aside className="hidden md:block">
-            <div className="sticky top-[80px] max-h-[calc(100vh-104px)] overflow-y-auto border-r border-border/60 bg-white p-4 lg:top-[92px] lg:max-h-[calc(100vh-124px)] lg:p-5">
+            <div className="h-full overflow-y-auto border-r border-border/60 bg-white p-4 lg:p-5">
               <div className="flex min-h-full flex-col gap-2">
               <nav className="grid items-start gap-1 text-sm font-medium">
                 {navLinks.map((link) => (
