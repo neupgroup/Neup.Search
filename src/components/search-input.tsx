@@ -1,11 +1,16 @@
 
 "use client"
 
+import type { ComponentProps } from "react"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { useDebouncedCallback } from "use-debounce"
 import { Input } from "@/components/ui/input"
 
-export function SearchInput({ placeholder }: { placeholder: string }) {
+type SearchInputProps = {
+  placeholder: string
+} & Omit<ComponentProps<typeof Input>, "type" | "placeholder" | "defaultValue" | "onChange">
+
+export function SearchInput({ placeholder, ...props }: SearchInputProps) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const { replace } = useRouter();
@@ -29,6 +34,7 @@ export function SearchInput({ placeholder }: { placeholder: string }) {
       className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[336px]"
       onChange={(e) => handleSearch(e.target.value)}
       defaultValue={searchParams.get('q') || ''}
+      {...props}
     />
   );
 }

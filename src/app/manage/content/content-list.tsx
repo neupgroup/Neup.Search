@@ -1,10 +1,10 @@
 import Link from "next/link"
-import { Search } from "lucide-react"
+import { LayoutGrid, Rows3 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { SearchInput } from "@/components/search-input"
 import type { ContentItem } from "../../../../services/neupbot"
+import { ContentFilterBar } from "./content-filter-bar"
 
 function getStatusLabel(item: ContentItem) {
   return item.statusCode ? String(item.statusCode) : item.status
@@ -76,6 +76,7 @@ export function ContentList({
   basePath,
   tags,
   search,
+  view,
 }: {
   title: string
   description: string
@@ -86,11 +87,18 @@ export function ContentList({
   basePath: string
   tags?: Array<{ label: string; href: string }>
   search?: string
+  view: "grid" | "list"
 }) {
   const buildPageLink = (targetPage: number) => {
     const pageSeparator = basePath.includes("?") ? "&" : "?"
     const searchParam = search ? `&q=${encodeURIComponent(search)}` : ""
-    return `${basePath}${pageSeparator}page=${targetPage}${searchParam}`
+    const viewParam = `&view=${view}`
+    return `${basePath}${pageSeparator}page=${targetPage}${searchParam}${viewParam}`
+  }
+  const buildViewLink = (targetView: "grid" | "list") => {
+    const pageSeparator = basePath.includes("?") ? "&" : "?"
+    const searchParam = search ? `&q=${encodeURIComponent(search)}` : ""
+    return `${basePath}${pageSeparator}view=${targetView}${searchParam}`
   }
   const previousPageLink = buildPageLink(Math.max(1, page - 1))
   const nextPageLink = buildPageLink(page + 1)
@@ -103,24 +111,22 @@ export function ContentList({
       </div>
 
       {tags && tags.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {tags.map((tag) => (
-            <Link key={tag.href} href={tag.href}>
-              <Badge variant="outline" className="px-3 py-1 text-sm transition-colors hover:bg-muted">
-                {tag.label}
-              </Badge>
-            </Link>
-          ))}
-        </div>
+        <ContentFilterBar tags={tags} />
       )}
 
-      <div className="relative flex-1 md:grow-0">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <SearchInput placeholder="Search content..." />
-      </div>
-
-      <div className="text-sm text-muted-foreground">
-        Showing {items.length.toLocaleString()} {items.length === 1 ? "item" : "items"} | Page {page} | {pageSize} per page
+      <div className="flex items-center gap-2">
+        <Link href={buildViewLink("grid")}>
+          <Button variant={view === "grid" ? "default" : "outline"} size="sm">
+            <LayoutGrid className="mr-2 h-4 w-4" />
+            Grid
+          </Button>
+        </Link>
+        <Link href={buildViewLink("list")}>
+          <Button variant={view === "list" ? "default" : "outline"} size="sm">
+            <Rows3 className="mr-2 h-4 w-4" />
+            List
+          </Button>
+        </Link>
       </div>
 
       {items.length === 0 && (
@@ -129,42 +135,65 @@ export function ContentList({
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {items.map((item) => (
-          <Card key={item.id} className="overflow-hidden transition-colors hover:bg-muted/50">
-            <CardContent className="space-y-4 p-4">
-              <ContentPreview item={item} />
+      {view === "grid" ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((item) => (
+            <Card key={item.id} className="overflow-hidden transition-colors hover:bg-muted/50">
+              <CardContent className="space-y-4 p-4">
+                <ContentPreview item={item} />
 
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary">{item.fileType.toUpperCase()}</Badge>
-                  <Badge variant={item.statusCode && item.statusCode >= 400 ? "destructive" : "outline"}>
-                    {getStatusLabel(item)}
-                  </Badge>
+                <div className="space-y-3">
+                  <Link
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block break-all text-sm font-medium hover:text-primary"
+                  >
+                    {item.url}
+                  </Link>
                 </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-0">
+          {items.map((item, index) => {
+            const isFirst = index === 0
+            const isLast = index === items.length - 1
+            const cornerClass = isFirst
+              ? "rounded-t-lg rounded-b-none"
+              : isLast
+                ? "rounded-b-lg rounded-t-none"
+                : "rounded-none"
 
-                <Link
-                  href={item.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block break-all text-sm font-medium hover:text-primary"
-                >
-                  {item.url}
-                </Link>
-
-                <div className="space-y-1 text-xs text-muted-foreground">
-                  <div className="break-all">Site: {item.siteUrl}</div>
-                  <div>
-                    Source:{" "}
-                    <Link href={item.sourcePageUrl} target="_blank" rel="noopener noreferrer" className="hover:text-primary">
-                      {item.sourcePageTitle}
-                    </Link>
+            return (
+              <Card key={item.id} className={`w-full border-border/60 transition-colors hover:border-primary hover:bg-muted/40 ${cornerClass}`}>
+                <CardContent className="p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 space-y-2">
+                      <Link
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block truncate text-sm font-medium hover:text-primary"
+                      >
+                        {item.url}
+                      </Link>
+                    </div>
+                    <div className="w-full max-w-[180px] shrink-0 sm:w-[180px]">
+                      <ContentPreview item={item} />
+                    </div>
                   </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="text-sm text-muted-foreground">
+        Showing {items.length.toLocaleString()} {items.length === 1 ? "item" : "items"} | Page {page} | {pageSize} per page
       </div>
 
       <div className="flex justify-end gap-2">

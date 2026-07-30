@@ -49,11 +49,22 @@ function readFilterValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value
 }
 
+function appendQueryParam(path: string, key: string, value?: string) {
+  if (!value) return path
+  const separator = path.includes("?") ? "&" : "?"
+  return `${path}${separator}${key}=${encodeURIComponent(value)}`
+}
+
 function readPageParam(value: string | string[] | undefined) {
   const rawValue = Array.isArray(value) ? value[0] : value
   const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : 1
 
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 1
+}
+
+function readViewParam(value: string | string[] | undefined) {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  return rawValue === "list" ? "list" : "grid"
 }
 
 export default async function ManageContentPage({
@@ -65,6 +76,8 @@ export default async function ManageContentPage({
   const type = readFilterValue(resolvedSearchParams.type)
   const extension = readFilterValue(resolvedSearchParams.extension)
   const search = readFilterValue(resolvedSearchParams.q)
+  const propertyId = readFilterValue(resolvedSearchParams.property)
+  const view = readViewParam(resolvedSearchParams.view)
   const slug = extension || type || "content"
   const contentTarget = classifyContentSlug(slug)
 
@@ -82,11 +95,20 @@ export default async function ManageContentPage({
 
   const content = await getContentItemsByFileTypeSlug(slug, readPageParam(resolvedSearchParams.page), 15, search)
   const title = formatContentTitle(contentTarget.kind, contentTarget.fileType)
-  const basePath = extension
+  const rawBasePath = extension
     ? `/manage/content?extension=${encodeURIComponent(extension)}`
     : type
       ? `/manage/content?type=${encodeURIComponent(type)}`
       : "/manage/content"
+  const basePath = appendQueryParam(rawBasePath, "property", propertyId)
+  const tags = contentTags.map((tag) => ({
+    ...tag,
+    href: appendQueryParam(
+      `${tag.href}${tag.href.includes("?") ? "&" : "?"}view=${view}`,
+      "property",
+      propertyId
+    ),
+  }))
 
   return (
     <ContentList
@@ -103,8 +125,9 @@ export default async function ManageContentPage({
       pageSize={content?.pageSize || 15}
       hasNextPage={content?.hasNextPage || false}
       basePath={basePath}
-      tags={contentTags}
+      tags={tags}
       search={search}
+      view={view}
     />
   )
 }
