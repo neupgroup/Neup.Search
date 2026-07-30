@@ -20,13 +20,16 @@ function getStatusDotClass(page: Page) {
     return "bg-blue-500"
 }
 
-function buildPageLink(params: { search?: string; page: number; pageSize: number }) {
+function buildPageLink(params: { search?: string; page: number; pageSize: number; propertyId?: string }) {
     const query = new URLSearchParams()
     query.set("page", String(params.page))
     query.set("pagesize", String(params.pageSize))
 
     if (params.search) {
         query.set("q", params.search)
+    }
+    if (params.propertyId) {
+        query.set("property", params.propertyId)
     }
 
     return `/manage/pages?${query.toString()}`
@@ -96,13 +99,13 @@ function PageContent({search, page, pageSize, propertyId}: {search?: string, pag
 }
 
 async function PagesList({search, page, pageSize, propertyId}: {search?: string, page: number, pageSize: number, propertyId?: string}) {
-    const pagination = await getPages(search, page, pageSize);
+    const pagination = await getPages(search, page, pageSize, propertyId);
     const { pages, totalCount, totalPages } = pagination;
     const previousPage = Math.max(1, pagination.page - 1);
     const nextPage = Math.min(totalPages, pagination.page + 1);
 
-    const prevLink = buildPageLink({ search, page: previousPage, pageSize: pagination.pageSize });
-    const nextLink = buildPageLink({ search, page: nextPage, pageSize: pagination.pageSize });
+    const prevLink = buildPageLink({ search, page: previousPage, pageSize: pagination.pageSize, propertyId });
+    const nextLink = buildPageLink({ search, page: nextPage, pageSize: pagination.pageSize, propertyId });
 
     return (
         <div className="space-y-4">
@@ -147,6 +150,7 @@ async function PagesList({search, page, pageSize, propertyId}: {search?: string,
                 )})}
             </div>
             <div>
+                 {totalCount > 0 ? (
                  <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm text-muted-foreground">
                         Page {pagination.page} of {totalPages} | {totalCount.toLocaleString()} pages
@@ -160,6 +164,7 @@ async function PagesList({search, page, pageSize, propertyId}: {search?: string,
                     </Link>
                     </div>
                 </div>
+                 ) : null}
             </div>
         </div>
     )

@@ -218,13 +218,15 @@ function mapPage(page: PageRow): Page {
   }
 }
 
-export async function getPages(search?: string, page = 1, pageSize = 20): Promise<PaginatedPages> {
+export async function getPages(search?: string, page = 1, pageSize = 20, propertyId?: string): Promise<PaginatedPages> {
   try {
     const currentPage = Math.max(1, Math.floor(page))
     const limit = Math.min(100, Math.max(1, Math.floor(pageSize)))
     const searchFilter = parsePageSearch(search)
+    const baseWhere = propertyId ? { domainId: propertyId } : {}
     const where = searchFilter?.kind === "text"
       ? {
+          ...baseWhere,
           OR: [
             { url: { contains: searchFilter.value, mode: "insensitive" as const } },
             { title: { contains: searchFilter.value, mode: "insensitive" as const } },
@@ -233,17 +235,23 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
             { domain: { domain: { contains: searchFilter.value, mode: "insensitive" as const } } },
           ],
         }
-      : undefined
+      : baseWhere
 
     if (searchFilter?.kind === "link") {
       const urlSearchLimit = 20
       const totalCount = await prisma.page.count({
-        where: { url: { in: searchFilter.candidates, mode: "insensitive" as const } },
+        where: {
+          ...baseWhere,
+          url: { in: searchFilter.candidates, mode: "insensitive" as const },
+        },
       })
       const totalPages = Math.max(1, Math.ceil(totalCount / urlSearchLimit))
       const resolvedPage = Math.min(currentPage, totalPages)
       const rows = await prisma.page.findMany({
-        where: { url: { in: searchFilter.candidates, mode: "insensitive" as const } },
+        where: {
+          ...baseWhere,
+          url: { in: searchFilter.candidates, mode: "insensitive" as const },
+        },
         orderBy: { addedOn: "desc" },
         skip: (resolvedPage - 1) * urlSearchLimit,
         take: urlSearchLimit,
@@ -262,6 +270,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
     if (searchFilter?.kind === "pages") {
       const urlSearchLimit = 20
       const pagesWhere = {
+        ...baseWhere,
         OR: searchFilter.candidates.map((candidate) => ({
           url: candidate.endsWith("/")
             ? { startsWith: candidate, mode: "insensitive" as const }
@@ -289,11 +298,19 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
     }
 
     if (searchFilter?.kind === "status") {
-      const totalCount = await prisma.page.count({ where: { statusCode: searchFilter.statusCode } })
+      const totalCount = await prisma.page.count({
+        where: {
+          ...baseWhere,
+          statusCode: searchFilter.statusCode,
+        },
+      })
       const totalPages = Math.max(1, Math.ceil(totalCount / limit))
       const resolvedPage = Math.min(currentPage, totalPages)
       const rows = await prisma.page.findMany({
-        where: { statusCode: searchFilter.statusCode },
+        where: {
+          ...baseWhere,
+          statusCode: searchFilter.statusCode,
+        },
         orderBy: { addedOn: "desc" },
         skip: (resolvedPage - 1) * limit,
         take: limit,

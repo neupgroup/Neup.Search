@@ -8,6 +8,7 @@ import {
   Home,
   Package,
   FileText,
+  Link2,
   Users,
   LineChart,
   Globe,
@@ -31,7 +32,11 @@ export default function ManageLayout({
   const selectedPropertyId = searchParams.get("property") || undefined
 
   useEffect(() => {
-    if (pathname === "/manage/properties" || pathname === "/manage/properties/add") return
+    if (
+      pathname === "/manage/properties" ||
+      pathname === "/manage/properties/add" ||
+      pathname === "/manage/links"
+    ) return
     if (selectedPropertyId) return
 
     router.replace("/manage/properties")
@@ -48,6 +53,7 @@ export default function ManageLayout({
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/neupbot", label: "NeupBot", icon: Bot },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
+    { href: "/manage/links", label: "Links", icon: Link2 },
     { href: "/manage/content", label: "Content", icon: Files },
     { href: "/manage/errorrs", label: "Crawl Errors", icon: AlertTriangle },
     { href: "/manage/system/error", label: "System Errors", icon: AlertTriangle },

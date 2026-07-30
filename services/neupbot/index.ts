@@ -139,6 +139,31 @@ export type PropertyLinkPreview = {
   firstCrawlOn: Date
 }
 
+export type ManagedLinkType = "incoming" | "outgoing" | "internal" | "tel" | "mailto"
+
+export type ManagedLinkItem = {
+  id: string
+  type: ManagedLinkType
+  sourcePageId: string
+  sourcePageTitle: string
+  sourceUrl: string
+  sourceDomain: string
+  targetUrl: string
+  targetDomain?: string
+  anchorText?: string | null
+  titleText?: string | null
+  rel?: string | null
+  firstCrawlOn: Date
+}
+
+export type PaginatedManagedLinks = {
+  links: ManagedLinkItem[]
+  page: number
+  pageSize: number
+  totalCount: number
+  totalPages: number
+}
+
 export type PropertyDashboard = {
   property: ManagedDomain
   counts: {
@@ -2774,6 +2799,207 @@ function readPageBodyHtml(data: unknown) {
   }
 
   return null
+}
+
+function isManageLinkPlaceholderValue(input: string) {
+  const normalizedInput = input.trim().toLowerCase()
+
+  return (
+    normalizedInput.length === 0 ||
+    normalizedInput === "#" ||
+    normalizedInput === "/" ||
+    normalizedInput === "null" ||
+    normalizedInput === "undefined" ||
+    normalizedInput === "void(0)" ||
+    normalizedInput === "javascript:void(0)" ||
+    normalizedInput === "javascript:void(0);" ||
+    normalizedInput === "javascript:;" ||
+    normalizedInput.startsWith("javascript:") ||
+    normalizedInput.startsWith("data:")
+  )
+}
+
+function normalizeManagedLinkTarget(input: string, baseUrl: string) {
+  const trimmedInput = input.trim()
+  const normalizedInput = trimmedInput.toLowerCase()
+
+  if (normalizedInput.startsWith("mailto:") || normalizedInput.startsWith("tel:")) {
+    return trimmedInput
+  }
+
+  try {
+    const url = new URL(trimmedInput, baseUrl)
+    url.hash = ""
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
+function classifyManagedLinkType(sourceDomain: string, targetUrl: string): Exclude<ManagedLinkType, "incoming"> | null {
+  const normalizedTargetUrl = targetUrl.toLowerCase()
+  if (normalizedTargetUrl.startsWith("mailto:")) return "mailto"
+  if (normalizedTargetUrl.startsWith("tel:")) return "tel"
+
+  try {
+    return getPropertyAddress(targetUrl) === sourceDomain ? "internal" : "outgoing"
+  } catch {
+    return null
+  }
+}
+
+function matchesManagedLinkSearch(link: ManagedLinkItem, search?: string) {
+  if (!search) return true
+
+  const normalizedSearch = search.trim().toLowerCase()
+  if (!normalizedSearch) return true
+
+  return [
+    link.sourcePageTitle,
+    link.sourceUrl,
+    link.targetUrl,
+    link.sourceDomain,
+    link.targetDomain || "",
+    link.anchorText || "",
+    link.titleText || "",
+    link.rel || "",
+  ].some((value) => value.toLowerCase().includes(normalizedSearch))
+}
+
+export async function getManagedLinks(input?: {
+  propertyId?: string
+  type?: ManagedLinkType
+  page?: number
+  pageSize?: number
+  search?: string
+}): Promise<PaginatedManagedLinks> {
+  const requestedPage = input?.page && input.page > 0 ? input.page : 1
+  const pageSize = input?.pageSize && input.pageSize > 0 ? input.pageSize : 20
+
+  try {
+    const propertyDomain = input?.propertyId
+      ? await prisma.domain.findUnique({
+          where: { id: input.propertyId },
+          select: { domain: true },
+        })
+      : null
+    const pages = await prisma.page.findMany({
+      where: input?.propertyId
+        ? input.type === "incoming"
+          ? { NOT: { domainId: input.propertyId } }
+          : { domainId: input.propertyId }
+        : undefined,
+      orderBy: [
+        { lastCrawled: "desc" },
+        { addedOn: "desc" },
+      ],
+      select: {
+        id: true,
+        title: true,
+        url: true,
+        addedOn: true,
+        lastCrawled: true,
+        data: true,
+        domain: {
+          select: {
+            domain: true,
+          },
+        },
+      },
+    })
+
+    const links: ManagedLinkItem[] = []
+    const seen = new Set<string>()
+
+    for (const page of pages) {
+      const bodyHtml = readPageBodyHtml(page.data)
+      if (!bodyHtml) continue
+
+      const $ = cheerio.load(bodyHtml)
+      $("a[href]").each((index: number, el: cheerio.Element) => {
+        const rawHref = $(el).attr("href") || ""
+        if (isManageLinkPlaceholderValue(rawHref)) return
+
+        const targetUrl = normalizeManagedLinkTarget(rawHref, page.url)
+        if (!targetUrl) return
+
+        const type = classifyManagedLinkType(page.domain.domain, targetUrl)
+        if (!type) return
+        const targetDomain = type === "internal" || type === "outgoing"
+          ? getPropertyAddress(targetUrl)
+          : undefined
+
+        const resolvedType: ManagedLinkType = input?.propertyId &&
+          propertyDomain &&
+          page.domain.domain !== propertyDomain.domain &&
+          targetDomain === propertyDomain.domain
+          ? "incoming"
+          : type
+
+        if (input?.type) {
+          if (input.type === "incoming") {
+            if (resolvedType !== "incoming") return
+          } else if (resolvedType !== input.type) {
+            return
+          }
+        } else if (resolvedType === "incoming") {
+          return
+        }
+
+        const anchorText = cleanLinkText($(el).text())
+        const titleText = $(el).attr("title") || undefined
+        const rel = $(el).attr("rel") || undefined
+        const linkId = `${page.id}:${resolvedType}:${targetUrl}:${index}`
+        const dedupeKey = `${page.id}:${resolvedType}:${targetUrl}:${anchorText || ""}:${titleText || ""}`
+
+        if (seen.has(dedupeKey)) return
+        seen.add(dedupeKey)
+
+        const link: ManagedLinkItem = {
+          id: linkId,
+          type: resolvedType,
+          sourcePageId: page.id,
+          sourcePageTitle: page.title || page.url,
+          sourceUrl: page.url,
+          sourceDomain: page.domain.domain,
+          targetUrl,
+          targetDomain,
+          anchorText,
+          titleText,
+          rel,
+          firstCrawlOn: page.lastCrawled || page.addedOn,
+        }
+
+        if (matchesManagedLinkSearch(link, input?.search)) {
+          links.push(link)
+        }
+      })
+    }
+
+    links.sort((left, right) => right.firstCrawlOn.getTime() - left.firstCrawlOn.getTime())
+
+    const totalCount = links.length
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+    const page = Math.min(requestedPage, totalPages)
+    const start = (page - 1) * pageSize
+
+    return {
+      links: links.slice(start, start + pageSize),
+      page,
+      pageSize,
+      totalCount,
+      totalPages,
+    }
+  } catch (error) {
+    await logError({ error, input }, "getManagedLinks")
+    return {
+      links: [],
+      page: requestedPage,
+      pageSize,
+      totalCount: 0,
+      totalPages: 1,
+    }
+  }
 }
 
 function hasCrawlError(page: { status: string; statusCode: number | null }) {
