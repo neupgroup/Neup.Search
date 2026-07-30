@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react"
 import { useFormStatus } from "react-dom"
-import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite, resumePendingCrawl, getSiteCrawlStatus } from "@/app/manage/sites/actions"
+import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite, resumePendingCrawl, getSiteCrawlStatus, deleteSite } from "@/app/manage/sites/actions"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Braces, Loader2 } from "lucide-react"
@@ -185,6 +185,35 @@ export function DeletePagesButton({ siteId, siteName }: { siteId: string, siteNa
                         <AlertDialogAction asChild>
                             <SubmitButton variant="destructive">
                                 Continue
+                            </SubmitButton>
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </form>
+            </AlertDialogContent>
+        </AlertDialog>
+    )
+}
+
+export function DeleteSiteButton({ siteId, siteName }: { siteId: string, siteName: string }) {
+    return (
+         <AlertDialog>
+            <AlertDialogTrigger asChild>
+                <Button variant="destructive">Delete Site</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+                <form action={deleteSite}>
+                    <input type="hidden" name="siteId" value={siteId} />
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete this site?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This action cannot be undone. This will permanently delete <strong>{siteName}</strong>, its pages, sitemaps, and links from your database.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction asChild>
+                            <SubmitButton variant="destructive">
+                                Delete Site
                             </SubmitButton>
                         </AlertDialogAction>
                     </AlertDialogFooter>

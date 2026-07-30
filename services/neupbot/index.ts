@@ -358,6 +358,23 @@ function normalizeDiscoveredUrl(input: string, baseUrl: string) {
   return url.toString()
 }
 
+function isIgnoredCrawlUrl(input: string) {
+  try {
+    const url = new URL(input)
+    const pathname = url.pathname.toLowerCase()
+    const fileType = getUrlFileType(url.toString())
+
+    if (pathname === "/_next" || pathname.startsWith("/_next/")) return true
+    if (pathname === "/__nextjs" || pathname.startsWith("/__nextjs/")) return true
+    if (pathname.endsWith(".hot-update.js") || pathname.endsWith(".hot-update.json")) return true
+    if (fileType === "map" && pathname.includes("/static/")) return true
+
+    return false
+  } catch {
+    return false
+  }
+}
+
 function readContentLength(headers: Headers | Record<string, string | string[] | undefined>) {
   const rawValue = headers instanceof Headers ? headers.get("content-length") : headers["content-length"]
   const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
@@ -389,6 +406,8 @@ function buildDiscoveryDetails(input: DiscoveredPageInput): Prisma.InputJsonObje
 }
 
 async function saveDiscoveredPage(input: DiscoveredPageInput) {
+  if (isIgnoredCrawlUrl(input.url)) return undefined
+
   const content = classifyContentUrl(input.url)
   const details = buildDiscoveryDetails(input)
   const existingPage = await prisma.page.findFirst({
@@ -448,6 +467,8 @@ function cleanLinkText(value?: string | null) {
 
 async function saveDiscoveredLink(input: DiscoveredLinkInput) {
   const { siteId, sourceUrl, targetUrl } = input
+  if (isIgnoredCrawlUrl(targetUrl)) return
+
   const targetHostname = getDomainName(targetUrl)
   const targetDomain = await prisma.domain.upsert({
     where: { domain: new URL(targetUrl).origin },
@@ -511,6 +532,7 @@ async function saveDiscoveredLinksAndPages(
   for (const link of links) {
     try {
       const absoluteUrl = normalizeDiscoveredUrl(link.url, sourceUrl)
+      if (isIgnoredCrawlUrl(absoluteUrl)) continue
       if (seen.has(absoluteUrl)) continue
       seen.add(absoluteUrl)
       const isInternal = isInternalCrawlUrl(absoluteUrl, rootHostname)
@@ -560,6 +582,7 @@ async function saveDiscoveredAssets(
   for (const asset of assets) {
     try {
       const absoluteUrl = normalizeDiscoveredUrl(asset.url, sourceUrl)
+      if (isIgnoredCrawlUrl(absoluteUrl)) continue
       if (seen.has(absoluteUrl)) continue
       seen.add(absoluteUrl)
       const isInternal = isInternalCrawlUrl(absoluteUrl, rootHostname)
@@ -607,6 +630,8 @@ async function saveSitemapPages(
   stats?: CrawlResourceStats,
 ) {
   for (const entry of entries) {
+    if (isIgnoredCrawlUrl(entry.url)) continue
+
     if (!isInternalCrawlUrl(entry.url, rootHostname)) {
       if (stats) stats.externalResourcesFound++
       continue
@@ -627,11 +652,28 @@ async function saveSitemapPages(
 }
 
 async function getNextPendingPage(siteId: string) {
-  return prisma.page.findFirst({
+  const pendingPages = await prisma.page.findMany({
     where: { domainId: siteId, status: "Pending" },
     orderBy: { addedOn: "asc" },
+    take: 50,
     select: { id: true, url: true },
   })
+
+  for (const page of pendingPages) {
+    if (!isIgnoredCrawlUrl(page.url)) return page
+
+    await prisma.page.update({
+      where: { id: page.id },
+      data: {
+        status: "Skipped",
+        details: {
+          ignoredReason: "Ignored Next.js generated asset.",
+        },
+      },
+    })
+  }
+
+  return null
 }
 
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
@@ -1239,7 +1281,7 @@ async function crawlStoredPage({
         },
       })
 
-      if (targetUrl) {
+      if (targetUrl && !isIgnoredCrawlUrl(targetUrl)) {
         const targetPageId = await saveDiscoveredPage({
           siteId,
           url: targetUrl,
@@ -1807,6 +1849,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           if (!href) continue
           try {
             const absoluteUrl = new URL(href, currentUrl).toString().split("#")[0]
+            if (isIgnoredCrawlUrl(absoluteUrl)) continue
             if (seenTargetUrls.has(absoluteUrl)) continue
             seenTargetUrls.add(absoluteUrl)
 
@@ -2003,17 +2046,78 @@ export async function cancelDomainCrawl(siteId: string) {
 }
 
 export async function deleteDomainPages(siteId: string) {
-  await prisma.page.deleteMany({ where: { domainId: siteId } })
-  await prisma.domain.update({
+  const domain = await prisma.domain.findUnique({
     where: { id: siteId },
-    data: {
-      lastCrawled: null,
-      details: {
-        ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
-        pagesCrawled: 0,
-      },
-    },
+    select: { details: true },
   })
+
+  await prisma.$transaction(async (tx) => {
+    const pages = await tx.page.findMany({
+      where: { domainId: siteId },
+      select: { id: true },
+    })
+    const pageIds = pages.map((page) => page.id)
+
+    await tx.link.deleteMany({
+      where: {
+        OR: [
+          { fromDomain: siteId },
+          { toDomain: siteId },
+          ...(pageIds.length > 0
+            ? [
+                { sourcePageId: { in: pageIds } },
+                { targetPageId: { in: pageIds } },
+              ]
+            : []),
+        ],
+      },
+    })
+    await tx.page.deleteMany({ where: { domainId: siteId } })
+    await tx.domain.update({
+      where: { id: siteId },
+      data: {
+        lastCrawled: null,
+        details: {
+          ...readDetails(domain?.details),
+          pagesCrawled: 0,
+          internalResourcesFound: 0,
+          externalResourcesFound: 0,
+          currentActivity: "Pages deleted by user.",
+          currentCrawlUrl: null,
+          currentlyCrawling: null,
+        },
+      },
+    })
+  })
+}
+
+export async function deleteManagedDomain(siteId: string) {
+  await prisma.domain.delete({ where: { id: siteId } })
+}
+
+export async function deleteManagedPage(pageId: string) {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { id: true, url: true, domainId: true },
+  })
+
+  if (!page) return null
+
+  await prisma.$transaction([
+    prisma.link.deleteMany({
+      where: {
+        OR: [
+          { sourcePageId: page.id },
+          { targetPageId: page.id },
+          { linkFrom: page.url },
+          { linkTo: page.url },
+        ],
+      },
+    }),
+    prisma.page.delete({ where: { id: page.id } }),
+  ])
+
+  return { siteId: page.domainId }
 }
 
 export async function getAllCrawlTargets() {

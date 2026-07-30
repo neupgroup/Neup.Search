@@ -9,6 +9,8 @@ import { getLiveNeupbotCrawls } from "./actions"
 
 type CrawlActivity = Awaited<ReturnType<typeof getLiveNeupbotCrawls>>[number]
 
+const refreshIntervalMs = 500
+
 function CrawlCard({ crawl }: { crawl: CrawlActivity }) {
   return (
     <Card className="transition-colors hover:bg-muted/50">
@@ -64,11 +66,28 @@ export function NeupbotLivePanel({ initialCrawls }: { initialCrawls: CrawlActivi
   const [crawls, setCrawls] = useState(initialCrawls)
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      getLiveNeupbotCrawls().then(setCrawls)
-    }, 1000)
+    let isMounted = true
+    let isRefreshing = false
 
-    return () => window.clearInterval(interval)
+    const refreshCrawls = async () => {
+      if (isRefreshing) return
+      isRefreshing = true
+
+      try {
+        const nextCrawls = await getLiveNeupbotCrawls()
+        if (isMounted) setCrawls(nextCrawls)
+      } finally {
+        isRefreshing = false
+      }
+    }
+
+    refreshCrawls()
+    const interval = window.setInterval(refreshCrawls, refreshIntervalMs)
+
+    return () => {
+      isMounted = false
+      window.clearInterval(interval)
+    }
   }, [])
 
   return (
@@ -78,7 +97,7 @@ export function NeupbotLivePanel({ initialCrawls }: { initialCrawls: CrawlActivi
           <Activity className="h-4 w-4" />
           <span>{crawls.length.toLocaleString()} active crawls</span>
         </div>
-        <Badge variant="outline">Updates every second</Badge>
+        <Badge variant="outline">Updates every {refreshIntervalMs / 1000} second</Badge>
       </div>
 
       {crawls.length === 0 ? (

@@ -8,6 +8,7 @@ import { logError } from "@/lib/logging"
 import {
   cancelDomainCrawl,
   createDomainForCrawl,
+  deleteManagedDomain,
   deleteDomainPages,
   getAllCrawlTargets,
   getManagedDomainById,
@@ -204,10 +205,28 @@ export async function deletePagesForSite(formData: FormData) {
   try {
     await deleteDomainPages(siteId)
     revalidatePath(`/manage/sites/${siteId}`)
+    revalidatePath("/manage/sites")
     revalidatePath("/manage/pages")
   } catch (error) {
-    await logError(error, "deletePagesForSite")
+    await logError({ error, siteId }, "deletePagesForSite")
+    throw new Error("Could not delete pages for site.")
   }
+}
+
+export async function deleteSite(formData: FormData) {
+  const siteId = formData.get("siteId") as string
+  if (!siteId) throw new Error("siteId is required.")
+
+  try {
+    await deleteManagedDomain(siteId)
+  } catch (error) {
+    await logError({ error, siteId }, "deleteSite")
+    throw new Error("Could not delete site.")
+  }
+
+  revalidatePath("/manage/sites")
+  revalidatePath("/manage/pages")
+  redirect("/manage/sites")
 }
 
 export async function deleteLinksForPage() {

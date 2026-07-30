@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { MoreHorizontal, PlusCircle, Search, Loader2, Play } from "lucide-react"
-import { crawlSite, type Site, crawlAllSites } from "./actions"
+import { crawlSite, type Site, crawlAllSites, deleteSite } from "./actions"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { useDebouncedCallback } from "use-debounce"
 
@@ -64,6 +64,30 @@ function CrawlAllButton() {
             {isPending ? "Starting Crawlers..." : "Crawl All Sites"}
         </Button>
     )
+}
+
+function DeleteSiteMenuItem({ siteId, siteName }: { siteId: string, siteName: string }) {
+  const [isPending, startTransition] = useTransition()
+
+  const handleSelect = (event: Event) => {
+    event.preventDefault()
+
+    if (!window.confirm(`Delete ${siteName} and all crawled data for this site? This cannot be undone.`)) {
+      return
+    }
+
+    startTransition(async () => {
+      const formData = new FormData()
+      formData.append("siteId", siteId)
+      await deleteSite(formData)
+    })
+  }
+
+  return (
+    <DropdownMenuItem onSelect={handleSelect} disabled={isPending} className="text-red-600">
+      {isPending ? "Deleting..." : "Delete"}
+    </DropdownMenuItem>
+  )
 }
 
 export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites: Site[], lastVisibleId: string | null }) {
@@ -212,7 +236,7 @@ export default function ManageSitesClientPage({ sites, lastVisibleId }: { sites:
                        <CrawlButton siteId={site.id} siteUrl={site.url} isCrawling={site.status === 'Crawling'} />
                       <DropdownMenuItem>Pause</DropdownMenuItem>
                       <DropdownMenuItem>View Logs</DropdownMenuItem>
-                      <DropdownMenuItem className="text-red-600">Delete</DropdownMenuItem>
+                      <DeleteSiteMenuItem siteId={site.id} siteName={site.name || site.url} />
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>

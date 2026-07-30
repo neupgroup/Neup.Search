@@ -3,9 +3,10 @@
 import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logging"
 import { revalidatePath } from "next/cache"
+import { redirect } from "next/navigation"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
 import type { Prisma } from "@prisma/client"
-import { findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "../../../../services/neupbot"
+import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "../../../../services/neupbot"
 
 export type Page = {
   id: string
@@ -485,4 +486,26 @@ export async function crawlPageAction(formData: FormData) {
     revalidatePath(`/manage/pages/${pageId}`)
     revalidatePath("/manage/pages")
   }
+}
+
+export async function deletePageAction(formData: FormData) {
+  const pageId = String(formData.get("pageId") || "")
+
+  if (!pageId) {
+    throw new Error("pageId is required.")
+  }
+
+  let siteId: string | undefined
+
+  try {
+    const deletedPage = await deleteManagedPage(pageId)
+    siteId = deletedPage?.siteId
+  } catch (error) {
+    await logError({ error, pageId }, "deletePageAction")
+    throw new Error("Could not delete page.")
+  }
+
+  revalidatePath("/manage/pages")
+  if (siteId) revalidatePath(`/manage/sites/${siteId}`)
+  redirect("/manage/pages")
 }

@@ -1,10 +1,21 @@
 
 
 import { notFound } from "next/navigation"
-import { crawlPageAction, getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
+import { crawlPageAction, deletePageAction, getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"
@@ -134,6 +145,30 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
                     {page.summary ? "Summary Generated" : "Generate Summary"}
                 </Button>
               </form>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive">Delete Page</Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <form action={deletePageAction}>
+                    <input type="hidden" name="pageId" value={page.id} />
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete this page?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This action cannot be undone. This will permanently delete this indexed page and its recorded links.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction asChild>
+                        <Button type="submit" variant="destructive">
+                          Delete Page
+                        </Button>
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </form>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </div>
         </CardHeader>
