@@ -47,7 +47,6 @@ export default function ManageLayout({
     { href: "/manage/properties", label: "Properties", icon: Globe },
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/neupbot", label: "NeupBot", icon: Bot },
-    { href: "/manage/sites", label: "Crawled Sites", icon: Globe },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
     { href: "/manage/content", label: "Content", icon: Files },
     { href: "/manage/errorrs", label: "Crawl Errors", icon: AlertTriangle },

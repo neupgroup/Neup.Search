@@ -10,9 +10,7 @@ import {
   createDomainForCrawl,
   deleteManagedDomain,
   deleteDomainPages,
-  getAllCrawlTargets,
   getManagedDomainById,
-  getManagedDomains,
   getNeupbotDashboardStats,
   getPagesForDomain,
   InvalidDomainError,
@@ -39,11 +37,6 @@ function normalizeDomainInput(input: string) {
 
 export type Site = ManagedDomain
 
-export type PaginatedSites = {
-  sites: Site[]
-  lastVisibleId: string | null
-}
-
 export type PaginatedSitePages = {
   pages: Page[]
   page: number
@@ -53,7 +46,6 @@ export type PaginatedSitePages = {
 }
 
 export async function addSite(prevState: any, formData: FormData) {
-  const propertyId = typeof formData.get("property") === "string" ? formData.get("property") as string : undefined
   const validatedFields = DomainSchema.safeParse({
     url: formData.get("url"),
   })
@@ -68,6 +60,8 @@ export async function addSite(prevState: any, formData: FormData) {
     const normalizedUrl = normalizeDomainInput(validatedFields.data.url)
     const { domain, siteUrl } = await createDomainForCrawl({ url: normalizedUrl })
     runCrawler(domain.id, siteUrl).catch((error) => logError(error, "crawlSite_async"))
+    revalidatePath("/manage/properties")
+    redirect(`/manage/properties?property=${encodeURIComponent(domain.id)}`)
   } catch (error) {
     if (error instanceof InvalidDomainError) {
       return {
@@ -80,9 +74,6 @@ export async function addSite(prevState: any, formData: FormData) {
       errors: { _server: ["Could not add domain. Please try again."] },
     }
   }
-
-  revalidatePath("/manage/sites")
-  redirect(propertyId ? `/manage/sites?property=${encodeURIComponent(propertyId)}` : "/manage/sites")
 }
 
 export async function summarizeSiteAction(formData: FormData) {
@@ -100,16 +91,6 @@ export async function summarizeSiteAction(formData: FormData) {
     await markDomainSummaryFailed(siteId)
   } finally {
     revalidatePath(`/manage/sites/${siteId}`)
-    revalidatePath("/manage/sites")
-  }
-}
-
-export async function getSites(search?: string, startAfterDocId?: string): Promise<PaginatedSites> {
-  try {
-    return await getManagedDomains(search, startAfterDocId)
-  } catch (error) {
-    await logError(error, "getSites")
-    return { sites: [], lastVisibleId: null }
   }
 }
 
@@ -119,7 +100,6 @@ export async function crawlSite(formData: FormData) {
 
   await runCrawler(siteId, siteUrl)
   revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/sites")
   revalidatePath("/manage/pages")
 }
 
@@ -129,7 +109,6 @@ export async function crawlJavascriptSite(formData: FormData) {
 
   await runJavascriptCrawler(siteId, siteUrl)
   revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/sites")
   revalidatePath("/manage/pages")
 }
 
@@ -142,7 +121,6 @@ export async function resumePendingCrawl(formData: FormData) {
 
   await resumePendingCrawler(siteId)
   revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/sites")
   revalidatePath("/manage/pages")
 }
 
@@ -201,7 +179,6 @@ export async function cancelCrawl(formData: FormData) {
   try {
     await cancelDomainCrawl(siteId)
     revalidatePath(`/manage/sites/${siteId}`)
-    revalidatePath("/manage/sites")
   } catch (error) {
     await logError(error, "cancelCrawl")
   }
@@ -214,7 +191,6 @@ export async function deletePagesForSite(formData: FormData) {
   try {
     await deleteDomainPages(siteId)
     revalidatePath(`/manage/sites/${siteId}`)
-    revalidatePath("/manage/sites")
     revalidatePath("/manage/pages")
   } catch (error) {
     await logError({ error, siteId }, "deletePagesForSite")
@@ -233,24 +209,11 @@ export async function deleteSite(formData: FormData) {
     throw new Error("Could not delete site.")
   }
 
-  revalidatePath("/manage/sites")
   revalidatePath("/manage/pages")
-  redirect("/manage/sites")
+  revalidatePath("/manage/properties")
+  redirect("/manage/properties")
 }
 
 export async function deleteLinksForPage() {
   return
-}
-
-export async function crawlAllSites() {
-  try {
-    const domains = await getAllCrawlTargets()
-    for (const domain of domains) {
-      runCrawler(domain.id, domain.domain).catch((error) => logError(error, "crawlAllSites_async"))
-    }
-  } catch (error) {
-    await logError(error, "crawlAllSites")
-  } finally {
-    revalidatePath("/manage/sites")
-  }
 }
