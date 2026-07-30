@@ -68,55 +68,51 @@ export default function ManageLayout({
   return (
     <div className="min-h-screen bg-white">
       <HeaderS2V2 />
-      <div className="h-[calc(100vh-4rem)]">
-        <div className="mx-auto grid h-full w-full max-w-[1440px] md:grid-cols-[220px_1fr] lg:grid-cols-[280px_1fr]">
-          <aside className="hidden md:block">
-            <div className="h-full overflow-y-auto border-r border-border/60 bg-white p-4 lg:p-5">
-              <div className="flex min-h-full flex-col gap-2">
-              <nav className="grid items-start gap-1 text-sm font-medium">
-                {navLinks.map((link) => (
-                  <Link
-                    key={link.label}
-                    href={buildManageHref(link.href)}
-                    className={cn(
-                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-muted-foreground transition-all hover:bg-muted hover:text-primary",
-                      (pathname === link.href || (link.href !== "/manage" && pathname.startsWith(link.href))) &&
-                        "bg-muted text-primary"
-                    )}
-                  >
-                    <link.icon className="h-4 w-4" />
-                    {link.label}
-                    {link.badge && (
-                      <Badge className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                        {link.badge}
-                      </Badge>
-                    )}
-                  </Link>
-                ))}
-              </nav>
-              <div className="mt-auto pt-4">
-                <Card className="border-border/60 bg-white">
-                  <CardHeader className="p-2 pt-0 md:p-4">
-                    <CardTitle>Upgrade to Pro</CardTitle>
-                    <CardDescription>
-                      Unlock all features and get unlimited access to our support
-                      team.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="p-2 pt-0 md:p-4 md:pt-0">
-                    <Button size="sm" className="w-full">
-                      Upgrade
-                    </Button>
-                  </CardContent>
-                </Card>
-              </div>
-              </div>
+      <div className="mx-auto w-full max-w-[1440px]">
+        <aside className="fixed bottom-0 left-[max(0px,calc((100vw-1440px)/2))] top-16 hidden w-[220px] overflow-y-auto border-r border-border/60 bg-white md:block lg:w-[280px]">
+          <div className="flex min-h-full flex-col gap-2 px-4 pt-4 pb-4 lg:px-5 lg:pt-8 lg:pb-5">
+            <nav className="grid items-start gap-1 text-sm font-medium">
+              {navLinks.map((link) => (
+                <Link
+                  key={link.label}
+                  href={buildManageHref(link.href)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-muted-foreground transition-all hover:bg-muted hover:text-primary",
+                    (pathname === link.href || (link.href !== "/manage" && pathname.startsWith(link.href))) &&
+                      "bg-muted text-primary"
+                  )}
+                >
+                  <link.icon className="h-4 w-4" />
+                  {link.label}
+                  {link.badge && (
+                    <Badge className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
+                      {link.badge}
+                    </Badge>
+                  )}
+                </Link>
+              ))}
+            </nav>
+            <div className="mt-auto pt-4">
+              <Card className="border-border/60 bg-white">
+                <CardHeader className="p-2 pt-0 md:p-4">
+                  <CardTitle>Upgrade to Pro</CardTitle>
+                  <CardDescription>
+                    Unlock all features and get unlimited access to our support
+                    team.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-2 pt-0 md:p-4 md:pt-0">
+                  <Button size="sm" className="w-full">
+                    Upgrade
+                  </Button>
+                </CardContent>
+              </Card>
             </div>
-          </aside>
-          <main className="flex min-h-0 flex-col gap-4 bg-white p-4 lg:gap-6 lg:p-8">
-            {children}
-          </main>
-        </div>
+          </div>
+        </aside>
+        <main className="flex min-h-0 flex-col gap-4 bg-white p-4 md:pl-[252px] lg:gap-6 lg:p-8 lg:pl-[312px]">
+          {children}
+        </main>
       </div>
     </div>
   )
