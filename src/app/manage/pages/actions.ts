@@ -71,27 +71,58 @@ type PageRow = {
 
 type PageSearchFilter =
   | { kind: "text"; value: string }
-  | { kind: "link"; normalizedTarget: string; candidates: string[] }
-  | { kind: "pages"; normalizedTarget: string; candidates: string[] }
+  | { kind: "link"; candidates: string[] }
+  | { kind: "pages"; candidates: string[] }
   | { kind: "status"; statusCode: number }
   | null
 
-function normalizeSearchTarget(input: string) {
-  const trimmedInput = input.trim().replace(/\/+$/, "")
-  const url = new URL(/^https?:\/\//i.test(trimmedInput) ? trimmedInput : `https://${trimmedInput}`)
-  const hostname = url.hostname.toLowerCase()
-  const pathname = url.pathname.replace(/\/+$/, "")
-
-  return `${hostname}${pathname === "/" ? "" : pathname}`
+function decodeSearchUrl(input: string) {
+  try {
+    return decodeURIComponent(input.trim())
+  } catch {
+    return input.trim()
+  }
 }
 
-function buildUrlCandidates(normalizedTarget: string) {
-  return [
-    `https://${normalizedTarget}`,
-    `https://${normalizedTarget}/`,
-    `http://${normalizedTarget}`,
-    `http://${normalizedTarget}/`,
-  ]
+function trimTrailingSlashBeforeQuery(pathname: string) {
+  const trimmedPathname = pathname.replace(/\/+$/, "")
+  return trimmedPathname || ""
+}
+
+function buildUrlCandidates(input: string) {
+  const decodedInput = decodeSearchUrl(input)
+  const hasProtocol = /^https?:\/\//i.test(decodedInput)
+  const parsedUrl = new URL(hasProtocol ? decodedInput : `https://${decodedInput}`)
+  const hostname = parsedUrl.hostname.toLowerCase()
+  const alternateHostname = hostname.startsWith("www.") ? hostname.slice(4) : `www.${hostname}`
+  const hostnames = [hostname, alternateHostname]
+  const schemes = ["https", "http"]
+  const pathname = trimTrailingSlashBeforeQuery(parsedUrl.pathname)
+  const suffix = `${pathname}${parsedUrl.search}${parsedUrl.hash}`
+  const candidates = new Set<string>()
+
+  for (const scheme of schemes) {
+    for (const candidateHostname of hostnames) {
+      const withoutTrailingSlash = `${scheme}://${candidateHostname}${suffix}`
+      candidates.add(withoutTrailingSlash)
+
+      if (parsedUrl.search || parsedUrl.hash) {
+        const trailingPathname = pathname ? `${pathname}/` : "/"
+        candidates.add(`${scheme}://${candidateHostname}${trailingPathname}${parsedUrl.search}${parsedUrl.hash}`)
+      } else {
+        candidates.add(`${withoutTrailingSlash}/`)
+      }
+    }
+  }
+
+  return [...candidates]
+}
+
+function looksLikeUrlSearch(input: string) {
+  const decodedInput = decodeSearchUrl(input)
+  if (/\s/.test(decodedInput)) return false
+
+  return /^https?:\/\//i.test(decodedInput) || /^[^/:?#]+\.[^/:?#]+/.test(decodedInput)
 }
 
 function parsePageSearch(search?: string): PageSearchFilter {
@@ -100,6 +131,14 @@ function parsePageSearch(search?: string): PageSearchFilter {
 
   const operatorMatch = trimmedSearch.match(/^(link|page|pages|status):(.+)$/i)
   if (!operatorMatch) {
+    if (looksLikeUrlSearch(trimmedSearch)) {
+      try {
+        return { kind: "link", candidates: buildUrlCandidates(trimmedSearch) }
+      } catch {
+        return { kind: "text", value: trimmedSearch }
+      }
+    }
+
     return { kind: "text", value: trimmedSearch }
   }
 
@@ -111,28 +150,13 @@ function parsePageSearch(search?: string): PageSearchFilter {
         : { kind: "text", value: trimmedSearch }
     }
 
-    const normalizedTarget = normalizeSearchTarget(operatorMatch[2])
-
-    const candidates = buildUrlCandidates(normalizedTarget)
+    const candidates = buildUrlCandidates(operatorMatch[2])
     return ["link", "page"].includes(operatorMatch[1].toLowerCase())
-      ? { kind: "link", normalizedTarget, candidates }
-      : { kind: "pages", normalizedTarget, candidates }
+      ? { kind: "link", candidates }
+      : { kind: "pages", candidates }
   } catch {
     return { kind: "text", value: trimmedSearch }
   }
-}
-
-function normalizeStoredPageUrl(input: string) {
-  try {
-    return normalizeSearchTarget(input)
-  } catch {
-    return input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "")
-  }
-}
-
-function isChildPageUrl(pageUrl: string, normalizedParent: string) {
-  const normalizedPageUrl = normalizeStoredPageUrl(pageUrl)
-  return normalizedPageUrl.startsWith(`${normalizedParent}/`) && normalizedPageUrl !== normalizedParent
 }
 
 function readSummary(data: unknown): string | undefined {
@@ -204,45 +228,53 @@ export async function getPages(search?: string, page = 1, pageSize = 20): Promis
       : undefined
 
     if (searchFilter?.kind === "link") {
+      const urlSearchLimit = 20
+      const totalCount = await prisma.page.count({
+        where: { url: { in: searchFilter.candidates, mode: "insensitive" as const } },
+      })
+      const totalPages = Math.max(1, Math.ceil(totalCount / urlSearchLimit))
+      const resolvedPage = Math.min(currentPage, totalPages)
       const rows = await prisma.page.findMany({
         where: { url: { in: searchFilter.candidates, mode: "insensitive" as const } },
         orderBy: { addedOn: "desc" },
+        skip: (resolvedPage - 1) * urlSearchLimit,
+        take: urlSearchLimit,
         include: { domain: { select: { domain: true } } },
       })
-      const pages = rows
-        .filter((row) => normalizeStoredPageUrl(row.url) === searchFilter.normalizedTarget)
-        .slice(0, 1)
-        .map(mapPage)
 
       return {
-        pages,
-        page: 1,
-        pageSize: limit,
-        totalCount: pages.length,
-        totalPages: 1,
+        pages: rows.map(mapPage),
+        page: resolvedPage,
+        pageSize: urlSearchLimit,
+        totalCount,
+        totalPages,
       }
     }
 
     if (searchFilter?.kind === "pages") {
+      const urlSearchLimit = 20
+      const pagesWhere = {
+        OR: searchFilter.candidates.map((candidate) => ({
+          url: candidate.endsWith("/")
+            ? { startsWith: candidate, mode: "insensitive" as const }
+            : { equals: candidate, mode: "insensitive" as const },
+        })),
+      }
+      const totalCount = await prisma.page.count({ where: pagesWhere })
+      const totalPages = Math.max(1, Math.ceil(totalCount / urlSearchLimit))
+      const resolvedPage = Math.min(currentPage, totalPages)
       const rows = await prisma.page.findMany({
-        where: {
-          url: { contains: searchFilter.normalizedTarget.split("/")[0], mode: "insensitive" as const },
-        },
+        where: pagesWhere,
         orderBy: { addedOn: "desc" },
+        skip: (resolvedPage - 1) * urlSearchLimit,
+        take: urlSearchLimit,
         include: { domain: { select: { domain: true } } },
       })
-      const filteredRows = rows.filter((row) => isChildPageUrl(row.url, searchFilter.normalizedTarget))
-      const totalCount = filteredRows.length
-      const totalPages = Math.max(1, Math.ceil(totalCount / limit))
-      const resolvedPage = Math.min(currentPage, totalPages)
-      const pages = filteredRows
-        .slice((resolvedPage - 1) * limit, resolvedPage * limit)
-        .map(mapPage)
 
       return {
-        pages,
+        pages: rows.map(mapPage),
         page: resolvedPage,
-        pageSize: limit,
+        pageSize: urlSearchLimit,
         totalCount,
         totalPages,
       }

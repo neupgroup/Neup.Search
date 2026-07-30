@@ -36,8 +36,10 @@ export type PaginatedSites = {
 
 export type PaginatedSitePages = {
   pages: Page[]
-  lastVisibleId: string | null
-  firstVisibleId: string | null
+  page: number
+  pageSize: number
+  totalCount: number
+  totalPages: number
 }
 
 export async function addSite(prevState: any, formData: FormData) {
@@ -129,12 +131,12 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
   }
 }
 
-export async function getPagesForSite(siteId: string, startAfterDocId?: string): Promise<PaginatedSitePages> {
+export async function getPagesForSite(siteId: string, page?: number, pageSize?: number): Promise<PaginatedSitePages> {
   try {
-    return await getPagesForDomain(siteId, startAfterDocId)
+    return await getPagesForDomain(siteId, page, pageSize)
   } catch (error) {
     await logError(error, "getPagesForSite")
-    return { pages: [], lastVisibleId: null, firstVisibleId: null }
+    return { pages: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 1 }
   }
 }
 

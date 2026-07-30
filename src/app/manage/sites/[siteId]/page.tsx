@@ -7,20 +7,36 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { notFound } from "next/navigation"
+import { notFound, redirect } from "next/navigation"
 import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, JavascriptCrawlButton } from "./client"
+
+function readPositiveInteger(value: string | string[] | undefined, fallback: number) {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  const parsed = Number.parseInt(rawValue || "", 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function buildPagesLink(siteId: string, page: number, pageSize: number) {
+  return `/manage/sites/${siteId}?page=${page}&pageSize=${pageSize}`
+}
 
 export default async function SiteDetailPage({ params, searchParams }: { params: Promise<{ siteId: string }>, searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const resolvedParams = await params;
   const resolvedSearchParams = await searchParams;
-  const startAfter = resolvedSearchParams.startAfter as string | undefined;
+  const requestedPage = readPositiveInteger(resolvedSearchParams.page, 1)
+  const requestedPageSize = readPositiveInteger(resolvedSearchParams.pageSize, 20)
   const site = await getSiteById(resolvedParams.siteId)
   
   if (!site) {
     notFound()
   }
   
-  const { pages, lastVisibleId } = await getPagesForSite(resolvedParams.siteId, startAfter)
+  const pagination = await getPagesForSite(resolvedParams.siteId, requestedPage, requestedPageSize)
+  const { pages, page, pageSize, totalCount, totalPages } = pagination
+
+  if (requestedPage !== page || requestedPageSize !== pageSize) {
+    redirect(buildPagesLink(resolvedParams.siteId, page, pageSize))
+  }
 
 
   return (
@@ -138,13 +154,18 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           </Table>
         </CardContent>
          <CardFooter>
-            <div className="flex justify-end gap-2 w-full">
-                <Link href={`/manage/sites/${resolvedParams.siteId}`}>
-                    <Button variant="outline" disabled={!startAfter}>Previous</Button>
+            <div className="flex items-center justify-between gap-4 w-full">
+                <p className="text-sm text-muted-foreground">
+                    Page {page} of {totalPages} | {totalCount.toLocaleString()} pages | {pageSize} per page
+                </p>
+                <div className="flex justify-end gap-2">
+                <Link href={buildPagesLink(resolvedParams.siteId, Math.max(1, page - 1), pageSize)}>
+                    <Button variant="outline" disabled={page <= 1}>Previous</Button>
                 </Link>
-                <Link href={`/manage/sites/${resolvedParams.siteId}?startAfter=${lastVisibleId}`}>
-                    <Button variant="outline" disabled={!lastVisibleId || pages.length < 20}>Next</Button>
+                <Link href={buildPagesLink(resolvedParams.siteId, Math.min(totalPages, page + 1), pageSize)}>
+                    <Button variant="outline" disabled={page >= totalPages}>Next</Button>
                 </Link>
+                </div>
             </div>
         </CardFooter>
       </Card>

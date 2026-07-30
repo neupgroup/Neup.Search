@@ -49,8 +49,10 @@ export type PaginatedDomains = {
 
 export type PaginatedDomainPages = {
   pages: ManagedPage[]
-  lastVisibleId: string | null
-  firstVisibleId: string | null
+  page: number
+  pageSize: number
+  totalCount: number
+  totalPages: number
 }
 
 export type CrawlIssue = {
@@ -1509,12 +1511,17 @@ export async function getManagedDomainById(siteId: string): Promise<ManagedDomai
   return domain ? mapDomainToSite(domain) : null
 }
 
-export async function getPagesForDomain(siteId: string, startAfterDocId?: string): Promise<PaginatedDomainPages> {
+export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20): Promise<PaginatedDomainPages> {
+  const resolvedPageSize = Math.min(100, Math.max(10, Math.floor(pageSize)))
+  const totalCount = await prisma.page.count({ where: { domainId: siteId } })
+  const totalPages = Math.max(1, Math.ceil(totalCount / resolvedPageSize))
+  const resolvedPage = Math.min(Math.max(1, Math.floor(page)), totalPages)
+
   const rows = await prisma.page.findMany({
     where: { domainId: siteId },
     orderBy: { url: "asc" },
-    take: 20,
-    ...(startAfterDocId ? { cursor: { id: startAfterDocId }, skip: 1 } : {}),
+    skip: (resolvedPage - 1) * resolvedPageSize,
+    take: resolvedPageSize,
     include: { domain: { select: { domain: true, name: true } } },
   })
 
@@ -1533,8 +1540,10 @@ export async function getPagesForDomain(siteId: string, startAfterDocId?: string
 
   return {
     pages,
-    lastVisibleId: pages[pages.length - 1]?.id || null,
-    firstVisibleId: pages[0]?.id || null,
+    page: resolvedPage,
+    pageSize: resolvedPageSize,
+    totalCount,
+    totalPages,
   }
 }
 
