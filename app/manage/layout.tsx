@@ -30,12 +30,13 @@ function ManageLayoutContent({
   const searchParams = useSearchParams()
   const router = useRouter()
   const selectedPropertyId = searchParams.get("property") || undefined
+  const managePathname = pathname.replace(/^\/search/, '') || '/'
 
   useEffect(() => {
     if (
-      pathname === "/manage/properties" ||
-      pathname === "/manage/properties/add" ||
-      pathname === "/manage/links"
+      pathname === "/search/manage/properties" ||
+      pathname === "/search/manage/properties/add" ||
+      pathname === "/search/manage/links"
     ) return
     if (selectedPropertyId) return
 
@@ -76,7 +77,7 @@ function ManageLayoutContent({
                   href={buildManageHref(link.href)}
                   className={cn(
                     "flex items-center gap-3 rounded-xl px-3 py-2.5 text-muted-foreground transition-all hover:bg-muted hover:text-primary",
-                    (pathname === link.href || (link.href !== "/manage" && pathname.startsWith(link.href))) &&
+                    (managePathname === link.href || (link.href !== "/manage" && managePathname.startsWith(link.href))) &&
                       "bg-muted text-primary"
                   )}
                 >

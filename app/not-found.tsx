@@ -38,7 +38,7 @@ export default function NotFound() {
                 Go to Home
               </Button>
             </Link>
-            <Link href="/search" className="block">
+            <Link href="/" className="block">
               <Button variant="outline" className="w-full">
                 <Search className="mr-2 h-4 w-4" />
                 Open Search

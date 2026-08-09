@@ -5,7 +5,7 @@ import { redirect } from "next/navigation"
 export async function search(formData: FormData) {
   const query = formData.get("query") as string
   if (query) {
-    redirect(`/search?q=${encodeURIComponent(query)}`)
+    redirect(`/query?q=${encodeURIComponent(query)}`)
   } else {
     redirect('/')
   }
