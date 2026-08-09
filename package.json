@@ -3,14 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack --port 7327",
-    "build": "next build",
-    "start": "next start --port 7327",
+    "setup": "rm -rf core && rm -rf logica && rm -rf neup.core && rm -rf neup.logica && git clone https://github.com/neupgroup/neup.core && git clone https://github.com/neupgroup/neup.logica && mv neup.core core && mv neup.logica logica",
+    
+    "prebuild": "npm run setup && npx prisma generate",
+    "predev": "npm run setup",
+
+    "dev": "next dev --turbopack --experimental-https --port 25683",
+    "build": "npx prisma generate && npx next build",
+    "start": "next start --port 25683",
+    "postinstall": "patch-package",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@genkit-ai/googleai": "^1.14.1",
