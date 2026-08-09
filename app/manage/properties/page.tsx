@@ -10,7 +10,7 @@ import { PropertiesExplorer } from "@/components/properties-explorer"
 import Link from "next/link"
 import { ArrowRight, Plus } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
-import { getPaginatedPropertyOptions } from "../../../../services/neupbot"
+import { getPaginatedPropertyOptions } from "@/services/neupbot"
 
 export const dynamic = "force-dynamic"
 

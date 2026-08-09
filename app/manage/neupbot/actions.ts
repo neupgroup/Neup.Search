@@ -1,7 +1,7 @@
 "use server"
 
 import { logError } from "@/lib/logging"
-import { getActiveNeupbotCrawls } from "../../../../services/neupbot"
+import { getActiveNeupbotCrawls } from "@/services/neupbot"
 
 export async function getLiveNeupbotCrawls() {
   try {

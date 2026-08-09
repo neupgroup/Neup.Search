@@ -29,7 +29,7 @@ import type {
   ManagedPage,
   PropertyDashboard,
   PropertyLinkPreview,
-} from "../../services/neupbot"
+} from "@/services/neupbot"
 
 function formatStatusVariant(status: ManagedPage["status"], statusCode: number | null) {
   if (statusCode && statusCode >= 400) return "destructive" as const

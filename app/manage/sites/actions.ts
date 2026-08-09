@@ -20,7 +20,7 @@ import {
   runJavascriptCrawler,
   summarizeDomain,
   type ManagedDomain,
-} from "../../../../services/neupbot"
+} from "@/services/neupbot"
 
 const DomainSchema = z.object({
   url: z.string()

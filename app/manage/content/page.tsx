@@ -4,7 +4,7 @@ import {
   classifyContentSlug,
   getContentItemsByFileTypeSlug,
   type ContentKind,
-} from "../../../../services/neupbot"
+} from "@/services/neupbot"
 
 const contentTags: Array<{ label: string; href: string }> = [
   { label: "image", href: "/manage/content?type=image" },

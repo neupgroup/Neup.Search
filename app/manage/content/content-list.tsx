@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import type { ContentItem } from "../../../../services/neupbot"
+import type { ContentItem } from "@/services/neupbot"
 import { ContentFilterBar } from "./content-filter-bar"
 
 function ContentPreview({ item }: { item: ContentItem }) {

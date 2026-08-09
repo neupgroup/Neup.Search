@@ -19,7 +19,7 @@ import {
 import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"
-import { getPageIssues, type PageIssue } from "../../../../../services/neupbot"
+import { getPageIssues, type PageIssue } from "@/services/neupbot"
 
 function getIssueKindLabel(kind: PageIssue["kind"]) {
   if (kind === "link") return "Link"

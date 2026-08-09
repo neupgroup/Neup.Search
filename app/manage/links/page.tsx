@@ -18,7 +18,7 @@ import {
   getManagedLinks,
   type ManagedLinkItem,
   type ManagedLinkType,
-} from "../../../../services/neupbot"
+} from "@/services/neupbot"
 
 const validLinkTypes: ManagedLinkType[] = ["incoming", "outgoing", "internal", "tel", "mailto"]
 

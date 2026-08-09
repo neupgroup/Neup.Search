@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
 import type { Prisma } from "@prisma/client"
-import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "../../../../services/neupbot"
+import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
 
 export type Page = {
   id: string

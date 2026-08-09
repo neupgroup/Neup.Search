@@ -3,7 +3,7 @@ import { notFound } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { getContentItemById } from "../../../../../services/neupbot"
+import { getContentItemById } from "@/services/neupbot"
 
 function readQueryParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value
