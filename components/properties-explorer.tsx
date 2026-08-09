@@ -58,7 +58,9 @@ function PropertySelector({
   description,
   search,
   showSearch,
+  searchPlaceholder,
   selectedCardOnly,
+  hideSelectedCard,
   wrapInCard,
   showSelectField,
   pagination,
@@ -72,7 +74,9 @@ function PropertySelector({
   description?: string
   search?: string
   showSearch: boolean
+  searchPlaceholder?: string
   selectedCardOnly: boolean
+  hideSelectedCard: boolean
   wrapInCard: boolean
   showSelectField: boolean
   pagination?: {
@@ -88,12 +92,15 @@ function PropertySelector({
 }) {
   const propertyHrefBase = cardsPath || basePath
   const hasLeadingCard = Boolean(leadingCard)
-  const visibleProperties = selectedCardOnly && selectedPropertyId
+  const orderedProperties = selectedCardOnly && selectedPropertyId
     ? [
         ...properties.filter((property) => property.id === selectedPropertyId),
         ...properties.filter((property) => property.id !== selectedPropertyId),
       ]
     : properties
+  const visibleProperties = hideSelectedCard && selectedPropertyId
+    ? orderedProperties.filter((property) => property.id !== selectedPropertyId)
+    : orderedProperties
 
   const content = (
     <div className="space-y-4">
@@ -128,7 +135,7 @@ function PropertySelector({
       {showSearch ? (
         <div className="relative flex-1 md:max-w-md">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <SearchInput placeholder="Search sites..." />
+          <SearchInput placeholder={searchPlaceholder || "Search sites..."} />
         </div>
       ) : null}
 
@@ -520,8 +527,10 @@ export function PropertiesExplorer({
   description = "Select a domain to view its pages, indexed pages, crawl errors, links, and content samples.",
   search,
   showSearch = false,
+  searchPlaceholder,
   showDashboard = true,
   selectedCardOnly = false,
+  hideSelectedCard = false,
   wrapSelectorInCard = true,
   showSelectField = true,
   pagination,
@@ -536,8 +545,10 @@ export function PropertiesExplorer({
   description?: string
   search?: string
   showSearch?: boolean
+  searchPlaceholder?: string
   showDashboard?: boolean
   selectedCardOnly?: boolean
+  hideSelectedCard?: boolean
   wrapSelectorInCard?: boolean
   showSelectField?: boolean
   pagination?: {
@@ -569,7 +580,9 @@ export function PropertiesExplorer({
         description={description}
         search={search}
         showSearch={showSearch}
+        searchPlaceholder={searchPlaceholder}
         selectedCardOnly={selectedCardOnly}
+        hideSelectedCard={hideSelectedCard}
         wrapInCard={wrapSelectorInCard}
         showSelectField={showSelectField}
         pagination={pagination}

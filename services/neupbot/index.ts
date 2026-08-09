@@ -1481,32 +1481,52 @@ export async function getPaginatedPropertyOptions(input?: {
       }
     : undefined
 
+  const totalCount = await prisma.domain.count({ where })
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const page = Math.min(Math.max(1, Math.floor(input?.page ?? 1)), totalPages)
+  const selectedPropertyId = input?.selectedPropertyId
+  const selectedDomain = selectedPropertyId
+    ? await prisma.domain.findFirst({
+        where: {
+          id: selectedPropertyId,
+          ...(where ?? {}),
+        },
+        include: { _count: { select: { pages: true } } },
+      })
+    : null
+  const hasSelectedDomain = Boolean(selectedDomain)
+  const shouldPinSelectedDomain = hasSelectedDomain && page === 1
+  const skip = hasSelectedDomain
+    ? Math.max(0, (page - 1) * pageSize - 1)
+    : (page - 1) * pageSize
+
   const domains = await prisma.domain.findMany({
-    where,
+    where: hasSelectedDomain
+      ? {
+          AND: [
+            where ?? {},
+            { id: { not: selectedPropertyId } },
+          ],
+        }
+      : where,
     orderBy: [
       { name: "asc" },
       { domain: "asc" },
     ],
+    skip,
+    take: shouldPinSelectedDomain ? Math.max(0, pageSize - 1) : pageSize,
     include: { _count: { select: { pages: true } } },
   })
 
-  const mappedDomains = await Promise.all(
-    domains.map(async (domain) => enrichManagedDomainBranding(mapDomainToSite(domain))),
-  )
-  const orderedDomains = input?.selectedPropertyId
-    ? [
-        ...mappedDomains.filter((property) => property.id === input.selectedPropertyId),
-        ...mappedDomains.filter((property) => property.id !== input.selectedPropertyId),
-      ]
-    : mappedDomains
-
-  const totalCount = orderedDomains.length
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
-  const page = Math.min(Math.max(1, Math.floor(input?.page ?? 1)), totalPages)
-  const start = (page - 1) * pageSize
+  const properties = await Promise.all([
+    ...(shouldPinSelectedDomain && selectedDomain
+      ? [enrichManagedDomainBranding(mapDomainToSite(selectedDomain))]
+      : []),
+    ...domains.map(async (domain) => enrichManagedDomainBranding(mapDomainToSite(domain))),
+  ])
 
   return {
-    properties: orderedDomains.slice(start, start + pageSize),
+    properties,
     page,
     pageSize,
     totalCount,

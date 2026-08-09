@@ -6,7 +6,9 @@ Manage-scoped property selector and property dashboard.
 ::end
 */
 
+import { Suspense } from "react"
 import { PropertiesExplorer } from "@/components/properties-explorer"
+import { ManagePropertiesSkeleton } from "@/components/manage-properties-skeleton"
 import Link from "next/link"
 import { ArrowRight, Plus } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
@@ -24,17 +26,18 @@ function readPageParam(value: string | string[] | undefined) {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 1
 }
 
-export default async function ManagePropertiesPage({
-  searchParams,
+async function ManagePropertiesContent({
+  selectedPropertyId,
+  search,
+  page,
 }: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+  selectedPropertyId?: string
+  search?: string
+  page: number
 }) {
-  const resolvedSearchParams = await searchParams
-  const selectedPropertyId = readQueryParam(resolvedSearchParams.property)
-  const search = readQueryParam(resolvedSearchParams.q)
   const pagination = await getPaginatedPropertyOptions({
     search,
-    page: readPageParam(resolvedSearchParams.page),
+    page,
     pageSize: 10,
     selectedPropertyId,
   })
@@ -51,8 +54,10 @@ export default async function ManagePropertiesPage({
         description=""
         search={search}
         showSearch
+        searchPlaceholder="Search site"
         showDashboard={false}
         selectedCardOnly
+        hideSelectedCard
         wrapSelectorInCard={false}
         showSelectField={false}
         leadingCard={
@@ -88,5 +93,27 @@ export default async function ManagePropertiesPage({
         }}
       />
     </div>
+  )
+}
+
+export default async function ManagePropertiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+  const resolvedSearchParams = await searchParams
+  const selectedPropertyId = readQueryParam(resolvedSearchParams.property)
+  const search = readQueryParam(resolvedSearchParams.q)
+  const page = readPageParam(resolvedSearchParams.page)
+  const suspenseKey = `${search || ""}:${page}:${selectedPropertyId || ""}`
+
+  return (
+    <Suspense key={suspenseKey} fallback={<ManagePropertiesSkeleton />}>
+      <ManagePropertiesContent
+        selectedPropertyId={selectedPropertyId}
+        search={search}
+        page={page}
+      />
+    </Suspense>
   )
 }
