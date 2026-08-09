@@ -8,9 +8,9 @@
     "prebuild": "npm run setup && npx prisma generate",
     "predev": "npm run setup",
 
-    "dev": "next dev --turbopack --experimental-https --port 25683",
+    "dev": "next dev --turbopack --experimental-https --port 7327",
     "build": "npx prisma generate && npx next build",
-    "start": "next start --port 25683",
+    "start": "next start --port 7327",
     "postinstall": "patch-package",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
