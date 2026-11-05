@@ -198,7 +198,7 @@ function PropertySelector({
       {pagination && pagination.totalCount > 0 ? (
         <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-muted-foreground">
-            Page {pagination.page} of {pagination.totalPages} | {pagination.totalCount.toLocaleString()} sites
+            Page {pagination.page} of {pagination.totalPages}
           </div>
           <div className="flex gap-2">
             <Link

@@ -22,7 +22,7 @@ export default function HeaderS2V2({
   showThemeToggle = true,
 }: HeaderS2V2Props) {
   return (
-    <header className="sticky top-0 z-50 flex h-16 items-center gap-4 border-b bg-white px-4 shadow-[0_18px_48px_hsl(var(--foreground)/0.122)] backdrop-blur supports-[backdrop-filter]:bg-white/95 dark:shadow-[0_18px_48px_hsl(0_0%_0%/0.317)]">
+    <header className="sticky top-0 z-50 flex h-16 items-center gap-4 border-b bg-white px-4 shadow-[0_12px_28px_hsl(var(--foreground)/0.16)] backdrop-blur supports-[backdrop-filter]:bg-white/95 dark:shadow-[0_12px_28px_hsl(0_0%_0%/0.32)]">
       <div className="mx-auto flex w-full max-w-[1440px] items-center gap-4">
         <NeupSearchBrand />
         {showSearch ? (

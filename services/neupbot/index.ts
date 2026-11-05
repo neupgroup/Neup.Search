@@ -3,7 +3,7 @@ import { isIP } from "node:net"
 import { chromium, type Page as PlaywrightPage } from "playwright"
 import type { Prisma } from "@prisma/client"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
-import { logError } from "@/lib/logging"
+import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
 import { getFavicon } from "../properties/getFavicon"
 

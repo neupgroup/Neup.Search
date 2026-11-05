@@ -32,13 +32,13 @@ export default function NotFound() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Link href="/" className="block">
+            <Link href="/home" className="block">
               <Button className="w-full">
                 <Home className="mr-2 h-4 w-4" />
                 Go to Home
               </Button>
             </Link>
-            <Link href="/" className="block">
+            <Link href="/home" className="block">
               <Button variant="outline" className="w-full">
                 <Search className="mr-2 h-4 w-4" />
                 Open Search

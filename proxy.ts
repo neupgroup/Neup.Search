@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 
-const appBasePath = "/search"
-
 // Send manage pages without a selected project to the project picker.
 export function proxy(request: NextRequest) {
-  const pathname = request.nextUrl.pathname.replace(/^\/search(?=\/|$)/, "") || "/"
+  const pathname = request.nextUrl.pathname || "/"
   const isManageRoute = pathname === "/manage" || pathname.startsWith("/manage/")
   const isProjectPickerRoute =
     pathname === "/manage/projects" || pathname.startsWith("/manage/projects/")
@@ -16,7 +14,7 @@ export function proxy(request: NextRequest) {
   }
 
   const redirectUrl = request.nextUrl.clone()
-  redirectUrl.pathname = `${appBasePath}/manage/projects`
+  redirectUrl.pathname = "/manage/projects"
   redirectUrl.search = ""
 
   return NextResponse.redirect(redirectUrl)

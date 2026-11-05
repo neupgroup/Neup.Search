@@ -11,7 +11,7 @@
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 import * as cheerio from 'cheerio';
-import { logError } from '@/lib/logging';
+import { logError } from '@/lib/logica-logging';
 
 const SummarizeSiteInputSchema = z.object({
   url: z.string().url().describe('The URL of the website to summarize.'),

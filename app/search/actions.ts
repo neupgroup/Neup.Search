@@ -4,7 +4,7 @@
 
 import { answerQuestion } from "@/ai/flows/answer-question"
 import { prisma } from "@/lib/prisma"
-import { logError } from "@/lib/logging";
+import { logError } from "@/lib/logica-logging";
 
 export type SearchResult = {
   title: string;

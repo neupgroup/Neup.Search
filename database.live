@@ -1,0 +1,62 @@
+Table: account, Model: Account
+Fields:
+> id: string;
+> type: string;
+> neupId: string;
+> displayImage: string, nullable;
+> displayName: string;
+> lastActive: timestamp, nullable;
+
+Table: domains, Model: Domain
+Fields:
+> id: string;
+> domain: string, unique;
+> name: string;
+> lastCrawled: timestamp, nullable;
+> status: string;
+> addedOn: timestamp, default: now;
+> details: json, nullable;
+
+Table: sitemap, Model: Sitemap
+Fields:
+> id: string, default: cuid;
+> siteId: string;
+.. references domains.id;
+> sitemapUrl: string;
+> referrer: string, nullable;
+> addedOn: timestamp, default: now;
+
+Table: page, Model: Page
+Fields:
+> id: string, default: cuid;
+> domainId: string;
+.. references domains.id;
+> url: string;
+> title: string, nullable;
+> description: string, nullable;
+> type: string;
+> data: json[], default: empty;
+> details: json, nullable;
+> fullContent: text, nullable;
+> status: string;
+> statusCode: int, nullable;
+> addedOn: timestamp, default: now;
+> lastCrawled: timestamp, nullable;
+
+Table: Links, Model: Link
+Fields:
+> id: string, default: cuid;
+> linkFrom: string;
+> linkTo: string;
+> fromDomain: string;
+.. references domains.id;
+> toDomain: string;
+.. references domains.id;
+> sourcePageId: string, nullable;
+> targetPageId: string, nullable;
+> sourceType: string, nullable;
+> anchorText: string, nullable;
+> altText: string, nullable;
+> titleText: string, nullable;
+> rel: string, nullable;
+> firstCrawlOn: timestamp, default: now;

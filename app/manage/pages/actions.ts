@@ -1,7 +1,7 @@
 "use server"
 
 import { prisma } from "@/lib/prisma"
-import { logError } from "@/lib/logging"
+import { logError } from "@/lib/logica-logging"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { summarizePageContent } from "@/ai/flows/summarize-page-flow"

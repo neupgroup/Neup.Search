@@ -19,7 +19,7 @@ export default async function SearchPage({
   searchParams?: Promise<{ [key:string]: string | string[] | undefined }>
 }) {
   const resolvedSearchParams = await searchParams;
-  const query = (resolvedSearchParams?.q as string) || ''
+  const query = (resolvedSearchParams?.query as string) || ''
 
   return (
     <div className="flex flex-col min-h-screen bg-background">

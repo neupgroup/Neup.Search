@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { z } from "zod"
 import type { Page } from "../pages/actions"
-import { logError } from "@/lib/logging"
+import { logError } from "@/lib/logica-logging"
 import {
   cancelDomainCrawl,
   createDomainForCrawl,

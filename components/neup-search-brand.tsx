@@ -4,7 +4,7 @@ import { Search } from "lucide-react"
 export function NeupSearchBrand({ inverse = false }: { inverse?: boolean }) {
   return (
     <Link
-      href="/"
+      href="/home"
       aria-label="Neup.Search home"
       className={`inline-flex items-center gap-2 font-semibold tracking-tight ${inverse ? "text-primary-foreground" : "text-foreground"}`}
     >
