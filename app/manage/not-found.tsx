@@ -32,7 +32,7 @@ export default function ManageNotFound() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Link href="/manage/properties" className="block">
+            <Link href="/manage/projects" className="block">
               <Button className="w-full">
                 <Globe className="mr-2 h-4 w-4" />
                 Go to Properties

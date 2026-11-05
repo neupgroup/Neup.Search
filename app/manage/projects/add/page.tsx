@@ -1,5 +1,5 @@
 /*
-::neup.documentation::manage-properties-add-page
+::neup.documentation::manage-projects-add-page
 
 Manage route for creating a new crawled property.
 
@@ -12,7 +12,7 @@ function readQueryParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value
 }
 
-export default async function ManagePropertiesAddPage({
+export default async function ManageProjectsAddPage({
   searchParams,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>

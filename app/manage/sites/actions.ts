@@ -76,8 +76,8 @@ export async function addSite(prevState: any, formData: FormData) {
     }
   }
 
-  revalidatePath("/manage/properties")
-  redirect(`/manage/properties?property=${encodeURIComponent(createdDomainId)}`)
+  revalidatePath("/manage/projects")
+  redirect(`/manage/projects?property=${encodeURIComponent(createdDomainId)}`)
 }
 
 export async function summarizeSiteAction(formData: FormData) {
@@ -214,8 +214,8 @@ export async function deleteSite(formData: FormData) {
   }
 
   revalidatePath("/manage/pages")
-  revalidatePath("/manage/properties")
-  redirect("/manage/properties")
+  revalidatePath("/manage/projects")
+  redirect("/manage/projects")
 }
 
 export async function deleteLinksForPage() {

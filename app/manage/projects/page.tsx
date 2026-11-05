@@ -1,5 +1,5 @@
 /*
-::neup.documentation::manage-properties-page
+::neup.documentation::manage-projects-page
 
 Manage-scoped property selector and property dashboard.
 
@@ -26,7 +26,7 @@ function readPageParam(value: string | string[] | undefined) {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 1
 }
 
-async function ManagePropertiesContent({
+async function ManageProjectsContent({
   selectedPropertyId,
   search,
   page,
@@ -48,7 +48,7 @@ async function ManagePropertiesContent({
         properties={pagination.properties}
         selectedPropertyId={selectedPropertyId}
         dashboard={null}
-        basePath="/manage/properties"
+        basePath="/manage/projects"
         cardsPath="/manage"
         title=""
         description=""
@@ -61,7 +61,7 @@ async function ManagePropertiesContent({
         wrapSelectorInCard={false}
         showSelectField={false}
         leadingCard={
-          <Link href="/manage/properties/add" className="block">
+          <Link href="/manage/projects/add" className="block">
             <Card className="w-full rounded-t-lg rounded-b-none border-border/60 transition-colors hover:bg-muted/40">
               <CardContent className="p-3">
                 <div className="flex items-center justify-between gap-3">
@@ -87,7 +87,7 @@ async function ManagePropertiesContent({
           totalPages: pagination.totalPages,
           totalCount: pagination.totalCount,
           pageSize: pagination.pageSize,
-          basePath: "/manage/properties",
+          basePath: "/manage/projects",
           search,
           selectedPropertyId,
         }}
@@ -96,7 +96,7 @@ async function ManagePropertiesContent({
   )
 }
 
-export default async function ManagePropertiesPage({
+export default async function ManageProjectsPage({
   searchParams,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
@@ -109,7 +109,7 @@ export default async function ManagePropertiesPage({
 
   return (
     <Suspense key={suspenseKey} fallback={<ManagePropertiesSkeleton />}>
-      <ManagePropertiesContent
+      <ManageProjectsContent
         selectedPropertyId={selectedPropertyId}
         search={search}
         page={page}

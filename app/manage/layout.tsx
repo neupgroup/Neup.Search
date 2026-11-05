@@ -34,13 +34,13 @@ function ManageLayoutContent({
 
   useEffect(() => {
     if (
-      pathname === "/search/manage/properties" ||
-      pathname === "/search/manage/properties/add" ||
+      pathname === "/search/manage/projects" ||
+      pathname === "/search/manage/projects/add" ||
       pathname === "/search/manage/links"
     ) return
     if (selectedPropertyId) return
 
-    router.replace("/manage/properties")
+    router.replace("/manage/projects")
   }, [pathname, router, selectedPropertyId])
 
   const buildManageHref = (href: string) => {
@@ -51,7 +51,7 @@ function ManageLayoutContent({
   }
 
   const navLinks: { href: string; label: string; icon: any; badge?: string }[] = [
-    { href: "/manage/properties", label: "Properties", icon: Globe },
+    { href: "/manage/projects", label: "Projects", icon: Globe },
     { href: "/manage", label: "Dashboard", icon: Home },
     { href: "/manage/neupbot", label: "NeupBot", icon: Bot },
     { href: "/manage/pages", label: "Indexed Pages", icon: FileText },

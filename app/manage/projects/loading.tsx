@@ -1,5 +1,5 @@
 /*
-::neup.documentation::manage-properties-loading
+::neup.documentation::manage-projects-loading
 
 Loading entrypoint for the manage properties page.
 
