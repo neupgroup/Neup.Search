@@ -4,7 +4,7 @@ import { Toaster } from '@neup/components/ui/toast'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'NeupSearch',
+  title: 'Neup.Search',
   description: 'Search the web, images, videos, and more.',
 };
 

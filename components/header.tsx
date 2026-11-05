@@ -9,7 +9,7 @@ export default function Header({ initialQuery }: { initialQuery?: string }) {
       <div className="container mx-auto flex h-16 max-w-6xl items-center gap-4 px-4">
         <Link href="/" className="flex items-center gap-2" prefetch={false}>
           <MountainIcon className="h-6 w-6 text-primary" />
-          <span className="sr-only">NeupSearch</span>
+          <span className="sr-only">Neup.Search</span>
         </Link>
         <div className="flex-1">
           <SearchBar initialQuery={initialQuery} />

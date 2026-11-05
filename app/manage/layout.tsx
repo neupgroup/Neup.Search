@@ -1,7 +1,6 @@
 "use client"
 
 import type { ReactNode } from "react"
-import Link from "next/link"
 import { Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import {
@@ -20,14 +19,14 @@ import {
 import HeaderSidebarLayout, {
   type SidebarLink,
 } from "@neup/components/layout/headerSidebar.v1"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { NeupSearchBrand } from "@/components/neup-search-brand"
 
 function ManageLayoutContent({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams()
   const selectedPropertyId = searchParams.get("property") || undefined
 
   const buildManageHref = (href: string) => {
-    if (href === "#" || !selectedPropertyId || href === "/manage/neupbot") return href
+    if (href.startsWith("#") || !selectedPropertyId || href === "/manage/neupbot") return href
     return `${href}${href.includes("?") ? "&" : "?"}property=${encodeURIComponent(selectedPropertyId)}`
   }
 
@@ -40,17 +39,13 @@ function ManageLayoutContent({ children }: { children: ReactNode }) {
     { href: buildManageHref("/manage/content"), label: "Content", icon: Files },
     { href: buildManageHref("/manage/errorrs"), label: "Crawl Errors", icon: AlertTriangle },
     { href: buildManageHref("/manage/system/error"), label: "System Errors", icon: AlertTriangle },
-    { href: "#", label: "Indexing", icon: Package },
-    { href: "#", label: "Users", icon: Users },
-    { href: "#", label: "Analytics", icon: LineChart },
+    { href: "#indexing", label: "Indexing", icon: Package },
+    { href: "#users", label: "Users", icon: Users },
+    { href: "#analytics", label: "Analytics", icon: LineChart },
   ]
 
   const headerLinks = [
-    <Link key="brand" href="/" className="flex items-center gap-2 font-semibold text-primary-foreground">
-      <Package className="h-6 w-6" />
-      <span>NeupSearch</span>
-    </Link>,
-    <ThemeToggle key="theme" />,
+    <NeupSearchBrand key="brand" />,
   ]
 
   return (
