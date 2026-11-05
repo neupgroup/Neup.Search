@@ -1,7 +1,7 @@
 /*
-::neup.documentation::manage-properties-skeleton
+::neup.documentation::manage-projects-skeleton
 
-Reusable loading skeleton for the manage properties explorer.
+Reusable loading skeleton for projects management.
 
 ::end
 */
@@ -15,7 +15,7 @@ export function ManagePropertiesSkeleton() {
   return (
     <div className="space-y-8">
       <div className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">Property Explorer</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Projects Management</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
           Choose a domain and inspect its pages, indexed pages, links, crawl errors, and content from one place.
         </p>
@@ -36,9 +36,9 @@ export function ManagePropertiesSkeleton() {
                     <Plus className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 space-y-2">
-                    <div className="font-semibold">Add your Property</div>
+                    <div className="font-semibold">Add a Project</div>
                     <div className="text-sm text-muted-foreground">
-                      Add your property to see how people see!
+                      Add a website to crawl and monitor.
                     </div>
                   </div>
                 </div>

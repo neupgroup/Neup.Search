@@ -1,7 +1,7 @@
 /*
 ::neup.documentation::manage-projects-loading
 
-Loading entrypoint for the manage properties page.
+Loading entrypoint for the projects management page.
 
 ::end
 */

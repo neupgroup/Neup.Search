@@ -1,111 +1,75 @@
-
 "use client"
 
+import type { ReactNode } from "react"
 import Link from "next/link"
-import { Suspense, useEffect } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import {
-  Home,
-  Package,
-  FileText,
-  Link2,
-  Users,
-  LineChart,
-  Globe,
   AlertTriangle,
-  Files,
   Bot,
+  FileText,
+  Files,
+  Globe,
+  Home,
+  Link2,
+  LineChart,
+  Package,
+  Users,
 } from "lucide-react"
 
-import { cn } from "@/lib/utils"
-import { Badge } from "@neup/components/ui/badge"
-import HeaderS2V2 from "@/components/header.s2.v2"
+import HeaderSidebarLayout, {
+  type SidebarLink,
+} from "@neup/components/layout/headerSidebar.v1"
+import { ThemeToggle } from "@/components/theme-toggle"
 
-function ManageLayoutContent({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  const pathname = usePathname()
+function ManageLayoutContent({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams()
-  const router = useRouter()
   const selectedPropertyId = searchParams.get("property") || undefined
-  const managePathname = pathname.replace(/^\/search/, '') || '/'
-
-  useEffect(() => {
-    if (
-      pathname === "/search/manage/projects" ||
-      pathname === "/search/manage/projects/add" ||
-      pathname === "/search/manage/links"
-    ) return
-    if (selectedPropertyId) return
-
-    router.replace("/manage/projects")
-  }, [pathname, router, selectedPropertyId])
 
   const buildManageHref = (href: string) => {
-    if (href === "#" || !selectedPropertyId) return href
-    if (href === "/manage/neupbot") return href
-    const separator = href.includes("?") ? "&" : "?"
-    return `${href}${separator}property=${encodeURIComponent(selectedPropertyId)}`
+    if (href === "#" || !selectedPropertyId || href === "/manage/neupbot") return href
+    return `${href}${href.includes("?") ? "&" : "?"}property=${encodeURIComponent(selectedPropertyId)}`
   }
 
-  const navLinks: { href: string; label: string; icon: any; badge?: string }[] = [
-    { href: "/manage/projects", label: "Projects", icon: Globe },
-    { href: "/manage", label: "Dashboard", icon: Home },
-    { href: "/manage/neupbot", label: "NeupBot", icon: Bot },
-    { href: "/manage/pages", label: "Indexed Pages", icon: FileText },
-    { href: "/manage/links", label: "Links", icon: Link2 },
-    { href: "/manage/content", label: "Content", icon: Files },
-    { href: "/manage/errorrs", label: "Crawl Errors", icon: AlertTriangle },
-    { href: "/manage/system/error", label: "System Errors", icon: AlertTriangle },
+  const sidebarLinks: SidebarLink[] = [
+    { href: buildManageHref("/manage/projects"), label: "Projects", icon: Globe },
+    { href: buildManageHref("/manage"), label: "Dashboard", icon: Home },
+    { href: buildManageHref("/manage/neupbot"), label: "NeupBot", icon: Bot },
+    { href: buildManageHref("/manage/pages"), label: "Indexed Pages", icon: FileText },
+    { href: buildManageHref("/manage/links"), label: "Links", icon: Link2 },
+    { href: buildManageHref("/manage/content"), label: "Content", icon: Files },
+    { href: buildManageHref("/manage/errorrs"), label: "Crawl Errors", icon: AlertTriangle },
+    { href: buildManageHref("/manage/system/error"), label: "System Errors", icon: AlertTriangle },
     { href: "#", label: "Indexing", icon: Package },
     { href: "#", label: "Users", icon: Users },
     { href: "#", label: "Analytics", icon: LineChart },
   ]
 
+  const headerLinks = [
+    <Link key="brand" href="/" className="flex items-center gap-2 font-semibold text-primary-foreground">
+      <Package className="h-6 w-6" />
+      <span>NeupSearch</span>
+    </Link>,
+    <ThemeToggle key="theme" />,
+  ]
+
   return (
-    <div className="min-h-screen bg-white">
-      <HeaderS2V2 />
-      <div className="mx-auto w-full max-w-[1440px]">
-        <aside className="fixed bottom-0 left-[max(0px,calc((100vw-1440px)/2))] top-16 hidden w-[220px] overflow-y-auto border-r border-border/60 bg-white md:block lg:w-[280px]">
-          <div className="flex min-h-full flex-col gap-2 px-4 pt-4 pb-4 lg:px-5 lg:pt-8 lg:pb-5">
-            <nav className="grid items-start gap-1 text-sm font-medium">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.label}
-                  href={buildManageHref(link.href)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-muted-foreground transition-all hover:bg-muted hover:text-primary",
-                    (managePathname === link.href || (link.href !== "/manage" && managePathname.startsWith(link.href))) &&
-                      "bg-muted text-primary"
-                  )}
-                >
-                  <link.icon className="h-4 w-4" />
-                  {link.label}
-                  {link.badge && (
-                    <Badge className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                      {link.badge}
-                    </Badge>
-                  )}
-                </Link>
-              ))}
-            </nav>
-          </div>
-        </aside>
-        <main className="flex min-h-0 flex-col gap-4 bg-white p-4 md:pl-[252px] lg:gap-6 lg:p-8 lg:pl-[312px]">
-          {children}
-        </main>
-      </div>
-    </div>
+    <HeaderSidebarLayout
+      sidebarlinks={sidebarLinks}
+      pofileBarInfo={{
+        href: "/manage/projects",
+        displayName: "Projects Management",
+        displayImage: null,
+        neupid: null,
+      }}
+      headerLinks={headerLinks}
+    >
+      {children}
+    </HeaderSidebarLayout>
   )
 }
 
-export default function ManageLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function ManageLayout({ children }: { children: ReactNode }) {
   return (
     <Suspense fallback={null}>
       <ManageLayoutContent>{children}</ManageLayoutContent>

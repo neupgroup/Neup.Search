@@ -526,6 +526,8 @@ export function PropertiesExplorer({
   cardsPath,
   title = "Choose Property",
   description = "Select a domain to view its pages, indexed pages, crawl errors, links, and content samples.",
+  heading = "Property Explorer",
+  headingDescription = "Choose a domain and inspect its pages, indexed pages, links, crawl errors, and content from one place.",
   search,
   showSearch = false,
   searchPlaceholder,
@@ -544,6 +546,8 @@ export function PropertiesExplorer({
   cardsPath?: string
   title?: string
   description?: string
+  heading?: string
+  headingDescription?: string
   search?: string
   showSearch?: boolean
   searchPlaceholder?: string
@@ -566,9 +570,9 @@ export function PropertiesExplorer({
   return (
     <div className="space-y-8">
       <div className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">Property Explorer</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">{heading}</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
-          Choose a domain and inspect its pages, indexed pages, links, crawl errors, and content from one place.
+          {headingDescription}
         </p>
       </div>
 

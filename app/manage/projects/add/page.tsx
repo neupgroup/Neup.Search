@@ -22,9 +22,9 @@ export default async function ManageProjectsAddPage({
 
   return (
     <ManagedPropertyCreateForm
-      title="Add Property"
-      description="Enter the domain name you want to crawl and index."
-      submitLabel="Add and Crawl"
+      title="Add a Project"
+      description="Add a website to crawl, index, and monitor."
+      submitLabel="Add and Crawl Project"
       propertyId={propertyId}
     />
   )

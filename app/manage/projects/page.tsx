@@ -50,6 +50,8 @@ async function ManageProjectsContent({
         dashboard={null}
         basePath="/manage/projects"
         cardsPath="/manage"
+        heading="Projects Management"
+        headingDescription="Manage the websites you crawl, index, and monitor."
         title=""
         description=""
         search={search}
@@ -70,9 +72,9 @@ async function ManageProjectsContent({
                       <Plus className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 space-y-1">
-                      <div className="font-semibold">Add your Property</div>
+                      <div className="font-semibold">Add a Project</div>
                       <div className="text-sm text-muted-foreground">
-                        Add your property to see how people see!
+                        Add a website to crawl and monitor.
                       </div>
                     </div>
                   </div>
