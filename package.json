@@ -12,7 +12,7 @@
     "postbuild": "npm run setup -- --mode postbuild",
     "predev": "npm run setup -- --mode predev",
 
-    "dev": "next dev --turbopack --experimental-https --port 7327",
+    "dev": "next dev --turbopack --experimental-https --hostname dev.neupgroup.com --port 7327",
     "build": "npx prisma generate && npx next build",
     "start": "next start --port 7327",
     "lint": "next lint",
