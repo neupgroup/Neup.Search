@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server"
-import { jsonResponse, toProjectSlug } from "@/lib/bridge-api"
+import { jsonMethodNotAllowed, jsonResponse, toProjectSlug, withJsonErrors } from "@/lib/bridge-api"
 import { prisma } from "@/lib/prisma"
 import { readDetails } from "@/services/neupbot"
 
 // List projects, optionally filtered by a search query.
-export async function GET(request: NextRequest) {
+export const GET = withJsonErrors(async (request: NextRequest) => {
   const query = request.nextUrl.searchParams.get("q")?.trim()
   const projects = await prisma.domain.findMany({
     where: query
@@ -38,4 +38,10 @@ export async function GET(request: NextRequest) {
       }
     }),
   })
-}
+})
+
+export const POST = jsonMethodNotAllowed
+export const PUT = jsonMethodNotAllowed
+export const PATCH = jsonMethodNotAllowed
+export const DELETE = jsonMethodNotAllowed
+export const OPTIONS = jsonMethodNotAllowed

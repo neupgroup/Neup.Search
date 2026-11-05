@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server"
-import { jsonError, jsonResponse, parseResourceSlug, toProjectSlug } from "@/lib/bridge-api"
+import { jsonError, jsonMethodNotAllowed, jsonResponse, parseResourceSlug, toProjectSlug, withJsonErrors } from "@/lib/bridge-api"
 import { prisma } from "@/lib/prisma"
 import { readDetails } from "@/services/neupbot"
 
 // Return crawl status for a project after validating its slug and ID pair.
-export async function GET(_request: NextRequest, context: { params: Promise<{ slug: string }> }) {
+export const GET = withJsonErrors(async (_request: NextRequest, context: { params: Promise<{ slug: string }> }) => {
   const { slug } = await context.params
   const resource = parseResourceSlug(slug)
   if (!resource) return jsonError("Project slug must use the slug--id format.", 400)
@@ -30,4 +30,10 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ sl
     currentActivity: details.currentActivity || null,
     currentCrawlUrl: details.currentCrawlUrl || null,
   })
-}
+})
+
+export const POST = jsonMethodNotAllowed
+export const PUT = jsonMethodNotAllowed
+export const PATCH = jsonMethodNotAllowed
+export const DELETE = jsonMethodNotAllowed
+export const OPTIONS = jsonMethodNotAllowed

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { jsonError, jsonResponse, parseResourceSlug, toProjectSlug } from "@/lib/bridge-api"
+import { jsonError, jsonMethodNotAllowed, jsonResponse, parseResourceSlug, toProjectSlug, withJsonErrors } from "@/lib/bridge-api"
 import { prisma } from "@/lib/prisma"
 
 // Parse an ISO-compatible datetime query value.
@@ -10,7 +10,7 @@ function parseDateTime(value: string | null): Date | null {
 }
 
 // Return pages added to the project during the requested time interval.
-export async function GET(request: NextRequest, context: { params: Promise<{ slug: string }> }) {
+export const GET = withJsonErrors(async (request: NextRequest, context: { params: Promise<{ slug: string }> }) => {
   const { slug } = await context.params
   const resource = parseResourceSlug(slug)
   if (!resource) return jsonError("Project slug must use the slug--id format.", 400)
@@ -58,4 +58,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ slu
     count: additions.length,
     additions,
   })
-}
+})
+
+export const POST = jsonMethodNotAllowed
+export const PUT = jsonMethodNotAllowed
+export const PATCH = jsonMethodNotAllowed
+export const DELETE = jsonMethodNotAllowed
+export const OPTIONS = jsonMethodNotAllowed

@@ -5,6 +5,8 @@ import type { Prisma } from "@prisma/client"
 import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
+import { crawlPageToHtml } from "@/services/crawl/html"
+import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
 import { getFavicon } from "../properties/getFavicon"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
@@ -1987,7 +1989,11 @@ async function crawlStoredPage({
         image: $("meta[property=\"og:image\"]").attr("content") || null,
         url: $("meta[property=\"og:url\"]").attr("content") || null,
       },
-      images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
+      images: $("img").map((_: number, el: cheerio.Element) => ({
+        src: $(el).attr("src") || $(el).attr("data-src") || $(el).attr("data-lazy-src"),
+        alt: $(el).attr("alt") || "",
+        caption: $(el).closest("figure").find("figcaption").first().text().trim() || null,
+      })).get().filter((img: { src?: string | null }) => !!img.src),
       videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
       audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
       iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
@@ -2068,7 +2074,7 @@ export async function runPageCrawler(pageId: string) {
     siteId: page.domainId,
     pageId: page.id,
     pageUrl: page.url,
-    rootHostname: getDomainName(page.domain.domain),
+    rootHostname: page.domain.domain,
     disallow,
     sitemapReferencesByUrl,
     stats,
@@ -2087,6 +2093,141 @@ export async function runPageCrawler(pageId: string) {
       },
     },
   })
+}
+
+// Crawl and persist one requested page without processing its discovered URLs.
+export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
+  if (!siteId || !pageUrl) {
+    throw new Error("siteId and pageUrl are required.")
+  }
+
+  const domain = await prisma.domain.findUnique({
+    where: { id: siteId },
+    select: { id: true, domain: true, details: true },
+  })
+  if (!domain) throw new Error("Domain not found.")
+
+  const pageId = await saveDiscoveredPage({ siteId, url: pageUrl, source: "seed", kind: "page" })
+  if (!pageId) throw new Error("The requested URL cannot be crawled.")
+
+  const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
+  await updateDomainDetails(siteId, {
+    currentActivity: `Crawling ${pageUrl}`,
+    currentCrawlUrl: pageUrl,
+  })
+
+  await crawlStoredPage({
+    siteId,
+    pageId,
+    pageUrl,
+    rootHostname: domain.domain,
+    disallow: [],
+    sitemapReferencesByUrl: new Map<string, Set<string>>(),
+    stats,
+  })
+
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true },
+  })
+  const currentDetails = readDetails(domain.details)
+  await prisma.domain.update({
+    where: { id: siteId },
+    data: {
+      status: page?.status === "Error" ? "Error" : "Active",
+      lastCrawled: new Date(),
+      details: {
+        ...currentDetails,
+        currentActivity: "Single page crawl complete.",
+        currentCrawlUrl: "",
+        pagesCrawled: 1,
+        internalResourcesFound: stats.internalResourcesFound,
+        externalResourcesFound: stats.externalResourcesFound,
+      },
+    },
+  })
+
+  return page
+}
+
+// Render and persist one requested page with JavaScript enabled, without crawling its links.
+export async function runSinglePageJavascriptCrawler(siteId: string, pageUrl: string) {
+  if (!siteId || !pageUrl) {
+    throw new Error("siteId and pageUrl are required.")
+  }
+
+  const domain = await prisma.domain.findUnique({
+    where: { id: siteId },
+    select: { id: true, domain: true, details: true },
+  })
+  if (!domain) throw new Error("Domain not found.")
+
+  const pageId = await saveDiscoveredPage({ siteId, url: pageUrl, source: "seed", kind: "page" })
+  if (!pageId) throw new Error("The requested URL cannot be crawled.")
+
+  await updateDomainDetails(siteId, {
+    currentActivity: `Rendering ${pageUrl}`,
+    currentCrawlUrl: pageUrl,
+  })
+
+  const extraction = await crawlPageToHtml(pageUrl, {
+    javascriptEnabled: true,
+    userAgent: neupbotUserAgent,
+  })
+  const markdown = extractMarkdownFromHtml(extraction.html, extraction.url).markdown
+  const $ = cheerio.load(extraction.html)
+  const statusCode = extraction.statusCode ?? null
+  const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
+  const images = $("img").map((_: number, image: cheerio.Element) => ({
+    src: $(image).attr("src") || $(image).attr("data-src") || $(image).attr("data-lazy-src") || $(image).attr("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
+    alt: $(image).attr("alt") || "",
+    caption: $(image).closest("figure").find("figcaption").first().text().trim() || null,
+  })).get().filter((image: { src?: string }) => !!image.src)
+
+  await saveCrawledPage(pageId, {
+    title: extraction.title || null,
+    description: $("meta[name='description']").attr("content") || null,
+    type: "text/html",
+    data: [{
+      html: extraction.html,
+      bodyHtml: extraction.html,
+      markdown,
+      renderedWithJavaScript: true,
+      images,
+      videos: $("video").map((_: number, video: cheerio.Element) => $(video).attr("src")).get().filter(Boolean),
+      audios: $("audio").map((_: number, audio: cheerio.Element) => $(audio).attr("src")).get().filter(Boolean),
+      iframes: $("iframe").map((_: number, iframe: cheerio.Element) => $(iframe).attr("src")).get().filter(Boolean),
+    }],
+    fullContent: $("body").text().replace(/\s\s+/g, " ").trim(),
+    status: statusCode !== null && statusCode >= 400 ? "Error" : "Indexed",
+    statusCode,
+    details: { contentType: "text/html", renderedWithJavaScript: true },
+  })
+
+  await saveDiscoveredLinksAndPages(siteId, extraction.url, extractPageLinks($), new Map(), domain.domain, stats, pageId)
+  await saveDiscoveredAssets(siteId, extraction.url, extractPageAssets($), new Map(), domain.domain, stats, pageId)
+
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true },
+  })
+  await prisma.domain.update({
+    where: { id: siteId },
+    data: {
+      status: statusCode !== null && statusCode >= 400 ? "Error" : "Active",
+      lastCrawled: new Date(),
+      details: {
+        ...readDetails(domain.details),
+        currentActivity: "Single page JavaScript crawl complete.",
+        currentCrawlUrl: "",
+        pagesCrawled: 1,
+        internalResourcesFound: stats.internalResourcesFound,
+        externalResourcesFound: stats.externalResourcesFound,
+      },
+    },
+  })
+
+  return page
 }
 
 async function crawlPendingPagesForDomain(
@@ -2182,7 +2323,7 @@ export async function resumePendingCrawler(siteId: string) {
 
     const robotsTxt = await getRobotsTxt(domain.domain)
     const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
-    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, getDomainName(domain.domain), disallow, stats)
+    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, domain.domain, disallow, stats)
 
     await prisma.domain.update({
       where: { id: siteId },
