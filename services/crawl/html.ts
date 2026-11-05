@@ -1,4 +1,5 @@
 import { chromium } from "playwright"
+import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
 
 export type CrawlHtmlOptions = {
   javascriptEnabled?: boolean
@@ -35,6 +36,39 @@ async function triggerLazyContent(page: import("playwright").Page): Promise<void
   })
 }
 
+// Promote loaded and lazy image URLs into src attributes before serializing the rendered page.
+async function compileImageSources(page: import("playwright").Page): Promise<void> {
+  await page.evaluate(() => {
+    const isUsableImageUrl = (value: string | null): value is string => {
+      if (!value) return false
+      const normalized = value.trim()
+      if (!normalized || /^(javascript|blob):/i.test(normalized)) return false
+      if (/^data:image\/(gif|png|webp);base64,/i.test(normalized) && normalized.length < 500) return false
+      return true
+    }
+
+    for (const image of Array.from(document.images)) {
+      const candidates = [
+        image.currentSrc,
+        image.getAttribute("data-src"),
+        image.getAttribute("data-lazy-src"),
+        image.getAttribute("data-original"),
+        image.getAttribute("data-url"),
+        image.getAttribute("src"),
+      ]
+      const source = candidates.find(isUsableImageUrl)
+      if (!source) continue
+
+      try {
+        const absoluteSource = new URL(source, document.baseURI).href
+        if (/^https?:/i.test(absoluteSource)) image.setAttribute("src", absoluteSource)
+      } catch {
+        // Leave invalid source values untouched for downstream filtering.
+      }
+    }
+  })
+}
+
 // Render one page in Chromium and return its complete post-JavaScript document HTML.
 export async function crawlPageToHtml(url: string, options: CrawlHtmlOptions = {}): Promise<CrawlHtmlResult> {
   const browser = await chromium.launch({ headless: true })
@@ -53,12 +87,16 @@ export async function crawlPageToHtml(url: string, options: CrawlHtmlOptions = {
     if (options.javascriptEnabled !== false) {
       await page.waitForLoadState("networkidle", { timeout: options.timeoutMs ?? 30_000 }).catch(() => undefined)
       await triggerLazyContent(page)
+      await compileImageSources(page)
     }
 
+    const finalUrl = page.url()
+    const renderedHtml = await page.evaluate(() => document.documentElement.outerHTML)
+
     return {
-      url: page.url(),
+      url: finalUrl,
       title: await page.title(),
-      html: await page.evaluate(() => document.documentElement.outerHTML),
+      html: makeHtmlLinksAbsolute(renderedHtml, finalUrl),
       statusCode: response?.status() ?? null,
     }
   } finally {

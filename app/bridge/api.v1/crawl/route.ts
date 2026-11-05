@@ -8,9 +8,9 @@ import {
   runSinglePageJavascriptCrawler,
 } from "@/services/neupbot"
 import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
-import { extractPageLinksFromHtml } from "@/services/crawl/links"
+import { extractPageLinksFromHtml, makeHtmlLinksAbsolute } from "@/services/crawl/links"
 
-const crawlResponseFormats = ["markdown", "html", "links", "images"] as const
+const crawlResponseFormats = ["markdown", "html", "raw", "links", "images"] as const
 type CrawlResponseFormat = typeof crawlResponseFormats[number]
 type CrawlMode = "native" | "modern"
 
@@ -78,16 +78,22 @@ async function buildRequestedCrawlResult(
     ? firstData as Record<string, unknown>
     : {}
   const result: Record<string, unknown> = {}
+  const baseUrl = typeof captured.finalUrl === "string" ? captured.finalUrl : page.url
+  const html = typeof captured.html === "string" ? captured.html : ""
+  const fixedHtml = makeHtmlLinksAbsolute(html, baseUrl)
 
   if (formats.includes("markdown")) {
-    result.markdown = extractMarkdownFromHtml(typeof captured.html === "string" ? captured.html : "", page.url).markdown
+    result.markdown = extractMarkdownFromHtml(fixedHtml, baseUrl).markdown
   }
   if (formats.includes("html")) {
-    result.html = typeof captured.html === "string" ? captured.html : ""
+    result.html = fixedHtml
+  }
+  if (formats.includes("raw")) {
+    result.raw = fixedHtml
   }
   if (formats.includes("links")) {
     if (mode === "modern") {
-      result.links = extractPageLinksFromHtml(typeof captured.html === "string" ? captured.html : "", page.url)
+      result.links = extractPageLinksFromHtml(fixedHtml, baseUrl)
     } else {
       const links = await prisma.link.findMany({
         where: { sourcePageId: page.id, sourceType: "anchor" },
@@ -106,7 +112,7 @@ async function buildRequestedCrawlResult(
       try {
         return [{
           caption: typeof image.caption === "string" ? image.caption : "",
-          imageurl: new URL(image.src, page.url).toString(),
+          imageurl: new URL(image.src, baseUrl).toString(),
         }]
       } catch {
         return []

@@ -1978,6 +1978,7 @@ async function crawlStoredPage({
     const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
     const data = [{
       html,
+      finalUrl: response.url || pageUrl,
       keywords: $("meta[name=\"keywords\"]").attr("content") || "",
       bodyHtml: $("body").html() || "",
       httpHeaders: Object.fromEntries(response.headers.entries()),
@@ -2190,6 +2191,7 @@ export async function runSinglePageJavascriptCrawler(siteId: string, pageUrl: st
     type: "text/html",
     data: [{
       html: extraction.html,
+      finalUrl: extraction.url,
       bodyHtml: extraction.html,
       markdown,
       renderedWithJavaScript: true,
