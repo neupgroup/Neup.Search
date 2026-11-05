@@ -1,0 +1,18 @@
+{
+    "native.database": 
+    {
+        "type": "postgresql",
+        "interactionLayer": "prisma",
+        "isRequired": true
+    },
+    "native.cache": 
+    {
+        "type": "redis",
+        "interactionLayer": "ioredis",
+        "isRequired": true
+    },
+    "native.intelligence":
+    {
+        "isRequired": true
+    }
+}
