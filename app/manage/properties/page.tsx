@@ -11,7 +11,7 @@ import { PropertiesExplorer } from "@/components/properties-explorer"
 import { ManagePropertiesSkeleton } from "@/components/manage-properties-skeleton"
 import Link from "next/link"
 import { ArrowRight, Plus } from "lucide-react"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent } from "@neup/components/ui/card"
 import { getPaginatedPropertyOptions } from "@/services/neupbot"
 
 export const dynamic = "force-dynamic"

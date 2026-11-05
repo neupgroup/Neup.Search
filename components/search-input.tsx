@@ -4,7 +4,7 @@
 import type { ComponentProps } from "react"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { useDebouncedCallback } from "use-debounce"
-import { Input } from "@/components/ui/input"
+import { Input } from "@neup/components/ui/input"
 
 type SearchInputProps = {
   placeholder: string

@@ -8,8 +8,8 @@ Reusable loading skeleton for the manage properties explorer.
 
 import { ArrowRight, Plus, Search } from "lucide-react"
 
-import { Card, CardContent } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Card, CardContent } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 
 export function ManagePropertiesSkeleton() {
   return (

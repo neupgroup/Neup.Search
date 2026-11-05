@@ -19,9 +19,10 @@ import {
 
 import { SearchInput } from "@/components/search-input"
 import { SiteAppIcon } from "@/components/site-app-icon"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@neup/components/ui/badge"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@neup/components/ui/select"
 import type {
   ContentItem,
   CrawlIssue,
@@ -115,18 +116,18 @@ function PropertySelector({
         <form action={basePath} className="flex flex-col gap-3 md:flex-row">
           <div className="relative flex-1">
             <Globe className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <select
-              name="property"
-              defaultValue={selectedPropertyId || ""}
-              className="flex h-11 w-full rounded-lg border border-input bg-white pl-10 pr-3 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Select a property</option>
-              {properties.map((property) => (
-                <option key={property.id} value={property.id}>
-                  {property.name || property.url}
-                </option>
-              ))}
-            </select>
+            <Select name="property" defaultValue={selectedPropertyId || ""}>
+              <SelectTrigger className="h-11 rounded-lg bg-background pl-10">
+                <SelectValue placeholder="Select a property" />
+              </SelectTrigger>
+              <SelectContent>
+                {properties.map((property) => (
+                  <SelectItem key={property.id} value={property.id}>
+                    {property.name || property.url}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button type="submit">View Property</Button>
         </form>

@@ -10,9 +10,9 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ExternalLink, Link2 } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@neup/components/ui/badge"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent } from "@neup/components/ui/card"
 import { LinksFilterBar } from "./links-filter-bar"
 import {
   getManagedLinks,

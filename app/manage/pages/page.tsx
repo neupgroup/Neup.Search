@@ -1,9 +1,9 @@
 
 
 import { Suspense } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { ExternalLink, Search } from "lucide-react"
 import { getPages, type Page } from "./actions"
 import Link from "next/link"

@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Activity, ExternalLink } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@neup/components/ui/badge"
+import { Card, CardContent } from "@neup/components/ui/card"
 import { getLiveNeupbotCrawls } from "./actions"
 
 type CrawlActivity = Awaited<ReturnType<typeof getLiveNeupbotCrawls>>[number]

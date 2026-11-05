@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
+import { Badge } from "@neup/components/ui/badge"
 import HeaderS2V2 from "@/components/header.s2.v2"
 
 function ManageLayoutContent({

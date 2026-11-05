@@ -1,15 +1,15 @@
 
 import { Suspense } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@neup/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@neup/components/ui/table"
+import { Badge } from "@neup/components/ui/badge"
 import { getErrors, type SystemError } from "./actions"
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/components/ui/accordion"
+} from "@neup/components/ui/accordion"
 
 
 function PageContent() {

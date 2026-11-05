@@ -9,8 +9,8 @@ Manage-scoped 404 page for missing management routes.
 import Link from "next/link"
 import { ArrowLeft, Globe, ShieldAlert } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent } from "@neup/components/ui/card"
 
 export default function ManageNotFound() {
   return (

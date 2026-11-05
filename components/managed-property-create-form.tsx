@@ -11,17 +11,17 @@ Shared manage form for creating a new crawled property.
 import { useActionState } from "react"
 import { useFormStatus } from "react-dom"
 import { addSite } from "@/app/manage/sites/actions"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription } from "@neup/components/ui/alert"
+import { Button } from "@neup/components/ui/button"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "@neup/components/ui/card"
+import { Input } from "@neup/components/ui/input"
+import { Label } from "@neup/components/ui/label"
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus()

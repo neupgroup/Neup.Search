@@ -2,9 +2,9 @@
 
 import { notFound } from "next/navigation"
 import { crawlPageAction, deletePageAction, getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
+import { Button } from "@neup/components/ui/button"
+import { Badge } from "@neup/components/ui/badge"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+} from "@neup/components/ui/alert-dialog"
 import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"

@@ -1,8 +1,8 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
 
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@neup/components/ui/badge"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
 import { getContentItemById } from "@/services/neupbot"
 
 function readQueryParam(value: string | string[] | undefined) {

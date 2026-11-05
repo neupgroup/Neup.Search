@@ -2,7 +2,7 @@ import { Suspense } from 'react'
 import HeaderS2V2 from '@/components/header.s2.v2'
 import AIQA from '@/components/ai-qa'
 import SearchResultsTabs from '@/components/search-results-tabs'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton } from '@neup/components/ui/skeleton'
 import { performSearch } from '../search/actions'
 
 export const dynamic = 'force-dynamic'

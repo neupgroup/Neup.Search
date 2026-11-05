@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent } from "@neup/components/ui/card"
 import { getCrawlIssues } from "@/services/neupbot"
 
 export const dynamic = "force-dynamic"

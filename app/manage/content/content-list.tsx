@@ -1,6 +1,6 @@
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent } from "@neup/components/ui/card"
 import type { ContentItem } from "@/services/neupbot"
 import { ContentFilterBar } from "./content-filter-bar"
 

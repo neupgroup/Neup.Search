@@ -4,8 +4,8 @@
 import { useEffect, useState } from "react"
 import { useFormStatus } from "react-dom"
 import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, crawlJavascriptSite, resumePendingCrawl, getSiteCrawlStatus, deleteSite } from "@/app/manage/sites/actions"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import { Button } from "@neup/components/ui/button"
+import { Badge } from "@neup/components/ui/badge"
 import { Braces, Loader2 } from "lucide-react"
 import {
   AlertDialog,
@@ -17,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+} from "@neup/components/ui/alert-dialog"
 
 function SubmitButton({ children, variant = "default", ...props }: { children: React.ReactNode, variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" | null | undefined, [key: string]: any }) {
     const { pending } = useFormStatus()

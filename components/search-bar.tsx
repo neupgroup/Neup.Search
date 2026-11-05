@@ -4,8 +4,8 @@ import { useState, useRef, type DragEvent, type ChangeEvent } from "react"
 import Image from "next/image"
 import { Search, Camera, UploadCloud, X } from "lucide-react"
 import { search } from "@/lib/actions"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
+import { Input } from "@neup/components/ui/input"
+import { Button } from "@neup/components/ui/button"
 
 export function SearchBar({ initialQuery = "" }: { initialQuery?: string }) {
   const [image, setImage] = useState<File | null>(null)
@@ -89,7 +89,7 @@ export function SearchBar({ initialQuery = "" }: { initialQuery?: string }) {
         </div>
       )}
       
-      <input 
+      <Input
         type="file"
         ref={fileInputRef}
         onChange={(e: ChangeEvent<HTMLInputElement>) => handleFileChange(e.target.files)}

@@ -1,5 +1,5 @@
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@neup/components/ui/card"
 import { getDashboardStats } from "./sites/actions"
 
 export default async function ManagePage() {

@@ -2,9 +2,9 @@
 
 import { useActionState } from "react"
 import { useFormStatus } from "react-dom"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
+import { Badge } from "@neup/components/ui/badge"
 import { viewCrawlerDataAction, type LiveCrawlerDataState } from "../actions"
 
 function SubmitButton() {

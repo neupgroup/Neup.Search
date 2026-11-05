@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react"
 import { Search } from "lucide-react"
 
 import { SearchInput } from "@/components/search-input"
-import { Badge } from "@/components/ui/badge"
+import { Badge } from "@neup/components/ui/badge"
 
 export function LinksFilterBar({
   tags,

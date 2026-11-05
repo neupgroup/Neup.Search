@@ -3,9 +3,9 @@
 import { useEffect, useState, useTransition } from "react"
 import { Sparkles } from "lucide-react"
 import { generateAnswer } from "@/app/search/actions"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@neup/components/ui/skeleton"
+import { Card, CardContent, CardHeader, CardTitle } from "@neup/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@neup/components/ui/alert"
 
 export default function AIQA({ query }: { query: string }) {
   const [isPending, startTransition] = useTransition()

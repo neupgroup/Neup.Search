@@ -3,22 +3,22 @@
 
 import Image from "next/image"
 import { FileText, Filter, Video } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
+import { Button } from "@neup/components/ui/button"
+import { Card } from "@neup/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@neup/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from "@neup/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@neup/components/ui/tabs"
 import { type SearchResult } from "@/app/search/actions"
 
 const imageResults = Array(12).fill(0).map((_, i) => ({

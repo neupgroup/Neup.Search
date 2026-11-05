@@ -9,8 +9,8 @@ Application-wide 404 page for unknown routes.
 import Link from "next/link"
 import { Compass, Home, Search } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@neup/components/ui/button"
+import { Card, CardContent } from "@neup/components/ui/card"
 
 export default function NotFound() {
   return (
