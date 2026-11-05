@@ -1975,6 +1975,7 @@ async function crawlStoredPage({
     const pageTitle = $("title").text() || $("h1").first().text()
     const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
     const data = [{
+      html,
       keywords: $("meta[name=\"keywords\"]").attr("content") || "",
       bodyHtml: $("body").html() || "",
       httpHeaders: Object.fromEntries(response.headers.entries()),
