@@ -6,7 +6,6 @@ import { summarizeSite } from "@/ai/flows/summarize-site-flow"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
 import { crawlPageToHtml } from "@/services/crawl/html"
-import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
 import { getFavicon } from "../properties/getFavicon"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
@@ -954,6 +953,113 @@ function extractPageAssets($: cheerio.Root): PageAsset[] {
   return assets.filter((asset) => asset.url)
 }
 
+// Store the temporary, compact crawl payload requested for each crawled page.
+function buildPageData(
+  html: string | null,
+  headers: Record<string, string>,
+  $: cheerio.Root | null,
+  additionalLinks: Array<{ link: string; caption: string }> = [],
+): Prisma.InputJsonValue[] {
+  if (!$) {
+    return [{ html, headers, links: additionalLinks, images: [], videos: [] }]
+  }
+
+  const links = [...extractPageLinks($).map((link) => ({
+    link: link.url,
+    caption: cleanLinkText(link.anchorText) || "",
+  })), ...additionalLinks]
+  const images = $("img").map((_: number, image: cheerio.Element) => ({
+    src: $(image).attr("src") || $(image).attr("data-src") || $(image).attr("data-lazy-src") || "",
+    caption: cleanLinkText($(image).attr("alt") || $(image).closest("figure").find("figcaption").first().text()) || "",
+  })).get().filter((image: { src: string }) => Boolean(image.src))
+  const videos = $("video[src], video source[src]").map((_: number, video: cheerio.Element) => ({
+    video: $(video).attr("src") || "",
+    caption: cleanLinkText($(video).attr("title") || $(video).closest("video").attr("title") || $(video).closest("video").attr("aria-label")) || "",
+  })).get().filter((video: { video: string }) => Boolean(video.video))
+
+  return [{ html, headers, links, images, videos }]
+}
+
+type JavaScriptRequirementAssessment = {
+  score: number
+  wordCount: number
+  meaningfulTextLength: number
+  paragraphCount: number
+  headingCount: number
+  imageCount: number
+  signals: string[]
+}
+
+// Score the HTTP response for signs that meaningful page content requires JavaScript.
+function assessJavaScriptRequirement(html: string): JavaScriptRequirementAssessment {
+  const $ = cheerio.load(html)
+  const mainText = $("main, article, [role='main']").first().text().replace(/\s+/g, " ").trim()
+  const rootSelectors = ["#root", "#app", "#__next", "#nuxt"]
+  const emptyApplicationRoot = rootSelectors.some((selector) => {
+    const root = $(selector).first()
+    return root.length > 0 && root.text().replace(/\s+/g, " ").trim().length < 50
+  })
+  const loadingPlaceholder = $(".loading, .skeleton, .spinner, [class*='loading'], [class*='skeleton'], [class*='spinner']").length > 0 ||
+    /\bloading(?:\.\.\.)?\b/i.test($("body").text())
+  const noScriptRequiresJavaScript = $("noscript").toArray().some((element) =>
+    /(?:requires?\s+javascript|enable\s+javascript|javascript\s+(?:is\s+)?required)/i.test($(element).text()),
+  )
+  const cleanedDocument = cheerio.load(html)
+  cleanedDocument("script, style, noscript, svg, nav, footer, header").remove()
+  const meaningfulText = cleanedDocument("body").text().replace(/\s+/g, " ").trim()
+  const wordCount = meaningfulText.match(/[\p{L}\p{N}]+/gu)?.length || 0
+  const paragraphCount = cleanedDocument("p").filter((_, paragraph) => cleanedDocument(paragraph).text().trim().length > 0).length
+  const headingCount = cleanedDocument("h1, h2, h3, h4, h5, h6").filter((_, heading) => cleanedDocument(heading).text().trim().length > 0).length
+  const imageCount = cleanedDocument("img").length
+  const structuredDataText = $("script[type='application/ld+json']").text()
+  const hasStructuredPropertyOrArticleData = /"@type"\s*:\s*(?:\[\s*)?"(?:Article|NewsArticle|BlogPosting|Product|RealEstateListing|Residence|Place)"/i.test(structuredDataText)
+  const hasMeaningfulMainContent = wordCount >= 100 || (meaningfulText.length >= 500 && (paragraphCount >= 2 || headingCount >= 2))
+  const signals: string[] = []
+  let score = 0
+
+  if (mainText.length < 80) {
+    score += 40
+    signals.push("main-content-empty-or-very-short")
+  }
+  if (emptyApplicationRoot) {
+    score += 25
+    signals.push("empty-application-root")
+  }
+  if (loadingPlaceholder && wordCount < 100) {
+    score += 20
+    signals.push("loading-placeholder-with-little-content")
+  }
+  if (wordCount < 50) {
+    score += 30
+    signals.push("very-low-meaningful-word-count")
+  } else if (wordCount < 100) {
+    score += 15
+    signals.push("low-meaningful-word-count")
+  }
+  if (noScriptRequiresJavaScript) {
+    score += 50
+    signals.push("noscript-requires-javascript")
+  }
+  if (hasStructuredPropertyOrArticleData) {
+    score -= 40
+    signals.push("structured-property-or-article-data")
+  }
+  if (hasMeaningfulMainContent) {
+    score -= 40
+    signals.push("meaningful-content-present")
+  }
+
+  return {
+    score,
+    wordCount,
+    meaningfulTextLength: meaningfulText.length,
+    paragraphCount,
+    headingCount,
+    imageCount,
+    signals,
+  }
+}
+
 function matchesContentTarget(content: { kind: ContentKind; fileType: string }, target: { kind?: ContentKind; fileType?: string }) {
   if (target.kind && content.kind !== target.kind) return false
   return !target.fileType || content.fileType === target.fileType
@@ -981,9 +1087,14 @@ function readContentAssets(data: unknown, sourcePageUrl: string): Array<{ url: s
 
     if ("videos" in entry && Array.isArray(entry.videos)) {
       for (const video of entry.videos) {
-        if (typeof video !== "string") continue
+        const videoUrl = typeof video === "string"
+          ? video
+          : video && typeof video === "object" && "video" in video && typeof video.video === "string"
+            ? video.video
+            : null
+        if (!videoUrl) continue
         try {
-          assets.push({ url: new URL(video, sourcePageUrl).toString() })
+          assets.push({ url: new URL(videoUrl, sourcePageUrl).toString() })
         } catch {
         }
       }
@@ -1878,10 +1989,7 @@ async function crawlStoredPage({
       title: getUrlTitle(pageUrl),
       description: null,
       type: "skipped",
-      data: [{
-        reason: crawledUrls.has(normalizedUrl) ? "Already crawled in this run." : "Blocked by robots.txt.",
-        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
-      }],
+      data: buildPageData(null, {}, null),
       content: null,
       status: "Skipped",
       statusCode: null,
@@ -1903,12 +2011,12 @@ async function crawlStoredPage({
     const redirectLocation = response.headers.get("location")
     if (response.status >= 300 && response.status < 400) {
       const targetUrl = redirectLocation ? new URL(redirectLocation, pageUrl).toString() : null
-      const data = [{
-        contentType,
-        headers: Object.fromEntries(response.headers.entries()),
-        redirectLocation: targetUrl,
-        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
-      }]
+      const data = buildPageData(
+        null,
+        Object.fromEntries(response.headers.entries()),
+        null,
+        targetUrl ? [{ link: targetUrl, caption: "Redirect" }] : [],
+      )
       await saveCrawledPage(pageId, {
         title: null,
         description: null,
@@ -1948,12 +2056,11 @@ async function crawlStoredPage({
     if (!response.ok || !isHtml) {
       const fileSize = !isHtml ? await readStaticFileSize(response) : readContentLength(response.headers)
       const content = classifyContentUrl(pageUrl)
-      const data = [{
-        contentType,
-        headers: Object.fromEntries(response.headers.entries()),
-        fileSize,
-        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
-      }]
+      const data = buildPageData(
+        null,
+        Object.fromEntries(response.headers.entries()),
+        null,
+      )
       await saveCrawledPage(pageId, {
         title: getUrlTitle(pageUrl),
         description: null,
@@ -1973,49 +2080,63 @@ async function crawlStoredPage({
     }
 
     const html = await response.text()
-    const $ = cheerio.load(html)
-    const pageTitle = $("title").text() || $("h1").first().text()
-    const content = $("body").text().replace(/\s\s+/g, " ").trim()
-    const data = [{
-      html,
-      finalUrl: response.url || pageUrl,
-      keywords: $("meta[name=\"keywords\"]").attr("content") || "",
-      bodyHtml: $("body").html() || "",
-      httpHeaders: Object.fromEntries(response.headers.entries()),
-      canonicalUrl: $("link[rel=\"canonical\"]").attr("href") || null,
-      lang: $("html").attr("lang") || null,
-      openGraph: {
-        title: $("meta[property=\"og:title\"]").attr("content") || null,
-        type: $("meta[property=\"og:type\"]").attr("content") || null,
-        image: $("meta[property=\"og:image\"]").attr("content") || null,
-        url: $("meta[property=\"og:url\"]").attr("content") || null,
-      },
-      images: $("img").map((_: number, el: cheerio.Element) => ({
-        src: $(el).attr("src") || $(el).attr("data-src") || $(el).attr("data-lazy-src"),
-        alt: $(el).attr("alt") || "",
-        caption: $(el).closest("figure").find("figcaption").first().text().trim() || null,
-      })).get().filter((img: { src?: string | null }) => !!img.src),
-      videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-      audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-      iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-      sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
-    }]
+    const assessment = assessJavaScriptRequirement(html)
+    let pageHtml = html
+    let pageHeaders = Object.fromEntries(response.headers.entries())
+    let pageDocument = cheerio.load(html)
+    let resolvedPageUrl = response.url || pageUrl
+    let pageStatusCode = response.status
+    let javascriptRendered = false
+
+    if (assessment.score >= 50) {
+      try {
+        const renderedPage = await crawlPageToHtml(resolvedPageUrl, {
+          javascriptEnabled: true,
+          userAgent: neupbotUserAgent,
+        })
+        pageHtml = renderedPage.html
+        pageHeaders = renderedPage.headers
+        pageDocument = cheerio.load(renderedPage.html)
+        resolvedPageUrl = renderedPage.url
+        pageStatusCode = renderedPage.statusCode ?? response.status
+        javascriptRendered = true
+      } catch (renderError) {
+        await logError({ error: renderError, pageUrl: resolvedPageUrl, assessment }, "crawlSite_jsRenderFallback")
+      }
+    }
+
+    const pageTitle = pageDocument("title").text() || pageDocument("h1").first().text()
+    const pageContent = pageDocument("body").text().replace(/\s\s+/g, " ").trim()
+    const data = buildPageData(pageHtml, pageHeaders, pageDocument)
 
     await saveCrawledPage(pageId, {
       title: pageTitle || null,
-      description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
+      description: pageDocument("meta[name=\"description\"]").attr("content") || pageDocument("meta[property=\"og:description\"]").attr("content") || null,
       type: "text/html",
       data,
-      content,
+      content: pageContent,
       status: "Indexed",
-      statusCode: response.status,
+      statusCode: pageStatusCode,
       details: {
         contentType,
+        javascriptRendering: {
+          attempted: assessment.score >= 50,
+          used: javascriptRendered,
+          score: assessment.score,
+          signals: assessment.signals,
+          metrics: {
+            wordCount: assessment.wordCount,
+            meaningfulTextLength: assessment.meaningfulTextLength,
+            paragraphCount: assessment.paragraphCount,
+            headingCount: assessment.headingCount,
+            imageCount: assessment.imageCount,
+          },
+        },
       },
     })
 
-    await saveDiscoveredLinksAndPages(siteId, pageUrl, extractPageLinks($), sitemapReferencesByUrl, rootHostname, stats, pageId)
-    await saveDiscoveredAssets(siteId, pageUrl, extractPageAssets($), sitemapReferencesByUrl, rootHostname, stats, pageId)
+    await saveDiscoveredLinksAndPages(siteId, resolvedPageUrl, extractPageLinks(pageDocument), sitemapReferencesByUrl, rootHostname, stats, pageId)
+    await saveDiscoveredAssets(siteId, resolvedPageUrl, extractPageAssets(pageDocument), sitemapReferencesByUrl, rootHostname, stats, pageId)
     return true
   } catch (fetchError) {
     await logError({ error: fetchError, currentUrl: pageUrl }, "crawlSite_fetch")
@@ -2023,10 +2144,7 @@ async function crawlStoredPage({
       title: getUrlTitle(pageUrl),
       description: null,
       type: "fetch-error",
-      data: [{
-        error: fetchError instanceof Error ? fetchError.message : String(fetchError),
-        sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
-      }],
+      data: buildPageData(null, {}, null),
       content: null,
       status: "Error",
       statusCode: null,
@@ -2175,31 +2293,15 @@ export async function runSinglePageJavascriptCrawler(siteId: string, pageUrl: st
     javascriptEnabled: true,
     userAgent: neupbotUserAgent,
   })
-  const markdown = extractMarkdownFromHtml(extraction.html, extraction.url).markdown
   const $ = cheerio.load(extraction.html)
   const statusCode = extraction.statusCode ?? null
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
-  const images = $("img").map((_: number, image: cheerio.Element) => ({
-    src: $(image).attr("src") || $(image).attr("data-src") || $(image).attr("data-lazy-src") || $(image).attr("srcset")?.split(",")[0]?.trim().split(/\s+/)[0],
-    alt: $(image).attr("alt") || "",
-    caption: $(image).closest("figure").find("figcaption").first().text().trim() || null,
-  })).get().filter((image: { src?: string }) => !!image.src)
 
   await saveCrawledPage(pageId, {
     title: extraction.title || null,
     description: $("meta[name='description']").attr("content") || null,
     type: "text/html",
-    data: [{
-      html: extraction.html,
-      finalUrl: extraction.url,
-      bodyHtml: extraction.html,
-      markdown,
-      renderedWithJavaScript: true,
-      images,
-      videos: $("video").map((_: number, video: cheerio.Element) => $(video).attr("src")).get().filter(Boolean),
-      audios: $("audio").map((_: number, audio: cheerio.Element) => $(audio).attr("src")).get().filter(Boolean),
-      iframes: $("iframe").map((_: number, iframe: cheerio.Element) => $(iframe).attr("src")).get().filter(Boolean),
-    }],
+    data: buildPageData(extraction.html, extraction.headers, $),
     content: $("body").text().replace(/\s\s+/g, " ").trim(),
     status: statusCode !== null && statusCode >= 400 ? "Error" : "Indexed",
     statusCode,
@@ -2559,12 +2661,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
             title: null,
             description: null,
             type: contentType || "unknown",
-            data: [{
-              contentType,
-              headers,
-              renderedWithJavaScript: true,
-              sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-            }],
+            data: buildPageData(null, headers, null),
             content: null,
             status: statusCode !== null && statusCode >= 400 ? "Error" : "Skipped",
             statusCode,
@@ -2584,25 +2681,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
         const $ = cheerio.load(html)
         const pageTitle = $("title").text() || $("h1").first().text()
         const content = $("body").text().replace(/\s\s+/g, " ").trim()
-        const data = [{
-          keywords: $("meta[name=\"keywords\"]").attr("content") || "",
-          bodyHtml: $("body").html() || "",
-          httpHeaders: headers,
-          canonicalUrl: $("link[rel=\"canonical\"]").attr("href") || null,
-          lang: $("html").attr("lang") || null,
-          renderedWithJavaScript: true,
-          openGraph: {
-            title: $("meta[property=\"og:title\"]").attr("content") || null,
-            type: $("meta[property=\"og:type\"]").attr("content") || null,
-            image: $("meta[property=\"og:image\"]").attr("content") || null,
-            url: $("meta[property=\"og:url\"]").attr("content") || null,
-          },
-          images: $("img").map((_: number, el: cheerio.Element) => ({ src: $(el).attr("src"), alt: $(el).attr("alt") })).get().filter((img: { src?: string | null }) => !!img.src),
-          videos: $("video").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-          audios: $("audio").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-          iframes: $("iframe").map((_: number, el: cheerio.Element) => $(el).attr("src")).get().filter(Boolean),
-          sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
-        }]
+        const data = buildPageData(html, headers, $)
         const pageData = {
           domainId: siteId,
           url: currentUrl,
@@ -2963,10 +3042,12 @@ export async function getAllCrawlTargets() {
 function readRedirectTarget(data: unknown): string | undefined {
   if (!Array.isArray(data)) return undefined
   const redirectEntry = data.find((entry) => {
-    return entry && typeof entry === "object" && "redirectLocation" in entry
+    return entry && typeof entry === "object" && "links" in entry && Array.isArray(entry.links)
   })
-  return redirectEntry && typeof redirectEntry === "object" && "redirectLocation" in redirectEntry && typeof redirectEntry.redirectLocation === "string"
-    ? redirectEntry.redirectLocation
+  if (!redirectEntry || typeof redirectEntry !== "object" || !("links" in redirectEntry) || !Array.isArray(redirectEntry.links)) return undefined
+  const redirectLink = redirectEntry.links.find((link) => link && typeof link === "object" && "caption" in link && link.caption === "Redirect" && "link" in link)
+  return redirectLink && typeof redirectLink === "object" && "link" in redirectLink && typeof redirectLink.link === "string"
+    ? redirectLink.link
     : undefined
 }
 
@@ -2974,6 +3055,9 @@ function readPageBodyHtml(data: unknown) {
   if (!Array.isArray(data)) return null
 
   for (const entry of data) {
+    if (entry && typeof entry === "object" && "html" in entry && typeof entry.html === "string") {
+      return entry.html
+    }
     if (entry && typeof entry === "object" && "bodyHtml" in entry && typeof entry.bodyHtml === "string") {
       return entry.bodyHtml
     }

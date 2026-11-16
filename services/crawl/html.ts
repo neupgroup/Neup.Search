@@ -11,6 +11,7 @@ export type CrawlHtmlResult = {
   url: string
   title: string
   html: string
+  headers: Record<string, string>
   statusCode: number | null
 }
 
@@ -97,6 +98,7 @@ export async function crawlPageToHtml(url: string, options: CrawlHtmlOptions = {
       url: finalUrl,
       title: await page.title(),
       html: makeHtmlLinksAbsolute(renderedHtml, finalUrl),
+      headers: response ? await response.allHeaders() : {},
       statusCode: response?.status() ?? null,
     }
   } finally {
