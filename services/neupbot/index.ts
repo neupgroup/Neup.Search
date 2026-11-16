@@ -2,6 +2,7 @@ import * as cheerio from "cheerio"
 import { isIP } from "node:net"
 import { chromium, type Page as PlaywrightPage } from "playwright"
 import type { Prisma } from "@prisma/client"
+import { createNiaResponse } from "@neup/logica/intelligence/responses"
 import { assist } from "@neup/logica/assist"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
@@ -288,6 +289,19 @@ export function normalizeSiteUrl(input: string) {
   url.hash = ""
   if (url.pathname === "/") {
     url.pathname = ""
+  }
+  return url.toString()
+}
+
+// Add HTTPS when a stored site hostname is supplied without a URL scheme.
+function ensureHttpSiteUrl(input: string) {
+  const trimmedInput = input.trim()
+  const absoluteUrl = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmedInput)
+    ? trimmedInput
+    : `https://${trimmedInput}`
+  const url = new URL(absoluteUrl)
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Site URL must use HTTP or HTTPS.")
   }
   return url.toString()
 }
@@ -873,6 +887,45 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       },
     },
   })
+
+  if (pageData.status === "Indexed" && pageData.type === "text/html" && pageData.content?.trim()) {
+    await saveAutomaticPageSummary(pageId, pageData.content)
+  }
+}
+
+// Generate a concise summary directly through the Logica Assist response API.
+export async function generatePageSummary(pageContent: string) {
+  const response = await createNiaResponse({
+    model: "auto",
+    input: [
+      { type: "text", role: "system", text: "Summarize this webpage in 50 words max. State purpose and key points. Plain language; no preamble." },
+      { type: "text", role: "user", text: pageContent.slice(0, 12_000) },
+    ],
+  })
+  const summary = response.data.output.map((item) => item.value.trim()).filter(Boolean).join(" ")
+  if (!summary) throw new Error("Logica Assist returned an empty summary.")
+
+  return summary.split(/\s+/).slice(0, 50).join(" ")
+}
+
+// Store crawler generated summaries without interrupting a successful crawl on AI errors.
+async function saveAutomaticPageSummary(pageId: string, pageContent: string) {
+  try {
+    const summary = await generatePageSummary(pageContent)
+    const page = await prisma.page.findUnique({ where: { id: pageId }, select: { data: true } })
+    const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
+      return entry !== null && !(typeof entry === "object" && "kind" in entry && entry.kind === "summary")
+    }) : []) as Prisma.InputJsonValue[]
+
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        data: [...data, { kind: "summary", summary, addedOn: new Date().toISOString() }],
+      },
+    })
+  } catch (error) {
+    await logError({ error, pageId }, "saveAutomaticPageSummary")
+  }
 }
 
 function extractPageLinks($: cheerio.Root): PageLink[] {
@@ -1957,9 +2010,10 @@ async function getSitemapUrlEntries(
 
 export async function findSitemapReferencesForUrl(pageUrl: string, siteUrl: string): Promise<SitemapReference[]> {
   try {
-    const robotsTxt = await getRobotsTxt(siteUrl)
+    const absoluteSiteUrl = ensureHttpSiteUrl(siteUrl)
+    const robotsTxt = await getRobotsTxt(absoluteSiteUrl)
     const { sitemaps } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [] }
-    const sitemapUrls = sitemaps.length > 0 ? sitemaps : [new URL("/sitemap.xml", siteUrl).toString()]
+    const sitemapUrls = sitemaps.length > 0 ? sitemaps : [new URL("/sitemap.xml", absoluteSiteUrl).toString()]
     const normalizedPageUrl = normalizeCrawlTarget(pageUrl)
     const references = new Set<string>()
 
@@ -2753,6 +2807,8 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
         } else {
           sourcePageId = (await prisma.page.create({ data: pageData, select: { id: true } })).id
         }
+
+        await saveAutomaticPageSummary(sourcePageId, content)
 
         pagesProcessed++
         const seenTargetUrls = new Set<string>()

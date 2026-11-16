@@ -1,7 +1,7 @@
 
 
 import { notFound } from "next/navigation"
-import { crawlPageAction, deletePageAction, getPageById, getBacklinks, getPageSitemapReferences, summarizePageAction } from "../actions"
+import { crawlPageAction, deletePageAction, getPageById, getBacklinks, getPageSitemapReferences } from "../actions"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
 import { Button } from "@neup/components/ui/button"
 import { Badge } from "@neup/components/ui/badge"
@@ -20,6 +20,7 @@ import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"
 import { CrawlPageButton } from "./crawl-page-button"
+import { SummaryForm } from "./summary-form"
 import { getPageIssues, type PageIssue } from "@/services/neupbot"
 
 function getIssueKindLabel(kind: PageIssue["kind"]) {
@@ -151,16 +152,6 @@ export default async function PageDetailPage({ params, searchParams }: { params:
                   <CrawlPageButton />
                 </form>
               )}
-              <form action={async () => {
-                "use server"
-                if (page.content) {
-                    await summarizePageAction(page.id, page.content)
-                }
-              }}>
-                <Button type="submit" variant="outline" disabled={!page.content || !!page.summary}>
-                    {page.summary ? "Summary Generated" : "Generate Summary"}
-                </Button>
-              </form>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="destructive">Delete Page</Button>
@@ -190,9 +181,11 @@ export default async function PageDetailPage({ params, searchParams }: { params:
         </CardHeader>
         <CardContent>
           <h3 className="font-semibold text-lg mb-2">AI Generated Summary</h3>
-          <p className="text-sm text-muted-foreground">
-            {page.summary || "No summary has been generated for this page yet. Click the button above to create one."}
-          </p>
+          {page.summary ? (
+            <p className="text-sm text-muted-foreground">{page.summary}</p>
+          ) : (
+            <SummaryForm pageId={page.id} hasContent={Boolean(page.content)} />
+          )}
         </CardContent>
       </Card>
 

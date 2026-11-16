@@ -4,11 +4,9 @@ import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logica-logging"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { cookies } from "next/headers"
 import type { Prisma } from "@prisma/client"
 import * as cheerio from "cheerio"
-import { assist } from "@neup/logica/assist"
-import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
+import { deleteManagedPage, findSitemapReferencesForUrl, generatePageSummary, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
 import { crawlPageToHtml } from "@/services/crawl/html"
 import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
 
@@ -41,6 +39,12 @@ export type Backlink = {
 }
 
 export type PageSitemapReference = SitemapReference
+
+export type SummaryActionState = {
+  success: boolean
+  error?: { code: string; description: string }
+  result?: { summary: string }
+}
 
 export type LiveCrawlerDataState = {
   data?: {
@@ -575,31 +579,23 @@ export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, fo
   }
 }
 
-// Ask Logica Assist for a short page summary and cap the saved output at 50 words.
-async function generatePageSummary(pageContent: string) {
-  const authAccountToken = (await cookies()).get("auth_account")?.value
-  const pageAssist = assist({ authAccountToken })
-  const chatResponse = await pageAssist.chats.create({ title: "Page summary" })
-  if (!chatResponse.ok || !chatResponse.body.id) {
-    throw new Error(chatResponse.body.error || "Could not start a Logica Assist chat.")
+// Generate, persist, and return the page summary through the server action response.
+export async function summarizePageAction(_previousState: SummaryActionState, formData: FormData): Promise<SummaryActionState> {
+  const pageId = String(formData.get("pageId") || "")
+  if (!pageId) {
+    return { success: false, error: { code: "page_id_required", description: "Page ID is required." } }
   }
 
-  const prompt = `Summarize this webpage in 50 words or fewer. State its purpose and key points. Use plain language; no preamble.\n\n${pageContent.slice(0, 12_000)}`
-  const messageResponse = await pageAssist.chats.messages(chatResponse.body.id).send(prompt)
-  if (!messageResponse.ok || !messageResponse.body.result?.trim()) {
-    throw new Error(messageResponse.body.error || "Logica Assist returned an empty summary.")
-  }
-
-  return messageResponse.body.result.trim().split(/\s+/).slice(0, 50).join(" ")
-}
-
-export async function summarizePageAction(pageId: string, pageContent: string) {
   try {
-    const summary = await generatePageSummary(pageContent)
     const page = await prisma.page.findUnique({
       where: { id: pageId },
-      select: { data: true },
+      select: { content: true, data: true },
     })
+    if (!page?.content?.trim()) {
+      return { success: false, error: { code: "page_content_missing", description: "Page content is missing, so it cannot be summarized." } }
+    }
+
+    const summary = await generatePageSummary(page.content)
     const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
       return entry !== null && !(entry && typeof entry === "object" && "kind" in entry && entry.kind === "summary")
     }) : []) as Prisma.InputJsonValue[]
@@ -617,8 +613,13 @@ export async function summarizePageAction(pageId: string, pageContent: string) {
         ],
       },
     })
+    return { success: true, result: { summary } }
   } catch (error) {
     await logError({ error, pageId }, "summarizePageAction")
+    return {
+      success: false,
+      error: { code: "summary_generation_failed", description: "Could not generate the summary. Please try again." },
+    }
   } finally {
     revalidatePath(`/manage/pages/${pageId}`)
   }
