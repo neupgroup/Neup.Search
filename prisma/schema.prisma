@@ -28,7 +28,7 @@ model Domain {
   status      String
   addedOn     DateTime  @default(now())
   details     Json?
-  categories  String[]  @default([])
+  categories  String?   @db.VarChar(256)
 
   pages Page[]
   linksFrom Link[] @relation("FromDomainLinks")

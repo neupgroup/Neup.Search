@@ -9,7 +9,7 @@ import { updateDomainDetails } from "@/services/projects/update"
 import { upsertDomainRecord } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
 import { summarizePage } from "@/services/intelligence/summarize"
-import { categorizeSite } from "@/services/intelligence/categorize"
+import { getBasics } from "@/services/intelligence/basics"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
 
@@ -45,7 +45,7 @@ export type ManagedDomain = {
   logoUrl?: string
   appIconUrl?: string
   appIconBackgroundColor?: string
-  categories: string[]
+  categories: string | null
 }
 
 export type ManagedPage = {
@@ -743,10 +743,12 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
     })
 
     if (existingPage && isHomepagePageUrl(existingPage.url)) {
-      await categorizeSite({
+      await getBasics({
         siteId: existingPage.domainId,
         siteUrl: existingPage.url,
+        homepageName: pageData.title || "",
         homepageContent: pageData.content,
+        renderedContent: getRenderedPageContent(pageData.data),
       })
     }
   }
@@ -759,6 +761,15 @@ function isHomepagePageUrl(pageUrl: string): boolean {
   } catch {
     return false
   }
+}
+
+// Read the saved rendered HTML from a crawler payload for intelligence analysis.
+function getRenderedPageContent(data: unknown): string {
+  if (!Array.isArray(data)) return ""
+  for (const entry of data) {
+    if (entry && typeof entry === "object" && "html" in entry && typeof entry.html === "string") return entry.html
+  }
+  return ""
 }
 
 type SummaryPageSnapshot = {

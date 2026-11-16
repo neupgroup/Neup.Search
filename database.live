@@ -16,7 +16,7 @@ Fields:
 > status: string;
 > addedOn: timestamp, default: now;
 > details: json, nullable;
-> categories: string[], default: empty;
+> categories: string, nullable, varchar(256);
 
 Table: sitemap, Model: Sitemap
 Fields:

@@ -30,7 +30,7 @@ export default async function ProjectApiDetailPage({ params }: { params: Promise
         <CardContent className="grid gap-3 text-sm">
           <p><strong>URL:</strong> <a href={details.locations?.[0] || `https://${project.domain}`} className="underline">{details.locations?.[0] || `https://${project.domain}`}</a></p>
           <p><strong>Status:</strong> {project.status}</p>
-          <p><strong>Categories:</strong> {project.categories.length ? project.categories.join(", ") : "Uncategorized"}</p>
+          <p><strong>Category:</strong> {project.categories || "Uncategorized"}</p>
           <p><strong>Pages:</strong> {details.pagesCrawled ?? project._count.pages}</p>
           <p><strong>Last crawled:</strong> {project.lastCrawled?.toISOString() || "Never"}</p>
           <p><strong>Created:</strong> {project.addedOn.toISOString()}</p>
