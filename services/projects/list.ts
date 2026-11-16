@@ -44,7 +44,7 @@ export async function getPaginatedPropertyOptions(input?: { search?: string; pag
   const requestedPage = Math.max(1, Math.floor(input?.page ?? 1))
   const [totalCount, selectedDomain] = await Promise.all([
     prisma.domain.count({ where }),
-    input?.selectedPropertyId ? prisma.domain.findFirst({ where: { id: input.selectedPropertyId, ...(where ?? {}) }, select: { id: true, domain: true, name: true, lastCrawled: true, status: true, addedOn: true, details: true } }) : Promise.resolve(null),
+    input?.selectedPropertyId ? prisma.domain.findFirst({ where: { id: input.selectedPropertyId, ...(where ?? {}) }, select: { id: true, domain: true, name: true, lastCrawled: true, status: true, addedOn: true, details: true, categories: true } }) : Promise.resolve(null),
   ])
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const page = Math.min(requestedPage, totalPages)
@@ -54,7 +54,7 @@ export async function getPaginatedPropertyOptions(input?: { search?: string; pag
   const domains = await prisma.domain.findMany({
     where: hasSelectedDomain ? { AND: [where ?? {}, { id: { not: input?.selectedPropertyId } }] } : where,
     orderBy: { addedOn: "desc" }, skip, take: shouldPinSelectedDomain ? Math.max(0, pageSize - 1) : pageSize,
-    select: { id: true, domain: true, name: true, lastCrawled: true, status: true, addedOn: true, details: true },
+    select: { id: true, domain: true, name: true, lastCrawled: true, status: true, addedOn: true, details: true, categories: true },
   })
   return { properties: [...(shouldPinSelectedDomain && selectedDomain ? [mapDomainToSite(selectedDomain)] : []), ...domains.map(mapDomainToSite)], page, pageSize, totalCount, totalPages }
 }

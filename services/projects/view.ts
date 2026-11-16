@@ -11,7 +11,7 @@ export function readDetails(details: unknown): DomainDetails {
 
 // Format a domain record for project views.
 export function mapDomainToSite(domain: {
-  id: string; domain: string; name: string; status: string; lastCrawled: Date | null; addedOn: Date; details: unknown; _count?: { pages: number }
+  id: string; domain: string; name: string; status: string; lastCrawled: Date | null; addedOn: Date; details: unknown; categories?: string[]; _count?: { pages: number }
 }): ManagedDomain {
   const details = readDetails(domain.details)
   const primaryLocation = Array.isArray(details.locations) ? details.locations[0] : undefined
@@ -32,6 +32,7 @@ export function mapDomainToSite(domain: {
     appIconUrl: details.appIconUrl,
     appIconBackgroundColor: details.appIconBackgroundColor,
     summary: details.summary,
+    categories: domain.categories ?? [],
   }
 }
 

@@ -1,6 +1,5 @@
 import * as cheerio from "cheerio"
 import type { Prisma } from "@prisma/client"
-import { createNiaResponse } from "@neup/logica/intelligence/responses"
 import { assist } from "@neup/logica/assist"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
@@ -9,6 +8,8 @@ import { readDetails, mapDomainToSite } from "@/services/projects/view"
 import { updateDomainDetails } from "@/services/projects/update"
 import { upsertDomainRecord } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
+import { summarizePage } from "@/services/intelligence/summarize"
+import { categorizeSite } from "@/services/intelligence/categorize"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
 
@@ -44,6 +45,7 @@ export type ManagedDomain = {
   logoUrl?: string
   appIconUrl?: string
   appIconBackgroundColor?: string
+  categories: string[]
 }
 
 export type ManagedPage = {
@@ -710,7 +712,7 @@ async function getNextPendingPage(siteId: string) {
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   const existingPage = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { details: true, content: true, data: true },
+    select: { details: true, content: true, data: true, url: true, domainId: true },
   })
   const existingDetails = existingPage?.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details)
     ? existingPage.details
@@ -739,22 +741,24 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       content: existingPage?.content ?? null,
       data: existingPage?.data,
     })
+
+    if (existingPage && isHomepagePageUrl(existingPage.url)) {
+      await categorizeSite({
+        siteId: existingPage.domainId,
+        siteUrl: existingPage.url,
+        homepageContent: pageData.content,
+      })
+    }
   }
 }
 
-// Generate a concise summary directly through the Logica Assist response API.
-export async function generatePageSummary(pageContent: string) {
-  const response = await createNiaResponse({
-    model: "auto",
-    input: [
-      { type: "text", role: "system", text: "Summarize this webpage in 50 words max. State purpose and key points. Plain language; no preamble." },
-      { type: "text", role: "user", text: pageContent.slice(0, 12_000) },
-    ],
-  })
-  const summary = response.data.output.map((item) => item.value.trim()).filter(Boolean).join(" ")
-  if (!summary) throw new Error("Logica Assist returned an empty summary.")
-
-  return summary.split(/\s+/).slice(0, 50).join(" ")
+// Check whether a crawled URL is the site's homepage.
+function isHomepagePageUrl(pageUrl: string): boolean {
+  try {
+    return new URL(pageUrl).pathname === "/"
+  } catch {
+    return false
+  }
 }
 
 type SummaryPageSnapshot = {
@@ -897,7 +901,7 @@ async function saveAutomaticPageSummary(pageId: string, pageContent: string, pre
       currentActivity: `Generating summary for ${page.url}`,
       currentCrawlUrl: page.url,
     })
-    const summary = await generatePageSummary(pageContent)
+    const summary = await summarizePage(pageContent)
 
     await prisma.page.update({
       where: { id: pageId },

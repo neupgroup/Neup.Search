@@ -29,6 +29,7 @@ export const GET = withJsonErrors(async (request: NextRequest) => {
         name: project.name,
         url: details.locations?.[0] || `https://${project.domain}`,
         domain: project.domain,
+        categories: project.categories,
         status: project.status,
         lastCrawled: project.lastCrawled,
         createdAt: project.addedOn,

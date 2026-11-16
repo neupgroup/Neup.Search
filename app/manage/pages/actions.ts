@@ -6,9 +6,10 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import type { Prisma } from "@prisma/client"
 import * as cheerio from "cheerio"
-import { deleteManagedPage, findSitemapReferencesForUrl, generatePageSummary, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
+import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
 import { crawlPageToHtml } from "@/services/crawl/html"
 import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
+import { summarizePage } from "@/services/intelligence/summarize"
 
 export type Page = {
   id: string
@@ -595,7 +596,7 @@ export async function summarizePageAction(_previousState: SummaryActionState, fo
       return { success: false, error: { code: "page_content_missing", description: "Page content is missing, so it cannot be summarized." } }
     }
 
-    const summary = await generatePageSummary(page.content)
+    const summary = await summarizePage(page.content)
     const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
       return entry !== null && !(entry && typeof entry === "object" && "kind" in entry && entry.kind === "summary")
     }) : []) as Prisma.InputJsonValue[]
