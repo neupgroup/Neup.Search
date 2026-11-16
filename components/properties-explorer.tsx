@@ -60,6 +60,7 @@ function PropertySelector({
   search,
   showSearch,
   searchPlaceholder,
+  searchParam = "q",
   selectedCardOnly,
   hideSelectedCard,
   wrapInCard,
@@ -76,6 +77,7 @@ function PropertySelector({
   search?: string
   showSearch: boolean
   searchPlaceholder?: string
+  searchParam?: string
   selectedCardOnly: boolean
   hideSelectedCard: boolean
   wrapInCard: boolean
@@ -87,6 +89,7 @@ function PropertySelector({
     pageSize: number
     basePath: string
     search?: string
+    searchParam?: string
     selectedPropertyId?: string
   }
   leadingCard?: ReactNode
@@ -136,7 +139,7 @@ function PropertySelector({
       {showSearch ? (
         <div className="relative flex-1 md:max-w-md">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <SearchInput placeholder={searchPlaceholder || "Search sites..."} />
+          <SearchInput placeholder={searchPlaceholder || "Search sites..."} queryParam={searchParam} />
         </div>
       ) : null}
 
@@ -206,6 +209,7 @@ function PropertySelector({
                 basePath: pagination.basePath,
                 page: Math.max(1, pagination.page - 1),
                 search: pagination.search,
+                searchParam: pagination.searchParam || "q",
                 selectedPropertyId: pagination.selectedPropertyId,
               })}
             >
@@ -216,6 +220,7 @@ function PropertySelector({
                 basePath: pagination.basePath,
                 page: Math.min(pagination.totalPages, pagination.page + 1),
                 search: pagination.search,
+                searchParam: pagination.searchParam || "q",
                 selectedPropertyId: pagination.selectedPropertyId,
               })}
             >
@@ -240,17 +245,19 @@ function buildPaginationHref({
   basePath,
   page,
   search,
+  searchParam,
   selectedPropertyId,
 }: {
   basePath: string
   page: number
   search?: string
+  searchParam: string
   selectedPropertyId?: string
 }) {
   const params = new URLSearchParams()
   params.set("page", String(page))
   if (search) {
-    params.set("q", search)
+    params.set(searchParam, search)
   }
   if (selectedPropertyId) {
     params.set("property", selectedPropertyId)
@@ -531,6 +538,7 @@ export function PropertiesExplorer({
   search,
   showSearch = false,
   searchPlaceholder,
+  searchParam = "q",
   showDashboard = true,
   selectedCardOnly = false,
   hideSelectedCard = false,
@@ -551,6 +559,7 @@ export function PropertiesExplorer({
   search?: string
   showSearch?: boolean
   searchPlaceholder?: string
+  searchParam?: string
   showDashboard?: boolean
   selectedCardOnly?: boolean
   hideSelectedCard?: boolean
@@ -563,6 +572,7 @@ export function PropertiesExplorer({
     pageSize: number
     basePath: string
     search?: string
+    searchParam?: string
     selectedPropertyId?: string
   }
   leadingCard?: ReactNode
@@ -586,6 +596,7 @@ export function PropertiesExplorer({
         search={search}
         showSearch={showSearch}
         searchPlaceholder={searchPlaceholder}
+        searchParam={searchParam}
         selectedCardOnly={selectedCardOnly}
         hideSelectedCard={hideSelectedCard}
         wrapInCard={wrapSelectorInCard}

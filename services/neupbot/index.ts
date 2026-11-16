@@ -2074,11 +2074,12 @@ async function crawlStoredPage({
     let pageHtml = html
     let pageHeaders = Object.fromEntries(response.headers.entries())
     let pageDocument = cheerio.load(html)
+    const initialDocumentTitle = pageDocument("title").text().trim()
     let resolvedPageUrl = response.url || pageUrl
     let pageStatusCode = response.status
     let javascriptRendered = false
 
-    if (assessment.score >= 50) {
+    if (assessment.score >= 50 || !initialDocumentTitle) {
       try {
         const renderedPage = await crawlPageToHtml(resolvedPageUrl, {
           javascriptEnabled: true,

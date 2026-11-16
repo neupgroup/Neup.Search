@@ -56,6 +56,7 @@ async function ManageProjectsContent({
         description=""
         search={search}
         showSearch
+        searchParam="query"
         searchPlaceholder="Search site"
         showDashboard={false}
         selectedCardOnly
@@ -91,6 +92,7 @@ async function ManageProjectsContent({
           pageSize: pagination.pageSize,
           basePath: "/manage/projects",
           search,
+          searchParam: "query",
           selectedPropertyId,
         }}
       />
@@ -105,7 +107,7 @@ export default async function ManageProjectsPage({
 }) {
   const resolvedSearchParams = await searchParams
   const selectedPropertyId = readQueryParam(resolvedSearchParams.property)
-  const search = selectedPropertyId ? undefined : readQueryParam(resolvedSearchParams.q)
+  const search = readQueryParam(resolvedSearchParams.query)
   const page = readPageParam(resolvedSearchParams.page)
   const suspenseKey = `${search || ""}:${page}:${selectedPropertyId || ""}`
 
