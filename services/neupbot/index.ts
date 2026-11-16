@@ -864,7 +864,7 @@ async function getNextPendingPage(siteId: string) {
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   const existingPage = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { details: true },
+    select: { details: true, content: true, data: true },
   })
   const existingDetails = existingPage?.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details)
     ? existingPage.details
@@ -889,7 +889,10 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   })
 
   if (pageData.status === "Indexed" && pageData.type === "text/html" && pageData.content?.trim()) {
-    await saveAutomaticPageSummary(pageId, pageData.content)
+    await saveAutomaticPageSummary(pageId, pageData.content, {
+      content: existingPage?.content ?? null,
+      data: existingPage?.data,
+    })
   }
 }
 
@@ -908,19 +911,152 @@ export async function generatePageSummary(pageContent: string) {
   return summary.split(/\s+/).slice(0, 50).join(" ")
 }
 
+type SummaryPageSnapshot = {
+  content: string | null
+  data: unknown
+}
+
+// Find the page summary and its generation timestamp in stored crawler data.
+function findStoredSummary(data: unknown): { summary: string; addedOn?: string } | undefined {
+  if (!Array.isArray(data)) return undefined
+  const entry = data.find((value) => value && typeof value === "object" && "kind" in value && value.kind === "summary")
+  if (!entry || typeof entry !== "object" || !("summary" in entry) || typeof entry.summary !== "string") return undefined
+  return {
+    summary: entry.summary,
+    addedOn: "addedOn" in entry && typeof entry.addedOn === "string" ? entry.addedOn : undefined,
+  }
+}
+
+// Convert page text, image URLs, and link URLs into the atomic elements compared by the crawler diff.
+function getSummaryChangeElements(content: string | null, data: unknown): string[] {
+  const elements = (content?.match(/[\p{L}\p{N}]+/gu) || []).map((word) => `word:${word}`)
+  if (!Array.isArray(data)) return elements
+
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object") continue
+    if ("images" in entry && Array.isArray(entry.images)) {
+      for (const image of entry.images) {
+        if (image && typeof image === "object" && "src" in image && typeof image.src === "string" && image.src) {
+          elements.push(`image:${image.src}`)
+        }
+      }
+    }
+    if ("links" in entry && Array.isArray(entry.links)) {
+      for (const link of entry.links) {
+        if (link && typeof link === "object" && "link" in link && typeof link.link === "string" && link.link) {
+          elements.push(`link:${link.link}`)
+        }
+      }
+    }
+  }
+
+  return elements
+}
+
+// Count insertions and deletions with a Git-style Myers word diff, stopping once the threshold is exceeded.
+function countGitStyleElementChanges(previous: string[], next: string[], stopAfter: number): number {
+  if (previous.length === 0) return next.length
+  if (next.length === 0) return previous.length
+
+  let prefixLength = 0
+  while (prefixLength < previous.length && prefixLength < next.length && previous[prefixLength] === next[prefixLength]) {
+    prefixLength++
+  }
+  let previousEnd = previous.length
+  let nextEnd = next.length
+  while (previousEnd > prefixLength && nextEnd > prefixLength && previous[previousEnd - 1] === next[nextEnd - 1]) {
+    previousEnd--
+    nextEnd--
+  }
+
+  const previousMiddle = previous.slice(prefixLength, previousEnd)
+  const nextMiddle = next.slice(prefixLength, nextEnd)
+  if (previousMiddle.length === 0 || nextMiddle.length === 0) return previousMiddle.length + nextMiddle.length
+  const sharedElements = new Set(previousMiddle)
+  if (!nextMiddle.some((element) => sharedElements.has(element))) return previousMiddle.length + nextMiddle.length
+
+  const maximumDistance = Math.min(previousMiddle.length + nextMiddle.length, stopAfter + 1)
+  const offset = maximumDistance + 1
+  let previousFrontier = new Int32Array(maximumDistance * 2 + 3)
+  previousFrontier[offset + 1] = 0
+
+  for (let distance = 0; distance <= maximumDistance; distance++) {
+    const currentFrontier = new Int32Array(maximumDistance * 2 + 3)
+    for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+      const index = offset + diagonal
+      let x = diagonal === -distance || (diagonal !== distance && previousFrontier[index - 1] < previousFrontier[index + 1])
+        ? previousFrontier[index + 1]
+        : previousFrontier[index - 1] + 1
+      let y = x - diagonal
+
+      while (x < previousMiddle.length && y < nextMiddle.length && previousMiddle[x] === nextMiddle[y]) {
+        x++
+        y++
+      }
+      currentFrontier[index] = x
+      if (x >= previousMiddle.length && y >= nextMiddle.length) return distance
+    }
+    previousFrontier = currentFrontier
+  }
+
+  return maximumDistance
+}
+
+// Decide whether a crawl should refresh its summary using element changes or the ten-day age limit.
+function shouldRegeneratePageSummary(previousPage: SummaryPageSnapshot, currentContent: string, currentData: unknown): boolean {
+  const storedSummary = findStoredSummary(previousPage.data)
+  if (!storedSummary) return true
+
+  const generatedAt = storedSummary.addedOn ? Date.parse(storedSummary.addedOn) : Number.NaN
+  const summaryIsOlderThanTenDays = !Number.isFinite(generatedAt) || Date.now() - generatedAt > 10 * 24 * 60 * 60 * 1000
+  if (summaryIsOlderThanTenDays) return true
+
+  const previousElements = getSummaryChangeElements(previousPage.content, previousPage.data)
+  const currentElements = getSummaryChangeElements(currentContent, currentData)
+  const totalElements = Math.max(previousElements.length, currentElements.length)
+  if (totalElements === 0) return false
+  const changeThreshold = Math.floor(totalElements * 0.1)
+  const changedElements = countGitStyleElementChanges(previousElements, currentElements, changeThreshold)
+  return changedElements > totalElements * 0.1
+}
+
 // Store crawler generated summaries without interrupting a successful crawl on AI errors.
-async function saveAutomaticPageSummary(pageId: string, pageContent: string) {
+async function saveAutomaticPageSummary(pageId: string, pageContent: string, previousPage: SummaryPageSnapshot) {
   try {
-    const summary = await generatePageSummary(pageContent)
-    const page = await prisma.page.findUnique({ where: { id: pageId }, select: { data: true } })
-    const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: { data: true, url: true, domainId: true },
+    })
+    if (!page) return
+
+    const shouldGenerateSummary = shouldRegeneratePageSummary(previousPage, pageContent, page.data)
+    const currentData = (Array.isArray(page.data) ? page.data.filter((entry) => {
       return entry !== null && !(typeof entry === "object" && "kind" in entry && entry.kind === "summary")
     }) : []) as Prisma.InputJsonValue[]
+    const previousSummaryEntry = (Array.isArray(previousPage.data) ? previousPage.data.find((entry) => {
+      return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "summary"
+    }) : undefined) as Prisma.InputJsonValue | undefined
+
+    if (!shouldGenerateSummary) {
+      if (previousSummaryEntry) {
+        await prisma.page.update({ where: { id: pageId }, data: { data: [...currentData, previousSummaryEntry] } })
+      }
+      return
+    }
+
+    if (previousSummaryEntry) {
+      await prisma.page.update({ where: { id: pageId }, data: { data: [...currentData, previousSummaryEntry] } })
+    }
+    await updateDomainDetails(page.domainId, {
+      currentActivity: `Generating summary for ${page.url}`,
+      currentCrawlUrl: page.url,
+    })
+    const summary = await generatePageSummary(pageContent)
 
     await prisma.page.update({
       where: { id: pageId },
       data: {
-        data: [...data, { kind: "summary", summary, addedOn: new Date().toISOString() }],
+        data: [...currentData, { kind: "summary", summary, addedOn: new Date().toISOString() }],
       },
     })
   } catch (error) {
@@ -2799,7 +2935,10 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           lastCrawled: new Date(),
         }
 
-        const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })
+        const existingPage = await prisma.page.findFirst({
+          where: { url: currentUrl, domainId: siteId },
+          select: { id: true, content: true, data: true },
+        })
         let sourcePageId: string
         if (existingPage) {
           await prisma.page.update({ where: { id: existingPage.id }, data: pageData })
@@ -2808,7 +2947,10 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           sourcePageId = (await prisma.page.create({ data: pageData, select: { id: true } })).id
         }
 
-        await saveAutomaticPageSummary(sourcePageId, content)
+        await saveAutomaticPageSummary(sourcePageId, content, {
+          content: existingPage?.content ?? null,
+          data: existingPage?.data,
+        })
 
         pagesProcessed++
         const seenTargetUrls = new Set<string>()
