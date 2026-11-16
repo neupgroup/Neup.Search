@@ -16,8 +16,13 @@ function readPositiveInteger(value: string | string[] | undefined, fallback: num
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function buildPagesLink(siteId: string, page: number, pageSize: number) {
-  return `/manage/sites/${siteId}?page=${page}&pageSize=${pageSize}`
+function buildPagesLink(siteId: string, propertyId: string, page: number, pageSize: number) {
+  const query = new URLSearchParams({
+    property: propertyId,
+    page: String(page),
+    pageSize: String(pageSize),
+  })
+  return `/manage/sites/${siteId}?${query.toString()}`
 }
 
 export default async function SiteDetailPage({ params, searchParams }: { params: Promise<{ siteId: string }>, searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
@@ -35,7 +40,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
   const { pages, page, pageSize, totalCount, totalPages } = pagination
 
   if (requestedPage !== page || requestedPageSize !== pageSize) {
-    redirect(buildPagesLink(resolvedParams.siteId, page, pageSize))
+    redirect(buildPagesLink(resolvedParams.siteId, site.id, page, pageSize))
   }
 
 
@@ -136,10 +141,10 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
                     Page {page} of {totalPages} | {totalCount.toLocaleString()} pages | {pageSize} per page
                 </p>
                 <div className="flex justify-end gap-2">
-                <Link href={buildPagesLink(resolvedParams.siteId, Math.max(1, page - 1), pageSize)}>
+                <Link href={buildPagesLink(resolvedParams.siteId, site.id, Math.max(1, page - 1), pageSize)}>
                     <Button variant="outline" disabled={page <= 1}>Previous</Button>
                 </Link>
-                <Link href={buildPagesLink(resolvedParams.siteId, Math.min(totalPages, page + 1), pageSize)}>
+                <Link href={buildPagesLink(resolvedParams.siteId, site.id, Math.min(totalPages, page + 1), pageSize)}>
                     <Button variant="outline" disabled={page >= totalPages}>Next</Button>
                 </Link>
                 </div>

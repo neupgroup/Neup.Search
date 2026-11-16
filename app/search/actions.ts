@@ -62,7 +62,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
         url: true,
         title: true,
         description: true,
-        fullContent: true,
+        content: true,
       },
     });
 
@@ -70,7 +70,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
     const lowercasedQuery = searchQuery.toLowerCase();
 
     for (const p of pages) {
-      const content = p.fullContent || "";
+      const content = p.content || "";
       const url = p.url || "";
       const title = p.title || url;
       const description = p.description || "";

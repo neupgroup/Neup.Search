@@ -105,7 +105,7 @@ export default async function ManageProjectsPage({
 }) {
   const resolvedSearchParams = await searchParams
   const selectedPropertyId = readQueryParam(resolvedSearchParams.property)
-  const search = readQueryParam(resolvedSearchParams.q)
+  const search = selectedPropertyId ? undefined : readQueryParam(resolvedSearchParams.q)
   const page = readPageParam(resolvedSearchParams.page)
   const suspenseKey = `${search || ""}:${page}:${selectedPropertyId || ""}`
 

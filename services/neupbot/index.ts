@@ -246,7 +246,7 @@ type PersistedPageData = {
   description?: string | null
   type: string
   data: Prisma.InputJsonValue[]
-  fullContent?: string | null
+  content?: string | null
   status: ManagedPage["status"]
   statusCode?: number | null
   details?: Prisma.InputJsonValue
@@ -612,7 +612,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
       type: input.fileType || content?.fileType || "unknown",
       data: [],
       details,
-      fullContent: null,
+      content: null,
       status: "Pending",
       statusCode: null,
     },
@@ -875,7 +875,7 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       description: pageData.description ?? null,
       type: pageData.type,
       data: pageData.data,
-      fullContent: pageData.fullContent ?? null,
+      content: pageData.content ?? null,
       status: pageData.status,
       statusCode: pageData.statusCode ?? null,
       lastCrawled: new Date(),
@@ -1711,7 +1711,7 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
       statusCode: page.statusCode,
       lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
       createdAt: page.addedOn,
-      content: page.fullContent || undefined,
+      content: page.content || undefined,
     })),
     indexedPages: indexedPageRows.map((page): ManagedPage => ({
       id: page.id,
@@ -1723,7 +1723,7 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
       statusCode: page.statusCode,
       lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
       createdAt: page.addedOn,
-      content: page.fullContent || undefined,
+      content: page.content || undefined,
     })),
     crawlErrors: crawlErrorRows.map((page) => {
       const isRedirect = page.statusCode !== null && page.statusCode >= 300 && page.statusCode < 400
@@ -1882,7 +1882,7 @@ async function crawlStoredPage({
         reason: crawledUrls.has(normalizedUrl) ? "Already crawled in this run." : "Blocked by robots.txt.",
         sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
       }],
-      fullContent: null,
+      content: null,
       status: "Skipped",
       statusCode: null,
       details: {
@@ -1914,7 +1914,7 @@ async function crawlStoredPage({
         description: null,
         type: contentType || "redirect",
         data,
-        fullContent: null,
+        content: null,
         status: "Redirect",
         statusCode: response.status,
         details: {
@@ -1959,7 +1959,7 @@ async function crawlStoredPage({
         description: null,
         type: contentType || "unknown",
         data,
-        fullContent: null,
+        content: null,
         status: response.ok ? "Skipped" : "Error",
         statusCode: response.status,
         details: {
@@ -1975,7 +1975,7 @@ async function crawlStoredPage({
     const html = await response.text()
     const $ = cheerio.load(html)
     const pageTitle = $("title").text() || $("h1").first().text()
-    const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
+    const content = $("body").text().replace(/\s\s+/g, " ").trim()
     const data = [{
       html,
       finalUrl: response.url || pageUrl,
@@ -2006,7 +2006,7 @@ async function crawlStoredPage({
       description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
       type: "text/html",
       data,
-      fullContent,
+      content,
       status: "Indexed",
       statusCode: response.status,
       details: {
@@ -2027,7 +2027,7 @@ async function crawlStoredPage({
         error: fetchError instanceof Error ? fetchError.message : String(fetchError),
         sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, pageUrl),
       }],
-      fullContent: null,
+      content: null,
       status: "Error",
       statusCode: null,
       details: {
@@ -2200,7 +2200,7 @@ export async function runSinglePageJavascriptCrawler(siteId: string, pageUrl: st
       audios: $("audio").map((_: number, audio: cheerio.Element) => $(audio).attr("src")).get().filter(Boolean),
       iframes: $("iframe").map((_: number, iframe: cheerio.Element) => $(iframe).attr("src")).get().filter(Boolean),
     }],
-    fullContent: $("body").text().replace(/\s\s+/g, " ").trim(),
+    content: $("body").text().replace(/\s\s+/g, " ").trim(),
     status: statusCode !== null && statusCode >= 400 ? "Error" : "Indexed",
     statusCode,
     details: { contentType: "text/html", renderedWithJavaScript: true },
@@ -2565,7 +2565,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
               renderedWithJavaScript: true,
               sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, currentUrl),
             }],
-            fullContent: null,
+            content: null,
             status: statusCode !== null && statusCode >= 400 ? "Error" : "Skipped",
             statusCode,
             lastCrawled: new Date(),
@@ -2583,7 +2583,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
         const html = await renderedPage.content()
         const $ = cheerio.load(html)
         const pageTitle = $("title").text() || $("h1").first().text()
-        const fullContent = $("body").text().replace(/\s\s+/g, " ").trim()
+        const content = $("body").text().replace(/\s\s+/g, " ").trim()
         const data = [{
           keywords: $("meta[name=\"keywords\"]").attr("content") || "",
           bodyHtml: $("body").html() || "",
@@ -2610,7 +2610,7 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
           description: $("meta[name=\"description\"]").attr("content") || $("meta[property=\"og:description\"]").attr("content") || null,
           type: "text/html",
           data,
-          fullContent,
+          content,
           status: "Indexed",
           statusCode,
           lastCrawled: new Date(),
@@ -2845,7 +2845,7 @@ export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20)
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
-    content: page.fullContent || undefined,
+    content: page.content || undefined,
   }))
 
   return {

@@ -37,7 +37,7 @@ Fields:
 > type: string;
 > data: json[], default: empty;
 > details: json, nullable;
-> fullContent: text, nullable;
+> content: text, nullable;
 > status: string;
 > statusCode: int, nullable;
 > addedOn: timestamp, default: now;

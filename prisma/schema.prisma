@@ -64,7 +64,7 @@ model Page {
   type        String
   data        Json[]    @default([])
   details     Json?
-  fullContent String?   @db.Text
+  content     String?   @db.Text
   status      String
   statusCode  Int?
   addedOn     DateTime  @default(now())

@@ -8,6 +8,7 @@ Shared manage form for creating a new crawled property.
 
 "use client"
 
+import { useState } from "react"
 import { useActionState } from "react"
 import { useFormStatus } from "react-dom"
 import { addSite } from "@/app/manage/sites/actions"
@@ -46,6 +47,26 @@ export function ManagedPropertyCreateForm({
 }) {
   const initialState: { errors: Record<string, string[]> } = { errors: {} }
   const [state, dispatch] = useActionState(addSite, initialState)
+  const [pasteHint, setPasteHint] = useState("")
+
+  // Remove a pasted web protocol and format its host and path for the suggestion.
+  function getPastedUrlSuggestion(value: string) {
+    const withoutProtocol = value.trim().replace(/^https?:\/\//i, "")
+    const normalizedValue = withoutProtocol.split(/[?#]/, 1)[0].replace(/\/$/, "")
+    const [host, ...pathSegments] = normalizedValue.split("/")
+
+    if (!host) return ""
+    const domainAndPath = [host, ...pathSegments].join("/")
+    return pathSegments.length > 0
+      ? `Trying to add ${host}? or ${domainAndPath}`
+      : `Trying to add ${host}?`
+  }
+
+  // Show the suggestion only in response to a paste event.
+  function handleUrlPaste(event: React.ClipboardEvent<HTMLInputElement>) {
+    const pastedValue = event.clipboardData.getData("text")
+    setPasteHint(getPastedUrlSuggestion(pastedValue))
+  }
 
   return (
     <div className="flex min-h-screen w-full flex-col">
@@ -67,8 +88,15 @@ export function ManagedPropertyCreateForm({
                       name="url"
                       type="text"
                       placeholder="example.com"
-                      aria-describedby="url-error"
+                      onPaste={handleUrlPaste}
+                      aria-invalid={Boolean(state.errors?.url?.length)}
+                      aria-describedby={state.errors?.url?.length ? "url-error" : undefined}
                     />
+                    {pasteHint ? (
+                      <p className="text-sm text-muted-foreground" role="status">
+                        {pasteHint}
+                      </p>
+                    ) : null}
                     {state.errors?.url ? (
                       <p id="url-error" className="text-sm font-medium text-destructive">
                         {state.errors.url[0]}
@@ -76,7 +104,7 @@ export function ManagedPropertyCreateForm({
                     ) : null}
                   </div>
                   {state.errors?._server ? (
-                    <Alert variant="destructive">
+                    <Alert variant="destructive" role="alert">
                       <AlertDescription>{state.errors._server[0]}</AlertDescription>
                     </Alert>
                   ) : null}

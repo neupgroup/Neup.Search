@@ -26,13 +26,13 @@ const DomainSchema = z.object({
   url: z.string()
     .trim()
     .min(1, { message: "Please enter a domain." })
-    .refine((value) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(value), {
-      message: "Enter only the domain or IP address without http:// or https://.",
-    }),
+    .transform((value) => normalizeDomainInput(value))
 })
 
 function normalizeDomainInput(input: string) {
-  return `https://${input.trim()}`
+  const withoutProtocol = input.trim().replace(/^https?:\/\//i, "")
+  const host = withoutProtocol.split(/[/?#]/, 1)[0].trim()
+  return `https://${host}`
 }
 
 export type Site = ManagedDomain
@@ -59,8 +59,7 @@ export async function addSite(prevState: any, formData: FormData) {
   let createdDomainId = ""
 
   try {
-    const normalizedUrl = normalizeDomainInput(validatedFields.data.url)
-    const { domain, siteUrl } = await createDomainForCrawl({ url: normalizedUrl })
+    const { domain, siteUrl } = await createDomainForCrawl({ url: validatedFields.data.url })
     createdDomainId = domain.id
     runCrawler(domain.id, siteUrl).catch((error) => logError(error, "crawlSite_async"))
   } catch (error) {

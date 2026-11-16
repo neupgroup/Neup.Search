@@ -68,7 +68,7 @@ type PageRow = {
   statusCode: number | null
   lastCrawled: Date | null
   addedOn: Date
-  fullContent?: string | null
+  content?: string | null
   data?: unknown
   domain: {
     domain: string
@@ -213,7 +213,7 @@ function mapPage(page: PageRow): Page {
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
     summary: readSummary(page.data),
-    content: page.fullContent || undefined,
+    content: page.content || undefined,
     data: page.data,
   }
 }
@@ -231,7 +231,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20, propert
             { url: { contains: searchFilter.value, mode: "insensitive" as const } },
             { title: { contains: searchFilter.value, mode: "insensitive" as const } },
             { description: { contains: searchFilter.value, mode: "insensitive" as const } },
-            { fullContent: { contains: searchFilter.value, mode: "insensitive" as const } },
+            { content: { contains: searchFilter.value, mode: "insensitive" as const } },
             { domain: { domain: { contains: searchFilter.value, mode: "insensitive" as const } } },
           ],
         }
