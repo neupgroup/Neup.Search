@@ -5,14 +5,12 @@ import {
   createDomainForCrawl,
   InvalidDomainError,
   runSinglePageCrawler,
-  runSinglePageJavascriptCrawler,
 } from "@/services/neupbot"
 import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
-import { extractPageLinksFromHtml, makeHtmlLinksAbsolute } from "@/services/crawl/links"
+import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
 
 const crawlResponseFormats = ["markdown", "html", "raw", "links", "images"] as const
 type CrawlResponseFormat = typeof crawlResponseFormats[number]
-type CrawlMode = "native" | "modern"
 
 // Return the crawl API's standard success response shape.
 function crawlSuccess(result: unknown, status = 200) {
@@ -61,17 +59,10 @@ function parseCrawlResponseFormats(request: NextRequest): CrawlResponseFormat[] 
   return [...new Set(formats)] as CrawlResponseFormat[]
 }
 
-// Read and validate the requested crawler mode, defaulting to native crawling.
-function parseCrawlMode(request: NextRequest): CrawlMode | null {
-  const mode = request.nextUrl.searchParams.get("mode") || "native"
-  return mode === "native" || mode === "modern" ? mode : null
-}
-
 // Build requested response fields from the one page saved by the crawler.
 async function buildRequestedCrawlResult(
   page: NonNullable<Awaited<ReturnType<typeof runSinglePageCrawler>>>,
   formats: CrawlResponseFormat[],
-  mode: CrawlMode,
 ) {
   const firstData = page.data[0]
   const captured = firstData && typeof firstData === "object" && !Array.isArray(firstData)
@@ -92,16 +83,12 @@ async function buildRequestedCrawlResult(
     result.raw = fixedHtml
   }
   if (formats.includes("links")) {
-    if (mode === "modern") {
-      result.links = extractPageLinksFromHtml(fixedHtml, baseUrl)
-    } else {
-      const links = await prisma.link.findMany({
-        where: { sourcePageId: page.id, sourceType: "anchor" },
-        orderBy: { firstCrawlOn: "asc" },
-        select: { anchorText: true, linkTo: true },
-      })
-      result.links = links.map((link) => ({ text: link.anchorText || "", link: link.linkTo }))
-    }
+    const links = await prisma.link.findMany({
+      where: { sourcePageId: page.id, sourceType: "anchor" },
+      orderBy: { firstCrawlOn: "asc" },
+      select: { anchorText: true, linkTo: true },
+    })
+    result.links = links.map((link) => ({ text: link.anchorText || "", link: link.linkTo }))
   }
   if (formats.includes("images")) {
     const images = Array.isArray(captured.images) ? captured.images : []
@@ -125,9 +112,6 @@ async function buildRequestedCrawlResult(
 
 // Start a crawl for the submitted project URL.
 export async function POST(request: NextRequest) {
-  const mode = parseCrawlMode(request)
-  if (!mode) return crawlFailure("mode must be native or modern.", 400, "invalid_mode")
-
   const responseFormats = parseCrawlResponseFormats(request)
   if (responseFormats === null) {
     return crawlFailure(`When respond=true, format must contain one or more of: ${crawlResponseFormats.join(", ")}.`, 400, "invalid_format")
@@ -150,9 +134,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const { domain, siteUrl } = await createDomainForCrawl({ url })
-    const page = mode === "modern"
-      ? await runSinglePageJavascriptCrawler(domain.id, siteUrl)
-      : await runSinglePageCrawler(domain.id, siteUrl)
+    const page = await runSinglePageCrawler(domain.id, siteUrl)
     if (!page) return crawlFailure("The page could not be saved.", 500, "crawl_failed")
     if (page.status === "Error") {
       const firstData = page.data[0]
@@ -166,7 +148,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (responseFormats.length > 0) {
-      return crawlSuccess(await buildRequestedCrawlResult(page, responseFormats, mode))
+      return crawlSuccess(await buildRequestedCrawlResult(page, responseFormats))
     }
 
     const result = {
