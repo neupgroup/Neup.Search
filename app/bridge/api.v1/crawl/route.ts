@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
 import {
-  createDomainForCrawl,
-  InvalidDomainError,
   runSinglePageCrawler,
 } from "@/services/neupbot"
+import { createDomainForCrawl } from "@/services/projects/create"
+import { InvalidDomainError } from "@/services/projects/domain"
 import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
 import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
 

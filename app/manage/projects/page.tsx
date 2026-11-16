@@ -12,7 +12,7 @@ import { ManagePropertiesSkeleton } from "@/components/manage-properties-skeleto
 import Link from "next/link"
 import { ArrowRight, Plus } from "lucide-react"
 import { Card, CardContent } from "@neup/components/ui/card"
-import { getPaginatedPropertyOptions } from "@/services/neupbot"
+import { getPaginatedPropertyOptions } from "@/services/projects/list"
 
 export const dynamic = "force-dynamic"
 

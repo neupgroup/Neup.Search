@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import { jsonMethodNotAllowed, jsonResponse, toProjectSlug, withJsonErrors } from "@/lib/bridge-api"
 import { prisma } from "@/lib/prisma"
-import { readDetails } from "@/services/neupbot"
+import { readDetails } from "@/services/projects/view"
 
 // List projects, optionally filtered by a search query.
 export const GET = withJsonErrors(async (request: NextRequest) => {

@@ -8,19 +8,18 @@ import type { Page } from "../pages/actions"
 import { logError } from "@/lib/logica-logging"
 import {
   cancelDomainCrawl,
-  createDomainForCrawl,
   deleteManagedDomain,
   deleteDomainPages,
-  getManagedDomainById,
   getNeupbotDashboardStats,
   getPagesForDomain,
-  InvalidDomainError,
-  markDomainSummaryFailed,
   resumePendingCrawler,
   runCrawler,
-  summarizeDomain,
   type ManagedDomain,
 } from "@/services/neupbot"
+import { createDomainForCrawl } from "@/services/projects/create"
+import { InvalidDomainError } from "@/services/projects/domain"
+import { getManagedDomainById } from "@/services/projects/view"
+import { markDomainSummaryFailed, summarizeDomain } from "@/services/projects/update"
 
 const DomainSchema = z.object({
   url: z.string()

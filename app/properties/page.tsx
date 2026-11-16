@@ -10,7 +10,8 @@ import { notFound } from "next/navigation"
 
 import HeaderS2V2 from "@/components/header.s2.v2"
 import { PropertiesExplorer } from "@/components/properties-explorer"
-import { getPropertyDashboard, getPropertyOptions } from "@/services/neupbot"
+import { getPropertyDashboard } from "@/services/projects/view"
+import { getPropertyOptions } from "@/services/projects/list"
 
 export const dynamic = "force-dynamic"
 

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import { jsonError, jsonMethodNotAllowed, jsonResponse, parseResourceSlug, toProjectSlug, withJsonErrors } from "@/lib/bridge-api"
 import { prisma } from "@/lib/prisma"
-import { readDetails } from "@/services/neupbot"
+import { readDetails } from "@/services/projects/view"
 
 // Resolve a project using both its URL slug and database ID.
 export const GET = withJsonErrors(async (_request: NextRequest, context: { params: Promise<{ slug: string }> }) => {

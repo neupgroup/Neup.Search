@@ -3,7 +3,7 @@ import { notFound } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
 import { parseResourceSlug, toProjectSlug } from "@/lib/bridge-api"
 import { prisma } from "@/lib/prisma"
-import { readDetails } from "@/services/neupbot"
+import { readDetails } from "@/services/projects/view"
 
 // Render the project details page for a validated slug and ID pair.
 export default async function ProjectApiDetailPage({ params }: { params: Promise<{ slug: string }> }) {
