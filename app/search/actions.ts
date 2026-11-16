@@ -2,7 +2,8 @@
 
 "use server"
 
-import { answerQuestion } from "@/ai/flows/answer-question"
+import { assist } from "@neup/logica/assist"
+import { cookies } from "next/headers"
 import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logica-logging";
 
@@ -132,13 +133,23 @@ export async function generateAnswer(query: string) {
     if (searchResults.length === 0) {
         return { answer: "I couldn't find any information on that topic in the indexed pages.", error: null }
     }
-    const searchResultUrls = searchResults.map(r => `${r.title} (${r.url}): ${r.snippet.replace(/<mark>|<\/mark>/g, '')}`);
-    const { answer } = await answerQuestion({
-      question: query,
-      searchResults: searchResultUrls,
-    })
+    const sourceList = searchResults.slice(0, 12).map((result) =>
+      `${result.title} (${result.url}): ${result.snippet.replace(/<mark>|<\/mark>/g, "").slice(0, 500)}`,
+    ).join("\n")
+    const prompt = `Answer using only these sources. Cite claims with source URLs. If they do not answer the question, say so.\nQuestion: ${query}\nSources:\n${sourceList}`
+    const authAccountToken = (await cookies()).get("auth_account")?.value
+    const searchAssist = assist({ authAccountToken })
+    const chatResponse = await searchAssist.chats.create({ title: "Search answer" })
+    if (!chatResponse.ok || !chatResponse.body.id) {
+      throw new Error(chatResponse.body.error || "Could not start a Logica Assist chat.")
+    }
+    const messageResponse = await searchAssist.chats.messages(chatResponse.body.id).send(prompt)
+    if (!messageResponse.ok || !messageResponse.body.result?.trim()) {
+      throw new Error(messageResponse.body.error || "Logica Assist returned an empty answer.")
+    }
+    const answer = messageResponse.body.result.trim()
     return { answer, error: null }
-  } catch (e: any) {
+  } catch (e: unknown) {
     await logError(e, "generateAnswer");
     return { answer: null, error: "Sorry, I couldn't generate an answer at this time. The AI may be offline. Please try again later." }
   }

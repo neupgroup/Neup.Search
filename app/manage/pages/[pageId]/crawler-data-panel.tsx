@@ -63,7 +63,7 @@ export function CrawlerDataPanel({ url }: { url: string }) {
           <CardContent className="space-y-4">
             <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
               <div>Fetched: {new Date(state.data.fetchedAt).toLocaleString()}</div>
-              <div>{state.data.truncated ? "HTML truncated for display." : "Full response shown."}</div>
+              <div>{state.data.truncated ? "HTML snapshots truncated for display." : "Full HTML snapshots shown."}</div>
             </div>
 
             <details className="rounded-md border p-3">
@@ -77,11 +77,86 @@ export function CrawlerDataPanel({ url }: { url: string }) {
               </div>
             </details>
 
-            <pre className="max-h-[640px] overflow-auto rounded-md border bg-muted p-4 text-xs leading-relaxed">
-              <code>{state.data.html}</code>
-            </pre>
+            <details className="rounded-md border p-3">
+              <summary className="cursor-pointer text-sm font-medium">Raw Crawled HTML</summary>
+              <HtmlSnapshot html={state.data.html} emptyMessage="No HTML response was returned." />
+            </details>
+
+            <details className="rounded-md border p-3">
+              <summary className="cursor-pointer text-sm font-medium">JavaScript Crawled HTML</summary>
+              <HtmlSnapshot html={state.data.javascriptHtml} emptyMessage="No JavaScript rendered HTML was returned." />
+            </details>
+
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Rendered Content</h3>
+              {state.data.renderedContent ? (
+                <iframe
+                  title="JavaScript rendered page content"
+                  srcDoc={state.data.javascriptHtml}
+                  sandbox=""
+                  className="h-[640px] w-full rounded-md border bg-white"
+                />
+              ) : (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No rendered HTML is available to preview.
+                </p>
+              )}
+            </section>
+
+            <ResourceList title="Images, Media" emptyMessage="No images or media found." items={state.data.imagesMedia.map((item) => ({ ...item, label: item.alt || item.type }))} previews />
+            <ResourceList title="Binaries" emptyMessage="No binary links found." items={state.data.binaries} />
+            <section className="grid gap-4 lg:grid-cols-2">
+              <ResourceList title="Internal Links" emptyMessage="No internal links found." items={state.data.internalLinks.map((item) => ({ url: item.url, label: item.text || item.url }))} />
+              <ResourceList title="External Links" emptyMessage="No external links found." items={state.data.externalLinks.map((item) => ({ url: item.url, label: item.text || item.url }))} />
+            </section>
           </CardContent>
         </Card>
+      )}
+    </section>
+  )
+}
+
+// Display an HTML snapshot as readable source with resolved absolute URLs.
+function HtmlSnapshot({ html, emptyMessage }: { html: string; emptyMessage: string }) {
+  if (!html) return <p className="mt-3 text-sm text-muted-foreground">{emptyMessage}</p>
+  return (
+    <pre className="mt-3 max-h-[640px] overflow-auto rounded-md border bg-muted p-4 text-xs leading-relaxed">
+      <code>{html}</code>
+    </pre>
+  )
+}
+
+// Render discovered resources and navigation URLs as absolute links.
+function ResourceList({
+  title,
+  emptyMessage,
+  items,
+  previews = false,
+}: {
+  title: string
+  emptyMessage: string
+  items: Array<{ url: string; label: string }>
+  previews?: boolean
+}) {
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold">{title} <span className="text-muted-foreground">({items.length})</span></h3>
+      {items.length === 0 ? (
+        <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{emptyMessage}</p>
+      ) : (
+        <ul className="max-h-[480px] space-y-2 overflow-auto rounded-md border p-3">
+          {items.map((item) => (
+            <li key={item.url} className="flex items-start gap-3 text-sm">
+              {previews && <img src={item.url} alt="" className="h-12 w-12 shrink-0 rounded border object-cover" loading="lazy" />}
+              <div className="min-w-0">
+                <div className="font-medium">{item.label}</div>
+                <a href={item.url} target="_blank" rel="noreferrer" className="block break-all text-xs text-muted-foreground hover:text-primary">
+                  {item.url}
+                </a>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )

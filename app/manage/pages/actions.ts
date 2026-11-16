@@ -4,9 +4,13 @@ import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logica-logging"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { summarizePageContent } from "@/ai/flows/summarize-page-flow"
+import { cookies } from "next/headers"
 import type { Prisma } from "@prisma/client"
+import * as cheerio from "cheerio"
+import { assist } from "@neup/logica/assist"
 import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
+import { crawlPageToHtml } from "@/services/crawl/html"
+import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
 
 export type Page = {
   id: string
@@ -46,8 +50,14 @@ export type LiveCrawlerDataState = {
     contentType: string | null
     fetchedAt: string
     html: string
+    javascriptHtml: string
+    renderedContent: string
     truncated: boolean
     headers: Array<{ key: string; value: string }>
+    imagesMedia: Array<{ url: string; type: string; alt?: string }>
+    binaries: Array<{ url: string; label: string }>
+    internalLinks: Array<{ url: string; text: string }>
+    externalLinks: Array<{ url: string; text: string }>
   }
   error?: string
 }
@@ -428,6 +438,66 @@ export async function getPageSitemapReferences(page: Page): Promise<PageSitemapR
   return [...references.values()]
 }
 
+// Extract absolute media, binary, and navigation URLs from the HTML snapshot.
+function extractLiveCrawlerResources(html: string, pageUrl: string) {
+  const $ = cheerio.load(html)
+  const pageOrigin = new URL(pageUrl).origin
+  const imagesMedia: Array<{ url: string; type: string; alt?: string }> = []
+  const binaries: Array<{ url: string; label: string }> = []
+  const internalLinks: Array<{ url: string; text: string }> = []
+  const externalLinks: Array<{ url: string; text: string }> = []
+  const mediaSeen = new Set<string>()
+  const binarySeen = new Set<string>()
+  const binaryExtensions = /\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|tar|gz|exe|dmg|apk|woff2?|ttf|eot)(?:$)/i
+
+  $("img, video[src], video[poster], audio[src], source[src]").each((_, element) => {
+    const node = $(element)
+    const source = node.attr("src")
+      || node.attr("data-src")
+      || node.attr("data-lazy-src")
+      || node.attr("data-original")
+      || node.attr("poster")
+      || node.attr("srcset")?.split(",")[0]?.trim().split(/\s+/)[0]
+    if (!source) return
+    try {
+      const url = new URL(source, pageUrl).toString()
+      if (mediaSeen.has(url)) return
+      mediaSeen.add(url)
+      imagesMedia.push({
+        url,
+        type: element.tagName.toLowerCase(),
+        alt: node.attr("alt") || undefined,
+      })
+    } catch {
+      // Ignore malformed resource URLs.
+    }
+  })
+
+  $("a[href]").each((_, element) => {
+    const node = $(element)
+    const rawHref = node.attr("href")
+    if (!rawHref) return
+    try {
+      const target = new URL(rawHref, pageUrl)
+      if (target.protocol !== "http:" && target.protocol !== "https:") return
+      const url = target.toString()
+      const text = node.text().replace(/\s+/g, " ").trim() || node.attr("aria-label") || ""
+      if (target.origin === pageOrigin) internalLinks.push({ url, text })
+      else externalLinks.push({ url, text })
+
+      if ((node.attr("download") !== undefined || binaryExtensions.test(target.pathname)) && !binarySeen.has(url)) {
+        binarySeen.add(url)
+        binaries.push({ url, label: text || target.pathname.split("/").pop() || url })
+      }
+    } catch {
+      // Ignore malformed navigation URLs.
+    }
+  })
+
+  return { imagesMedia, binaries, internalLinks, externalLinks }
+}
+
+// Fetch raw and JavaScript rendered HTML, stopping on response headers for non-HTML resources.
 export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, formData: FormData): Promise<LiveCrawlerDataState> {
   const pageUrl = String(formData.get("url") || "")
 
@@ -441,19 +511,62 @@ export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, fo
       redirect: "manual",
       cache: "no-store",
     })
-    const html = await response.text()
     const maxLength = 500_000
+    const contentType = response.headers.get("content-type")
+    const normalizedContentType = contentType?.split(";")[0].trim().toLowerCase()
+    const headers = Array.from(response.headers.entries()).map(([key, value]) => ({ key, value }))
+    const baseData = {
+      url: response.url || pageUrl,
+      status: response.status,
+      statusText: response.statusText,
+      contentType,
+      fetchedAt: new Date().toISOString(),
+      headers,
+    }
+
+    if (normalizedContentType !== "text/html" && normalizedContentType !== "application/xhtml+xml") {
+      return {
+        data: {
+          ...baseData,
+          html: "",
+          javascriptHtml: "",
+          renderedContent: "",
+          truncated: false,
+          imagesMedia: [],
+          binaries: [],
+          internalLinks: [],
+          externalLinks: [],
+        },
+      }
+    }
+
+    const rawHtml = await response.text()
+    const html = makeHtmlLinksAbsolute(rawHtml, baseData.url)
+    let javascriptHtml = ""
+    try {
+      const rendered = await crawlPageToHtml(baseData.url, {
+        javascriptEnabled: true,
+        userAgent: neupbotUserAgent,
+      })
+      const renderedType = (rendered.headers["content-type"] || "").split(";")[0].trim().toLowerCase()
+      if (renderedType === "text/html" || renderedType === "application/xhtml+xml") {
+        javascriptHtml = makeHtmlLinksAbsolute(rendered.html, rendered.url || baseData.url)
+      }
+    } catch (renderError) {
+      await logError({ error: renderError, pageUrl }, "viewCrawlerDataAction_javascriptRender")
+    }
+    const displayHtml = javascriptHtml || html
+    const $rendered = cheerio.load(displayHtml)
+    const resources = extractLiveCrawlerResources(displayHtml, baseData.url)
 
     return {
       data: {
-        url: pageUrl,
-        status: response.status,
-        statusText: response.statusText,
-        contentType: response.headers.get("content-type"),
-        fetchedAt: new Date().toISOString(),
+        ...baseData,
         html: html.slice(0, maxLength),
-        truncated: html.length > maxLength,
-        headers: Array.from(response.headers.entries()).map(([key, value]) => ({ key, value })),
+        javascriptHtml: javascriptHtml.slice(0, maxLength),
+        renderedContent: $rendered("body").html() || "",
+        truncated: html.length > maxLength || javascriptHtml.length > maxLength,
+        ...resources,
       },
     }
   } catch (error) {
@@ -462,9 +575,27 @@ export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, fo
   }
 }
 
+// Ask Logica Assist for a short page summary and cap the saved output at 50 words.
+async function generatePageSummary(pageContent: string) {
+  const authAccountToken = (await cookies()).get("auth_account")?.value
+  const pageAssist = assist({ authAccountToken })
+  const chatResponse = await pageAssist.chats.create({ title: "Page summary" })
+  if (!chatResponse.ok || !chatResponse.body.id) {
+    throw new Error(chatResponse.body.error || "Could not start a Logica Assist chat.")
+  }
+
+  const prompt = `Summarize this webpage in 50 words or fewer. State its purpose and key points. Use plain language; no preamble.\n\n${pageContent.slice(0, 12_000)}`
+  const messageResponse = await pageAssist.chats.messages(chatResponse.body.id).send(prompt)
+  if (!messageResponse.ok || !messageResponse.body.result?.trim()) {
+    throw new Error(messageResponse.body.error || "Logica Assist returned an empty summary.")
+  }
+
+  return messageResponse.body.result.trim().split(/\s+/).slice(0, 50).join(" ")
+}
+
 export async function summarizePageAction(pageId: string, pageContent: string) {
   try {
-    const { summary } = await summarizePageContent({ content: pageContent })
+    const summary = await generatePageSummary(pageContent)
     const page = await prisma.page.findUnique({
       where: { id: pageId },
       select: { data: true },

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
+import { cookies } from "next/headers"
 import { z } from "zod"
 import type { Page } from "../pages/actions"
 import { logError } from "@/lib/logica-logging"
@@ -88,7 +89,8 @@ export async function summarizeSiteAction(formData: FormData) {
   }
 
   try {
-    await summarizeDomain(siteId, siteUrl)
+    const authAccountToken = (await cookies()).get("auth_account")?.value
+    await summarizeDomain(siteId, siteUrl, authAccountToken)
   } catch (error) {
     await logError(error, "summarizeSiteAction")
     await markDomainSummaryFailed(siteId)
