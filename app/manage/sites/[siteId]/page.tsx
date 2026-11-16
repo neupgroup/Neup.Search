@@ -30,6 +30,8 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
   const resolvedSearchParams = await searchParams;
   const requestedPage = readPositiveInteger(resolvedSearchParams.page, 1)
   const requestedPageSize = readPositiveInteger(resolvedSearchParams.pageSize, 20)
+  const propertyValue = resolvedSearchParams.property
+  const propertyId = Array.isArray(propertyValue) ? propertyValue[0] : propertyValue
   const site = await getSiteById(resolvedParams.siteId)
   
   if (!site) {
@@ -40,7 +42,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
   const { pages, page, pageSize, totalCount, totalPages } = pagination
 
   if (requestedPage !== page || requestedPageSize !== pageSize) {
-    redirect(buildPagesLink(resolvedParams.siteId, site.id, page, pageSize))
+    redirect(buildPagesLink(resolvedParams.siteId, propertyId || site.id, page, pageSize))
   }
 
 
@@ -121,7 +123,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
               {pages.map((page) => (
                 <TableRow key={page.id}>
                   <TableCell className="font-medium break-all">
-                     <Link href={`/manage/pages/${page.id}`} className="font-bold hover:underline">{page.title}</Link>
+                     <Link href={`/manage/pages/${page.id}?property=${encodeURIComponent(propertyId || site.id)}`} className="font-bold hover:underline">{page.title}</Link>
                     <div className="text-xs text-muted-foreground">{page.url}</div>
                   </TableCell>
                   <TableCell>
@@ -141,10 +143,10 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
                     Page {page} of {totalPages} | {totalCount.toLocaleString()} pages | {pageSize} per page
                 </p>
                 <div className="flex justify-end gap-2">
-                <Link href={buildPagesLink(resolvedParams.siteId, site.id, Math.max(1, page - 1), pageSize)}>
+                <Link href={buildPagesLink(resolvedParams.siteId, propertyId || site.id, Math.max(1, page - 1), pageSize)}>
                     <Button variant="outline" disabled={page <= 1}>Previous</Button>
                 </Link>
-                <Link href={buildPagesLink(resolvedParams.siteId, site.id, Math.min(totalPages, page + 1), pageSize)}>
+                <Link href={buildPagesLink(resolvedParams.siteId, propertyId || site.id, Math.min(totalPages, page + 1), pageSize)}>
                     <Button variant="outline" disabled={page >= totalPages}>Next</Button>
                 </Link>
                 </div>

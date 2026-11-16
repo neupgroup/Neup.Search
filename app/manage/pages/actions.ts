@@ -11,6 +11,7 @@ import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPa
 export type Page = {
   id: string
   url: string
+  type: string
   title: string
   siteUrl: string
   status: "Indexed" | "Error" | "Pending" | "Skipped" | "Redirect"
@@ -204,6 +205,7 @@ function mapPage(page: PageRow): Page {
   return {
     id: page.id,
     url: page.url,
+    type: page.type,
     title: page.title || "No title",
     description: page.description || "No description",
     siteUrl: page.domain.domain,

@@ -84,6 +84,20 @@ export async function crawlPageToHtml(url: string, options: CrawlHtmlOptions = {
       waitUntil: "domcontentloaded",
       timeout: options.timeoutMs ?? 30_000,
     })
+    const headers = response ? await response.allHeaders() : {}
+    const contentType = (headers["content-type"] || "").split(";")[0].trim().toLowerCase()
+    const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml"
+
+    // Stop as soon as response headers identify a non-HTML resource.
+    if (response && !isHtml) {
+      return {
+        url: response.url() || page.url(),
+        title: "",
+        html: "",
+        headers,
+        statusCode: response.status(),
+      }
+    }
 
     if (options.javascriptEnabled !== false) {
       await page.waitForLoadState("networkidle", { timeout: options.timeoutMs ?? 30_000 }).catch(() => undefined)
@@ -98,7 +112,7 @@ export async function crawlPageToHtml(url: string, options: CrawlHtmlOptions = {
       url: finalUrl,
       title: await page.title(),
       html: makeHtmlLinksAbsolute(renderedHtml, finalUrl),
-      headers: response ? await response.allHeaders() : {},
+      headers,
       statusCode: response?.status() ?? null,
     }
   } finally {

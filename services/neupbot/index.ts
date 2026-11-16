@@ -473,17 +473,6 @@ function readContentLength(headers: Headers | Record<string, string | string[] |
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-async function readStaticFileSize(response: Response) {
-  const headerSize = readContentLength(response.headers)
-  if (headerSize !== null) return headerSize
-
-  try {
-    return (await response.arrayBuffer()).byteLength
-  } catch {
-    return null
-  }
-}
-
 type ClickResolvedLink = {
   targetUrl: string
   anchorText?: string
@@ -2052,9 +2041,10 @@ async function crawlStoredPage({
       return false
     }
 
-    const isHtml = contentType?.includes("text/html") ?? false
+    const normalizedContentType = contentType?.split(";")[0].trim().toLowerCase()
+    const isHtml = normalizedContentType === "text/html" || normalizedContentType === "application/xhtml+xml"
     if (!response.ok || !isHtml) {
-      const fileSize = !isHtml ? await readStaticFileSize(response) : readContentLength(response.headers)
+      const fileSize = readContentLength(response.headers)
       const content = classifyContentUrl(pageUrl)
       const data = buildPageData(
         null,
@@ -2293,6 +2283,33 @@ export async function runSinglePageJavascriptCrawler(siteId: string, pageUrl: st
     javascriptEnabled: true,
     userAgent: neupbotUserAgent,
   })
+  const contentType = extraction.headers["content-type"] || ""
+  const normalizedContentType = contentType.split(";")[0].trim().toLowerCase()
+  if (normalizedContentType !== "text/html" && normalizedContentType !== "application/xhtml+xml") {
+    const statusCode = extraction.statusCode
+    await saveCrawledPage(pageId, {
+      title: getUrlTitle(pageUrl),
+      description: null,
+      type: contentType || "unknown",
+      data: buildPageData(null, extraction.headers, null),
+      content: null,
+      status: statusCode !== null && statusCode >= 400 ? "Error" : "Skipped",
+      statusCode,
+      details: { contentType: contentType || null, kind: classifyContentUrl(pageUrl)?.kind || "asset", fileType: classifyContentUrl(pageUrl)?.fileType || getUrlFileType(pageUrl) },
+    })
+    await prisma.domain.update({
+      where: { id: siteId },
+      data: {
+        currentActivity: "Single page crawl complete.",
+        currentCrawlUrl: "",
+      },
+    })
+    return prisma.page.findUnique({
+      where: { id: pageId },
+      select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true },
+    })
+  }
+
   const $ = cheerio.load(extraction.html)
   const statusCode = extraction.statusCode ?? null
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
@@ -2650,8 +2667,9 @@ export async function runJavascriptCrawler(siteId: string, siteUrl: string) {
         crawledUrls.add(normalizedUrl)
         const statusCode = response?.status() ?? null
         const headers = response?.headers() ?? {}
-        const contentType = headers["content-type"] || "text/html"
-        const isHtml = contentType.includes("text/html")
+        const contentType = headers["content-type"] || ""
+        const normalizedContentType = contentType.split(";")[0].trim().toLowerCase()
+        const isHtml = normalizedContentType === "text/html" || normalizedContentType === "application/xhtml+xml"
 
         if (!response || (statusCode !== null && statusCode >= 400) || !isHtml) {
           const existingPage = await prisma.page.findFirst({ where: { url: currentUrl, domainId: siteId }, select: { id: true } })

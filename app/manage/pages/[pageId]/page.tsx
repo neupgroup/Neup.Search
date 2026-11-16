@@ -19,6 +19,7 @@ import {
 import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"
+import { CrawlPageButton } from "./crawl-page-button"
 import { getPageIssues, type PageIssue } from "@/services/neupbot"
 
 function getIssueKindLabel(kind: PageIssue["kind"]) {
@@ -101,8 +102,23 @@ function getBacklinkDisplayText(link: { anchorText?: string | null; altText?: st
   return link.anchorText || link.altText || link.titleText || null
 }
 
-export default async function PageDetailPage({ params }: { params: Promise<{ pageId: string }> }) {
+// Hide manual crawling for records already identified as a non-HTML resource.
+function isNonHtmlPage(page: { type: string; url: string }) {
+  const contentType = page.type.toLowerCase().split(";")[0].trim()
+  if (contentType.includes("/") && contentType !== "text/html" && contentType !== "application/xhtml+xml") {
+    return true
+  }
+
+  const pathname = new URL(page.url).pathname.toLowerCase()
+  return /\.(?:pdf|jpe?g|png|gif|webp|svg|avif|ico|bmp|tiff?|mp4|webm|mov|m4v|avi|mpeg|mpg|ogv|mp3|wav|ogg|css|js|mjs|json|xml|zip|woff2?|ttf|eot)(?:$)/i.test(pathname)
+}
+
+export default async function PageDetailPage({ params, searchParams }: { params: Promise<{ pageId: string }>, searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams
+  const propertyValue = resolvedSearchParams.property
+  const propertyId = Array.isArray(propertyValue) ? propertyValue[0] : propertyValue
+  const propertyQuery = propertyId ? `?property=${encodeURIComponent(propertyId)}` : ""
   const page = await getPageById(resolvedParams.pageId)
   
   if (!page) {
@@ -129,12 +145,12 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
               </CardDescription>
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-2">
-              <form action={crawlPageAction}>
-                <input type="hidden" name="pageId" value={page.id} />
-                <Button type="submit" variant="default">
-                  Crawl Page
-                </Button>
-              </form>
+              {!isNonHtmlPage(page) && (
+                <form action={crawlPageAction}>
+                  <input type="hidden" name="pageId" value={page.id} />
+                  <CrawlPageButton />
+                </form>
+              )}
               <form action={async () => {
                 "use server"
                 if (page.content) {
@@ -202,7 +218,7 @@ export default async function PageDetailPage({ params }: { params: Promise<{ pag
                   <CardContent className="p-4">
                     <div className="space-y-2">
                       {link.sourcePageId ? (
-                        <Link href={`/manage/pages/${link.sourcePageId}`} className="font-medium hover:underline">
+                        <Link href={`/manage/pages/${link.sourcePageId}${propertyQuery}`} className="font-medium hover:underline">
                           {link.sourceTitle}
                         </Link>
                       ) : (
