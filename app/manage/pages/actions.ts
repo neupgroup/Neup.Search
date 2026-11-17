@@ -45,7 +45,7 @@ export type PageSitemapReference = SitemapReference
 export type SummaryActionState = {
   success: boolean
   error?: { code: string; description: string }
-  result?: { summary: string }
+  result?: { summary: string; category: string | null }
 }
 
 export type LiveCrawlerDataState = {
@@ -639,7 +639,7 @@ export async function summarizePageAction(_previousState: SummaryActionState, fo
         ],
       },
     })
-    return { success: true, result: { summary: insight.summary } }
+    return { success: true, result: { summary: insight.summary, category: insight.category } }
   } catch (error) {
     await logError({ error, pageId }, "summarizePageAction")
     return {

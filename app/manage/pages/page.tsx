@@ -139,7 +139,9 @@ async function PagesList({search, page, pageSize, propertyId}: {search?: string,
                                         {page.title}
                                         </div>
                                     </div>
-                                    {page.category ? <Badge variant="secondary" className="ml-6 w-fit">{page.category}</Badge> : null}
+                                    <Badge variant="secondary" className="ml-6 w-fit">
+                                        Category: {page.category || "Uncategorized"}
+                                    </Badge>
                                     <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground">
                                         <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{page.url}</span>
                                         <ExternalLink className="h-3.5 w-3.5 shrink-0" />

@@ -9,7 +9,7 @@ import { updateDomainDetails } from "@/services/projects/update"
 import { upsertDomainRecord } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
 import { generatePageInsight } from "@/services/intelligence/page-insight"
-import { getBasics } from "@/services/intelligence/basics"
+import { getBasics } from "@/services/intelligence/site-profile"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
 

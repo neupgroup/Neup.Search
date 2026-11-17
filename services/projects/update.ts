@@ -2,7 +2,7 @@ import * as cheerio from "cheerio"
 import { prisma } from "@/lib/prisma"
 import { neupbotUserAgent } from "@/services/neupbot"
 import { readDetails } from "@/services/projects/view"
-import { getBasics } from "@/services/intelligence/basics"
+import { getBasics } from "@/services/intelligence/site-profile"
 import type { DomainDetails } from "@/services/neupbot"
 
 // Update selected project metadata while retaining existing details.

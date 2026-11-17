@@ -18,17 +18,23 @@ function SummarySubmitButton({ disabled, generated }: { disabled: boolean; gener
   )
 }
 
-// Submit only the page ID and display the summary returned by the server action.
+// Submit the page ID and display the generated summary and page category.
 export function SummaryForm({ pageId, hasContent }: {
   pageId: string
   hasContent: boolean
 }) {
   const [state, action] = useActionState(summarizePageAction, initialSummaryState)
   const summary = state.result?.summary
+  const category = state.result?.category
   const isGenerated = Boolean(summary)
 
   if (isGenerated) {
-    return <p className="text-sm text-muted-foreground">{summary}</p>
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-muted-foreground">{summary}</p>
+        <p className="text-xs text-muted-foreground">Category: {category || "Uncategorized"}</p>
+      </div>
+    )
   }
 
   return (

@@ -1,5 +1,5 @@
-import { categorizePage } from "@/services/intelligence/categorize"
-import { summarizePage } from "@/services/intelligence/summarize"
+import { categorizePage } from "@/services/intelligence/categorization-context"
+import { summarizePage } from "@/services/intelligence/summarization-context"
 
 export type GeneratePageInsightInput = {
   pageUrl: string
