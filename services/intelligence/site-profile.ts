@@ -110,6 +110,7 @@ export async function getBasics(input: GetBasicsInput): Promise<SiteBasics | nul
         details: {
           ...existingDetails,
           ...(basics.summary ? { summary: basics.summary } : {}),
+          siteProfileGeneratedAt: new Date().toISOString(),
           ...(logoUrl ? { logoUrl } : {}),
           ...((faviconUrl || logoUrl) ? { appIconUrl: faviconUrl || logoUrl } : {}),
         },

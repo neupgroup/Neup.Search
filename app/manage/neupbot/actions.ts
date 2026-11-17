@@ -1,13 +1,13 @@
 "use server"
 
 import { logError } from "@/lib/logica-logging"
-import { getActiveNeupbotCrawls } from "@/services/neupbot"
+import { getLiveNeupbotWorkers as getWorkers } from "@/services/neupbot"
 
-export async function getLiveNeupbotCrawls() {
+export async function getLiveNeupbotWorkers() {
   try {
-    return await getActiveNeupbotCrawls()
+    return await getWorkers()
   } catch (error) {
-    await logError(error, "getLiveNeupbotCrawls")
+    await logError(error, "getLiveNeupbotWorkers")
     return []
   }
 }

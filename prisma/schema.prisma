@@ -20,6 +20,14 @@ enum DomainStatus {
   Stopped
 }
 
+enum CrawlerWorkerStatus {
+  Starting
+  Idle
+  Working
+  Stopped
+  Error
+}
+
 model Account {
   id           String    @id
   type         String
@@ -44,15 +52,33 @@ model Domain {
   details         Json?
   categories      String?      @db.VarChar(256)
 
-  pages     Page[]
-  linksFrom Link[]    @relation("FromDomainLinks")
-  linksTo   Link[]    @relation("ToDomainLinks")
-  sitemaps  Sitemap[]
+  pages          Page[]
+  crawlerWorkers CrawlerWorker[]
+  linksFrom      Link[]          @relation("FromDomainLinks")
+  linksTo        Link[]          @relation("ToDomainLinks")
+  sitemaps       Sitemap[]
 
   @@index([addedOn])
   @@index([status])
   @@index([status, crawlLeaseUntil])
   @@map("domains")
+}
+
+model CrawlerWorker {
+  id         String              @id
+  status     CrawlerWorkerStatus
+  activity   String
+  siteId     String?
+  siteUrl    String?
+  currentUrl String?
+  startedAt  DateTime            @default(now())
+  lastSeenAt DateTime            @default(now())
+
+  site Domain? @relation(fields: [siteId], references: [id], onDelete: SetNull)
+
+  @@index([lastSeenAt])
+  @@index([status, lastSeenAt])
+  @@map("crawler_workers")
 }
 
 model Sitemap {

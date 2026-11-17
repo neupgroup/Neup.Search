@@ -238,22 +238,25 @@ function mapPage(page: PageRow): Page {
   }
 }
 
+const nonPageFileExtensions = [
+  "jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff", "heic", "heif", "psd",
+  "mp4", "webm", "mov", "m4v", "avi", "mpeg", "mpg", "ogv", "mkv", "flv", "wmv", "3gp", "3g2",
+  "mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "weba", "mka", "mid", "midi",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "epub", "mobi",
+  "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "iso", "cab", "exe", "dmg", "apk", "deb", "rpm", "msi", "bin", "dll", "so",
+  "woff", "woff2", "ttf", "otf", "eot", "txt", "csv", "json", "xml", "css", "js", "mjs", "ts", "md", "log",
+]
+
 export async function getPages(search?: string, page = 1, pageSize = 20, propertyId?: string): Promise<PaginatedPages> {
   try {
     const currentPage = Math.max(1, Math.floor(page))
     const limit = Math.min(100, Math.max(1, Math.floor(pageSize)))
     const searchFilter = parsePageSearch(search)
-    const resourceFileExtensions = [
-      "jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff",
-      "mp4", "webm", "mov", "m4v", "avi", "mpeg", "mpg", "ogv", "mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "weba",
-      "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "rar", "7z", "tar", "gz", "exe", "dmg", "apk",
-      "woff", "woff2", "ttf", "eot", "txt", "csv", "json", "xml", "css", "js", "mjs", "ts", "md", "log",
-    ]
     const baseWhere: Prisma.PageWhereInput = {
       ...(propertyId ? { domainId: propertyId } : {}),
       AND: [
         { type: { in: ["unknown", "text/html", "application/xhtml+xml", "html", "htm"] } },
-        { NOT: resourceFileExtensions.map((extension) => ({ url: { contains: `.${extension}`, mode: "insensitive" as const } })) },
+        { NOT: nonPageFileExtensions.map((extension) => ({ url: { contains: `.${extension}`, mode: "insensitive" as const } })) },
       ],
     }
     const where = searchFilter?.kind === "text"

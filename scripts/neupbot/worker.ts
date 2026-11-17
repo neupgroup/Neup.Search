@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { CrawlerWorkerStatus } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import {
   completeDomainCrawlIfIdle,
@@ -10,10 +11,52 @@ const workerId = process.argv[2] || `neup-search-worker-${process.pid}-${randomU
 const POLL_INTERVAL_MS = 2_000
 const LEASE_DURATION_MS = 5 * 60_000
 const HEARTBEAT_INTERVAL_MS = 60_000
+const WORKER_HEARTBEAT_INTERVAL_MS = 10_000
+
+type WorkerState = {
+  status: CrawlerWorkerStatus
+  activity: string
+  siteId: string | null
+  siteUrl: string | null
+  currentUrl: string | null
+}
+
+let workerState: WorkerState = {
+  status: "Starting",
+  activity: "Starting worker.",
+  siteId: null,
+  siteUrl: null,
+  currentUrl: null,
+}
+let workerHeartbeat: ReturnType<typeof setInterval> | undefined
+
+// Persist the worker's current task so the live monitor can show idle and active processes.
+async function updateWorkerState(nextState: Partial<WorkerState> = {}): Promise<void> {
+  workerState = { ...workerState, ...nextState }
+  const lastSeenAt = new Date()
+  try {
+    await prisma.crawlerWorker.upsert({
+      where: { id: workerId },
+      create: { id: workerId, ...workerState, lastSeenAt },
+      update: { ...workerState, lastSeenAt },
+    })
+  } catch (error) {
+    console.error(`[crawler-worker:${workerId}] Could not update worker status.`, error)
+  }
+}
+
+// Append a completed or active stage to the current page job's visible progress trail.
+async function appendWorkerStage(stage: string): Promise<void> {
+  const stages = workerState.activity.split(" → ")
+  if (stages.at(-1) === stage) return
+  await updateWorkerState({ activity: [...stages, stage].join(" → ") })
+}
 
 // Allow the process manager to stop a worker cleanly; its lease expires if it was mid-crawl.
 function stopWorker(): void {
-  void prisma.$disconnect().finally(() => process.exit(0))
+  clearInterval(workerHeartbeat)
+  void updateWorkerState({ status: "Stopped", activity: "Worker stopped.", siteId: null, siteUrl: null, currentUrl: null })
+    .finally(() => prisma.$disconnect().finally(() => process.exit(0)))
 }
 
 // Wait between queue checks without keeping a separate timer alive.
@@ -117,6 +160,7 @@ function startLeaseHeartbeat(
 
 // Prepare a domain's seed and sitemap queue, then release its setup lease for page workers.
 async function processDomain(domain: { id: string; domain: string }): Promise<void> {
+  await updateWorkerState({ status: "Working", activity: `Preparing ${domain.domain}.`, siteId: domain.id, siteUrl: `https://${domain.domain}`, currentUrl: null })
   const heartbeat = startLeaseHeartbeat("domain", domain.id)
   try {
     await prepareCrawler(domain.id, `https://${domain.domain}`)
@@ -126,16 +170,25 @@ async function processDomain(domain: { id: string; domain: string }): Promise<vo
       where: { id: domain.id, crawlWorkerId: workerId },
       data: { crawlWorkerId: null, crawlLeaseUntil: null },
     })
+    await updateWorkerState({ status: "Idle", activity: "Waiting for work.", siteId: null, siteUrl: null, currentUrl: null })
   }
 }
 
 // Crawl one claimed page and release it so another worker can safely process the next page.
 async function processPage(page: { id: string; domainId: string; url: string }): Promise<void> {
+  const domain = await prisma.domain.findUnique({ where: { id: page.domainId }, select: { domain: true } })
+  await updateWorkerState({ status: "Working", activity: "Crawling page", siteId: page.domainId, siteUrl: domain ? `https://${domain.domain}` : null, currentUrl: page.url })
   const heartbeat = startLeaseHeartbeat("page", page.id)
   try {
-    await runPageCrawler(page.id, { updateDomainProgress: false, leaseAlreadyClaimed: true })
+    await runPageCrawler(page.id, {
+      updateDomainProgress: false,
+      leaseAlreadyClaimed: true,
+      onActivity: appendWorkerStage,
+    })
+    await appendWorkerStage("Completed")
   } catch (error) {
     console.error(`[crawler-worker:${workerId}] Page crawl failed for ${page.url}.`, error)
+    await appendWorkerStage("Failed")
     await prisma.page.updateMany({
       where: { id: page.id, crawlWorkerId: workerId, status: "Pending" },
       data: {
@@ -153,6 +206,7 @@ async function processPage(page: { id: string; domainId: string; url: string }):
   }
 
   await completeDomainCrawlIfIdle(page.domainId)
+  await updateWorkerState({ status: "Idle", siteId: null, siteUrl: null, currentUrl: null })
 }
 
 // Finish sites whose last page completed just before a worker stopped or lost its connection.
@@ -169,6 +223,8 @@ async function finalizeIdleDomains(): Promise<void> {
 
 // Continuously prepare sites and claim individual pages, allowing workers to share one site's queue.
 async function runWorker(): Promise<void> {
+  await updateWorkerState({ status: "Idle", activity: "Waiting for work." })
+  workerHeartbeat = setInterval(() => void updateWorkerState(), WORKER_HEARTBEAT_INTERVAL_MS)
   console.info(`[crawler-worker:${workerId}] Worker is active.`)
   while (true) {
     try {
@@ -189,6 +245,13 @@ async function runWorker(): Promise<void> {
       await finalizeIdleDomains()
     } catch (error) {
       console.error(`[crawler-worker:${workerId}] Queue processing failed.`, error)
+      await updateWorkerState({
+        status: "Error",
+        activity: error instanceof Error ? `Retrying after error: ${error.message}` : "Retrying after a queue error.",
+        siteId: null,
+        siteUrl: null,
+        currentUrl: null,
+      })
     }
 
     await sleep(POLL_INTERVAL_MS)

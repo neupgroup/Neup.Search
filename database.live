@@ -20,6 +20,18 @@ Fields:
 > details: json, nullable;
 > categories: string, nullable, varchar(256);
 
+Table: crawler_workers, Model: CrawlerWorker
+Fields:
+> id: string;
+> status: enum(Starting, Idle, Working, Stopped, Error);
+> activity: string;
+> siteId: string, nullable;
+.. references domains.id;
+> siteUrl: string, nullable;
+> currentUrl: string, nullable;
+> startedAt: timestamp, default: now;
+> lastSeenAt: timestamp, default: now;
+
 Table: sitemap, Model: Sitemap
 Fields:
 > id: string, default: cuid;

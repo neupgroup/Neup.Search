@@ -6,7 +6,7 @@ export type GeneratePageInsightInput = {
   pageUrl: string
   pageTitle: string
   pageContent: string
-  siteCategory: string
+  siteCategory: string | null
   onGenericDetected?: () => Promise<void>
 }
 
@@ -18,10 +18,6 @@ export type PageInsight = {
 
 // Generate a page summary and site-aware category in one JSON intelligence request.
 export async function generatePageInsight(input: GeneratePageInsightInput): Promise<PageInsight> {
-  if (!input.siteCategory.trim()) {
-    throw new Error("The site's category must be defined before generating page insights.")
-  }
-
   const categoryOptions = getCategorizationContext(input.siteCategory)
   const response = await createNiaResponse({
     model: "auto",
@@ -32,7 +28,9 @@ export async function generatePageInsight(input: GeneratePageInsightInput): Prom
         text: [
           "Analyze this webpage and return JSON only with keys summary and category.",
           "Write a plain-language summary of at most 50 words stating the page purpose and key points.",
-          "Choose exactly one category from the supplied allowed categories.",
+          input.siteCategory
+            ? "Choose exactly one category from the supplied allowed categories."
+            : "The site's category is unknown, so choose a generic page category from the supplied allowed categories when one fits.",
           'If the page is generic, set category to "generic". If no category fits, set it to "not-any".',
           `When category is generic, also choose genericCategory from: ${getGenericPageCategories().join(", ")}.`,
           `Allowed categories: ${categoryOptions.join(", ")}.`,

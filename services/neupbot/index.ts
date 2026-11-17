@@ -17,6 +17,7 @@ export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; cr
 export type DomainDetails = {
   description?: string
   summary?: string
+  siteProfileGeneratedAt?: string
   logoUrl?: string
   appIconUrl?: string
   appIconBackgroundColor?: string
@@ -67,19 +68,6 @@ export type ManagedPage = {
 export type PaginatedDomains = {
   sites: ManagedDomain[]
   lastVisibleId: string | null
-}
-
-export type NeupbotCrawlActivity = {
-  siteId: string
-  siteUrl: string
-  siteName?: string
-  status: ManagedDomain["status"]
-  currentActivity?: string
-  currentCrawlUrl?: string
-  pagesCrawled: number
-  internalResourcesFound: number
-  externalResourcesFound: number
-  lastCrawled: string | null
 }
 
 export type PaginatedDomainPages = {
@@ -691,11 +679,14 @@ async function saveSitemapPages(
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   const existingPage = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { details: true, content: true, data: true, url: true, domainId: true, category: true },
+    select: { details: true, data: true },
   })
   const existingDetails = existingPage?.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details)
     ? existingPage.details
     : {}
+  const previousAnalysis = Array.isArray(existingPage?.data) ? existingPage.data.filter((entry) => {
+    return entry !== null && typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization")
+  }) as Prisma.InputJsonValue[] : []
 
   await prisma.page.update({
     where: { id: pageId },
@@ -703,7 +694,9 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       title: pageData.title ?? null,
       description: pageData.description ?? null,
       type: pageData.type,
-      data: pageData.data,
+      data: [...pageData.data.filter((entry) => {
+        return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
+      }), ...previousAnalysis],
       content: pageData.content ?? null,
       ...(pageData.category !== undefined ? { category: pageData.category } : {}),
       status: pageData.status,
@@ -715,27 +708,6 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       },
     },
   })
-
-  if (pageData.status === "Indexed" && pageData.type === "text/html" && pageData.content?.trim()) {
-    if (existingPage && isHomepagePageUrl(existingPage.url)) {
-      const pageDetails = pageData.details && typeof pageData.details === "object" && !Array.isArray(pageData.details)
-        ? pageData.details as Record<string, unknown>
-        : {}
-      await getBasics({
-        siteId: existingPage.domainId,
-        siteUrl: typeof pageDetails.resolvedUrl === "string" ? pageDetails.resolvedUrl : existingPage.url,
-        homepageName: pageData.title || "",
-        homepageContent: pageData.content,
-        renderedContent: getRenderedPageContent(pageData.data),
-      })
-    }
-
-    await saveAutomaticPageAnalysis(pageId, pageData.content, {
-      content: existingPage?.content ?? null,
-      data: existingPage?.data,
-      category: existingPage?.category ?? null,
-    })
-  }
 }
 
 // Check whether a crawled URL is the site's homepage.
@@ -756,202 +728,190 @@ function getRenderedPageContent(data: unknown): string {
   return ""
 }
 
-type SummaryPageSnapshot = {
-  content: string | null
-  data: unknown
-  category: string | null
-}
+// Generate and persist fresh page insights before the worker finishes this page job.
+async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, onActivity?: (activity: string) => Promise<void>): Promise<void> {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { data: true, url: true, title: true, domainId: true, domain: { select: { categories: true } } },
+  })
+  if (!page) throw new Error(`Page ${pageId} was not found while generating insights.`)
 
-// Find the page summary and its generation timestamp in stored crawler data.
-function findStoredSummary(data: unknown): { summary: string; addedOn?: string } | undefined {
-  if (!Array.isArray(data)) return undefined
-  const entry = data.find((value) => value && typeof value === "object" && "kind" in value && value.kind === "summary")
-  if (!entry || typeof entry !== "object" || !("summary" in entry) || typeof entry.summary !== "string") return undefined
-  return {
-    summary: entry.summary,
-    addedOn: "addedOn" in entry && typeof entry.addedOn === "string" ? entry.addedOn : undefined,
-  }
-}
-
-// Read the timestamp for the saved page category analysis.
-function findStoredCategorization(data: unknown): { addedOn?: string } | undefined {
-  if (!Array.isArray(data)) return undefined
-  const entry = data.find((value) => value && typeof value === "object" && "kind" in value && value.kind === "categorization")
-  if (!entry || typeof entry !== "object") return undefined
-  return { addedOn: "addedOn" in entry && typeof entry.addedOn === "string" ? entry.addedOn : undefined }
-}
-
-// Convert page text, image URLs, and link URLs into the atomic elements compared by the crawler diff.
-function getSummaryChangeElements(content: string | null, data: unknown): string[] {
-  const elements = (content?.match(/[\p{L}\p{N}]+/gu) || []).map((word) => `word:${word}`)
-  if (!Array.isArray(data)) return elements
-
-  for (const entry of data) {
-    if (!entry || typeof entry !== "object") continue
-    if ("images" in entry && Array.isArray(entry.images)) {
-      for (const image of entry.images) {
-        if (image && typeof image === "object" && "src" in image && typeof image.src === "string" && image.src) {
-          elements.push(`image:${image.src}`)
-        }
-      }
-    }
-    if ("links" in entry && Array.isArray(entry.links)) {
-      for (const link of entry.links) {
-        if (link && typeof link === "object" && "link" in link && typeof link.link === "string" && link.link) {
-          elements.push(`link:${link.link}`)
-        }
-      }
-    }
+  await onActivity?.("Generating page insights")
+  await updateDomainDetails(page.domainId, {
+    currentActivity: `Generating page insight for ${page.url}`,
+    currentCrawlUrl: page.url,
+  })
+  const insight = await generatePageInsight({
+    pageUrl: page.url,
+    pageTitle: page.title || "",
+    pageContent,
+    siteCategory: page.domain.categories,
+    onGenericDetected: async () => {
+      await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
+    },
+  })
+  if (insight.categorizationError) {
+    await logError({ error: insight.categorizationError, pageId }, "generatePageInsight_categorization")
   }
 
-  return elements
+  const currentData = (Array.isArray(page.data) ? page.data.filter((entry) => {
+    return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
+  }) : []) as Prisma.InputJsonValue[]
+  const addedOn = new Date().toISOString()
+  await prisma.page.update({
+    where: { id: pageId },
+    data: {
+      ...(!insight.categorizationError ? { category: insight.category } : {}),
+      data: [
+        ...currentData,
+        { kind: "summary", summary: insight.summary, addedOn },
+        ...(!insight.categorizationError ? [{ kind: "categorization", category: insight.category, addedOn }] : []),
+      ],
+    },
+  })
 }
 
-// Count insertions and deletions with a Git-style Myers word diff, stopping once the threshold is exceeded.
-function countGitStyleElementChanges(previous: string[], next: string[], stopAfter: number): number {
-  if (previous.length === 0) return next.length
-  if (next.length === 0) return previous.length
-
-  let prefixLength = 0
-  while (prefixLength < previous.length && prefixLength < next.length && previous[prefixLength] === next[prefixLength]) {
-    prefixLength++
-  }
-  let previousEnd = previous.length
-  let nextEnd = next.length
-  while (previousEnd > prefixLength && nextEnd > prefixLength && previous[previousEnd - 1] === next[nextEnd - 1]) {
-    previousEnd--
-    nextEnd--
-  }
-
-  const previousMiddle = previous.slice(prefixLength, previousEnd)
-  const nextMiddle = next.slice(prefixLength, nextEnd)
-  if (previousMiddle.length === 0 || nextMiddle.length === 0) return previousMiddle.length + nextMiddle.length
-  const sharedElements = new Set(previousMiddle)
-  if (!nextMiddle.some((element) => sharedElements.has(element))) return previousMiddle.length + nextMiddle.length
-
-  const maximumDistance = Math.min(previousMiddle.length + nextMiddle.length, stopAfter + 1)
-  const offset = maximumDistance + 1
-  let previousFrontier = new Int32Array(maximumDistance * 2 + 3)
-  previousFrontier[offset + 1] = 0
-
-  for (let distance = 0; distance <= maximumDistance; distance++) {
-    const currentFrontier = new Int32Array(maximumDistance * 2 + 3)
-    for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
-      const index = offset + diagonal
-      let x = diagonal === -distance || (diagonal !== distance && previousFrontier[index - 1] < previousFrontier[index + 1])
-        ? previousFrontier[index + 1]
-        : previousFrontier[index - 1] + 1
-      let y = x - diagonal
-
-      while (x < previousMiddle.length && y < nextMiddle.length && previousMiddle[x] === nextMiddle[y]) {
-        x++
-        y++
-      }
-      currentFrontier[index] = x
-      if (x >= previousMiddle.length && y >= nextMiddle.length) return distance
-    }
-    previousFrontier = currentFrontier
+// Ensure the site profile exists and save fresh insights before the worker completes this page.
+async function completePageCrawlEnrichment(
+  pageId: string,
+  onActivity?: (activity: string) => Promise<void>,
+): Promise<void> {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: {
+      id: true,
+      url: true,
+      title: true,
+      content: true,
+      data: true,
+      category: true,
+      status: true,
+      type: true,
+      domainId: true,
+      domain: { select: { domain: true, categories: true, details: true } },
+    },
+  })
+  if (!page) throw new Error(`Page ${pageId} was not found after crawling.`)
+  if (page.status !== "Indexed" || page.type !== "text/html" || !page.content?.trim()) {
+    await onActivity?.(`Enrichment skipped (${page.status}, ${page.type || "no type"}).`)
+    return
   }
 
-  return maximumDistance
-}
+  const details = readDetails(page.domain.details)
+  const profileExists = !!details.summary || !!details.siteProfileGeneratedAt
+  let profileError: Error | undefined
+  if (!profileExists) {
+    await onActivity?.("Generating site profile")
+    const workerId = `profile-${randomUUID()}`
+    const leaseDurationMs = 5 * 60_000
+    const deadline = Date.now() + 5 * 60_000
+    let acquired = false
 
-// Decide whether a crawl should refresh page analysis using content changes or the ten-day age limit.
-function shouldRegeneratePageAnalysis(previousPage: SummaryPageSnapshot, currentContent: string, currentData: unknown): boolean {
-  const storedSummary = findStoredSummary(previousPage.data)
-  const storedCategorization = findStoredCategorization(previousPage.data)
-  if (!storedSummary || !storedCategorization) return true
-
-  const summaryGeneratedAt = storedSummary.addedOn ? Date.parse(storedSummary.addedOn) : Number.NaN
-  const categoryGeneratedAt = storedCategorization.addedOn ? Date.parse(storedCategorization.addedOn) : Number.NaN
-  const tenDays = 10 * 24 * 60 * 60 * 1000
-  if (!Number.isFinite(summaryGeneratedAt) || Date.now() - summaryGeneratedAt > tenDays) return true
-  if (!Number.isFinite(categoryGeneratedAt) || Date.now() - categoryGeneratedAt > tenDays) return true
-
-  const previousElements = getSummaryChangeElements(previousPage.content, previousPage.data)
-  const currentElements = getSummaryChangeElements(currentContent, currentData)
-  const totalElements = Math.max(previousElements.length, currentElements.length)
-  if (totalElements === 0) return false
-  const changeThreshold = Math.floor(totalElements * 0.1)
-  const changedElements = countGitStyleElementChanges(previousElements, currentElements, changeThreshold)
-  return changedElements > totalElements * 0.1
-}
-
-// Store crawler generated summaries and categories without interrupting successful crawls on AI errors.
-async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, previousPage: SummaryPageSnapshot) {
-  try {
-    const page = await prisma.page.findUnique({
-      where: { id: pageId },
-      select: { data: true, url: true, title: true, domainId: true, category: true, domain: { select: { categories: true } } },
-    })
-    if (!page) return
-
-    const shouldGenerateAnalysis = shouldRegeneratePageAnalysis(previousPage, pageContent, page.data)
-    const currentData = (Array.isArray(page.data) ? page.data.filter((entry) => {
-      return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
-    }) : []) as Prisma.InputJsonValue[]
-    const previousSummaryEntry = (Array.isArray(previousPage.data) ? previousPage.data.find((entry) => {
-      return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "summary"
-    }) : undefined) as Prisma.InputJsonValue | undefined
-    const previousCategorizationEntry = (Array.isArray(previousPage.data) ? previousPage.data.find((entry) => {
-      return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "categorization"
-    }) : undefined) as Prisma.InputJsonValue | undefined
-
-    if (!shouldGenerateAnalysis) {
-      await prisma.page.update({
-        where: { id: pageId },
-        data: { data: [...currentData, ...(previousSummaryEntry ? [previousSummaryEntry] : []), ...(previousCategorizationEntry ? [previousCategorizationEntry] : [])] },
-      })
-      if (previousPage.category !== page.category) {
-        await prisma.page.update({ where: { id: pageId }, data: { category: previousPage.category } })
-      }
-      return
-    }
-
-    if (!page.domain.categories) {
-      await prisma.page.update({
-        where: { id: pageId },
-        data: {
-          data: [...currentData, ...(previousSummaryEntry ? [previousSummaryEntry] : []), ...(previousCategorizationEntry ? [previousCategorizationEntry] : [])],
-          category: previousPage.category,
+    while (Date.now() < deadline) {
+      const now = new Date()
+      const claim = await prisma.domain.updateMany({
+        where: {
+          id: page.domainId,
+          OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }],
         },
+        data: { crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + leaseDurationMs) },
       })
-      return
+      if (claim.count === 1) {
+        acquired = true
+        break
+      }
+
+      const currentDomain = await prisma.domain.findUnique({
+        where: { id: page.domainId },
+        select: { categories: true, details: true },
+      })
+      const currentDetails = readDetails(currentDomain?.details)
+      if (currentDetails.summary || currentDetails.siteProfileGeneratedAt) break
+      await new Promise((resolve) => setTimeout(resolve, 2_000))
     }
 
-    await updateDomainDetails(page.domainId, {
-      currentActivity: `Generating page insight for ${page.url}`,
-      currentCrawlUrl: page.url,
-    })
-    const insight = await generatePageInsight({
-      pageUrl: page.url,
-      pageTitle: page.title || "",
-      pageContent,
-      siteCategory: page.domain.categories,
-      onGenericDetected: async () => {
-        await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
-      },
-    })
-    if (insight.categorizationError) {
-      await logError({ error: insight.categorizationError, pageId }, "generatePageInsight_categorization")
-    }
-    const addedOn = new Date().toISOString()
+    if (acquired) {
+      const profileHeartbeat = setInterval(() => {
+        void prisma.domain.updateMany({
+          where: { id: page.domainId, crawlWorkerId: workerId },
+          data: { crawlLeaseUntil: new Date(Date.now() + leaseDurationMs) },
+        }).catch((error) => console.error(`[site-profile:${page.domainId}] Could not renew profile lease.`, error))
+      }, 60_000)
 
-    await prisma.page.update({
-      where: { id: pageId },
-      data: {
-        ...(!insight.categorizationError ? { category: insight.category } : {}),
-        data: [
-          ...currentData,
-          { kind: "summary", summary: insight.summary, addedOn },
-          ...(!insight.categorizationError
-            ? [{ kind: "categorization", category: insight.category, addedOn }]
-            : previousCategorizationEntry ? [previousCategorizationEntry] : []),
-        ],
-      },
-    })
+      try {
+        const homepage = await prisma.page.findFirst({
+          where: { domainId: page.domainId, status: "Indexed", type: "text/html" },
+          orderBy: { url: "asc" },
+          select: { url: true, title: true, content: true, data: true },
+        })
+        const homepagePage = homepage && isHomepagePageUrl(homepage.url) ? homepage : null
+        let homepageName = homepagePage?.title || ""
+        let homepageContent = homepagePage?.content || ""
+        let renderedContent = getRenderedPageContent(homepagePage?.data)
+        let siteUrl = homepagePage?.url || `https://${page.domain.domain}/`
+
+        if (!homepagePage) {
+          const response = await fetch(siteUrl, {
+            headers: { "User-Agent": neupbotUserAgent },
+            cache: "no-store",
+          })
+          const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
+          if (response.ok && (contentType === "text/html" || contentType === "application/xhtml+xml")) {
+            renderedContent = await response.text()
+            const $ = cheerio.load(renderedContent)
+            homepageName = $("title").text().trim()
+            homepageContent = $("body").text().replace(/\s+/g, " ").trim()
+            siteUrl = response.url || siteUrl
+          }
+        }
+
+        if (homepageContent.trim() || renderedContent.trim()) {
+          const basics = await getBasics({
+            siteId: page.domainId,
+            siteUrl,
+            homepageName,
+            homepageContent,
+            renderedContent,
+          })
+          if (basics) await onActivity?.("Site profile saved")
+          else profileError = new Error("Site profile generation returned no result.")
+        } else {
+          profileError = new Error("The homepage did not return usable content for a site profile.")
+        }
+      } catch (error) {
+        profileError = error instanceof Error ? error : new Error(String(error))
+        await logError({ error, pageId, siteId: page.domainId }, "completePageCrawlEnrichment_siteProfile")
+      } finally {
+        clearInterval(profileHeartbeat)
+        await prisma.domain.updateMany({
+          where: { id: page.domainId, crawlWorkerId: workerId },
+          data: { crawlWorkerId: null, crawlLeaseUntil: null },
+        })
+      }
+    }
+    if (!acquired) {
+      const currentDomain = await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } })
+      const currentDetails = readDetails(currentDomain?.details)
+      if (currentDetails.summary || currentDetails.siteProfileGeneratedAt) {
+        await onActivity?.("Site profile ready")
+      } else {
+        profileError = new Error("Could not acquire the site profile lease.")
+      }
+    }
+  } else {
+    await onActivity?.("Using existing site profile")
+  }
+
+  try {
+    await saveAutomaticPageAnalysis(pageId, page.content, onActivity)
   } catch (error) {
-    await logError({ error, pageId }, "saveAutomaticPageAnalysis")
+    await onActivity?.("Page insight generation failed")
+    await logError({ error, pageId }, "completePageCrawlEnrichment_pageInsight")
+    throw error
+  }
+  if (profileError) {
+    await onActivity?.("Site profile generation failed")
+    throw profileError
   }
 }
 
@@ -1722,9 +1682,17 @@ async function crawlStoredPage({
 
 export async function runPageCrawler(
   pageId: string,
-  options: { updateDomainProgress?: boolean; leaseAlreadyClaimed?: boolean } = {},
+  options: {
+    updateDomainProgress?: boolean
+    leaseAlreadyClaimed?: boolean
+    onActivity?: (activity: string) => Promise<void>
+  } = {},
 ) {
-  if (options.leaseAlreadyClaimed) return crawlPage(pageId, options)
+  if (options.leaseAlreadyClaimed) {
+    await crawlPage(pageId, options)
+    await completePageCrawlEnrichment(pageId, options.onActivity)
+    return
+  }
 
   const workerId = `manual-${randomUUID()}`
   const now = new Date()
@@ -1748,6 +1716,7 @@ export async function runPageCrawler(
 
   try {
     await crawlPage(pageId, options)
+    await completePageCrawlEnrichment(pageId, options.onActivity)
   } finally {
     clearInterval(heartbeat)
     await prisma.page.updateMany({
@@ -1870,6 +1839,7 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
         stats,
       })) {
         pagesCrawled++
+        await completePageCrawlEnrichment(homepagePageId)
       }
       if (isHomepagePageUrl(pageUrl) && !new URL(pageUrl).search) pageId = homepagePageId
     }
@@ -1892,6 +1862,7 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
       stats,
     })) {
       pagesCrawled++
+      await completePageCrawlEnrichment(pageId)
     }
   }
 
@@ -2090,40 +2061,21 @@ export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean
   }, { isolationLevel: "RepeatableRead" })
 }
 
-export async function getActiveNeupbotCrawls(): Promise<NeupbotCrawlActivity[]> {
-  const domains = await prisma.domain.findMany({
-    where: { status: "Crawling" },
-    orderBy: { addedOn: "asc" },
+// Return workers whose heartbeat shows that their process is still alive.
+export async function getLiveNeupbotWorkers() {
+  const heartbeatCutoff = new Date(Date.now() - 30_000)
+  return prisma.crawlerWorker.findMany({
+    where: { lastSeenAt: { gte: heartbeatCutoff }, status: { not: "Stopped" } },
+    orderBy: { startedAt: "asc" },
     select: {
       id: true,
-      domain: true,
-      name: true,
       status: true,
-      lastCrawled: true,
-      addedOn: true,
-      details: true,
-      _count: {
-        select: {
-          pages: true,
-        },
-      },
+      activity: true,
+      siteId: true,
+      siteUrl: true,
+      currentUrl: true,
+      lastSeenAt: true,
     },
-  })
-
-  return domains.map((domain) => {
-    const site = mapDomainToSite(domain)
-    return {
-      siteId: site.id,
-      siteUrl: site.url,
-      siteName: site.name,
-      status: site.status,
-      currentActivity: site.currentlyCrawling,
-      currentCrawlUrl: site.currentCrawlUrl,
-      pagesCrawled: site.pagesCrawled ?? 0,
-      internalResourcesFound: site.internalResourcesFound ?? 0,
-      externalResourcesFound: site.externalResourcesFound ?? 0,
-      lastCrawled: site.lastCrawled,
-    }
   })
 }
 
@@ -2164,10 +2116,20 @@ export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20)
 }
 
 export async function getNeupbotDashboardStats() {
-  const totalSites = await prisma.domain.count()
-  const totalPages = await prisma.page.count()
-  const activeCrawls = await prisma.domain.count({ where: { status: "Crawling" } })
-  const crawlErrors = await prisma.domain.count({ where: { status: "Error" } })
+  const heartbeatCutoff = new Date(Date.now() - 30_000)
+  const [totalSites, totalPages, activeCrawls, crawlErrors] = await Promise.all([
+    prisma.domain.count(),
+    prisma.page.count(),
+    prisma.crawlerWorker.count({
+      where: {
+        status: "Working",
+        siteId: { not: null },
+        currentUrl: { not: null },
+        lastSeenAt: { gte: heartbeatCutoff },
+      },
+    }),
+    prisma.domain.count({ where: { status: "Error" } }),
+  ])
   return { totalSites, totalPages, activeCrawls, crawlErrors }
 }
 

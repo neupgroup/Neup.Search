@@ -2,12 +2,13 @@ import "dotenv/config"
 import { spawn, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
-const DEFAULT_PROCESS_COUNT = 4
+const DEFAULT_PROCESS_COUNT = 2
+const MAX_PROCESS_COUNT = 4
 const WORKER_SCRIPT = fileURLToPath(new URL("./worker.ts", import.meta.url))
 const workers = new Map<number, ChildProcess>()
 let isStopping = false
 
-// Read the configured worker count and fall back when the value is not a positive integer.
+// Read the configured worker count and cap it to protect PostgreSQL from process fan-out.
 function getWorkerProcessCount(): number {
   const configuredValue = process.env["env.process.NEUP_SEARCH_PROCESSES_COUNT"]
     ?? process.env.NEUP_SEARCH_PROCESSES_COUNT
@@ -16,13 +17,16 @@ function getWorkerProcessCount(): number {
   if (!/^[1-9]\d*$/.test(configuredValue)) return DEFAULT_PROCESS_COUNT
 
   const processCount = Number(configuredValue)
-  return Number.isSafeInteger(processCount) ? processCount : DEFAULT_PROCESS_COUNT
+  return Number.isSafeInteger(processCount)
+    ? Math.min(processCount, MAX_PROCESS_COUNT)
+    : DEFAULT_PROCESS_COUNT
 }
 
 // Start one independently supervised crawler worker process.
 function startWorker(workerNumber: number): ChildProcess {
   const workerId = `neup-search-${process.pid}-${workerNumber}`
-  const child = spawn(process.execPath, ["--import", "tsx", WORKER_SCRIPT, workerId], {
+  const watchArgs = process.env.NODE_ENV === "development" ? ["--watch"] : []
+  const child = spawn(process.execPath, [...watchArgs, "--import", "tsx", WORKER_SCRIPT, workerId], {
     stdio: "inherit",
     env: process.env,
   })
@@ -47,6 +51,21 @@ function startWorker(workerNumber: number): ChildProcess {
 function stopRunner(): void {
   isStopping = true
   for (const child of workers.values()) child.kill("SIGTERM")
+
+  const shutdownTimeout = setTimeout(() => {
+    for (const child of workers.values()) child.kill("SIGKILL")
+  }, 10_000)
+  shutdownTimeout.unref()
+
+  const waitForWorkers = () => {
+    if (workers.size === 0) {
+      clearTimeout(shutdownTimeout)
+      process.exit(0)
+      return
+    }
+    setTimeout(waitForWorkers, 100).unref()
+  }
+  waitForWorkers()
 }
 
 // Keep the configured number of independent crawler processes alive until shutdown.
