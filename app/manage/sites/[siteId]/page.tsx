@@ -107,6 +107,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
             <TableHeader>
               <TableRow>
                 <TableHead>Page URL</TableHead>
+                <TableHead>Category</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Last Indexed</TableHead>
               </TableRow>
@@ -114,7 +115,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
             <TableBody>
               {pages.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="h-24 text-center">
+                  <TableCell colSpan={4} className="h-24 text-center">
                     No pages have been indexed for this site yet.
                   </TableCell>
                 </TableRow>
@@ -124,6 +125,9 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
                   <TableCell className="font-medium break-all">
                      <Link href={`/manage/pages/${page.id}?property=${encodeURIComponent(propertyId || site.id)}`} className="font-bold hover:underline">{page.title}</Link>
                     <div className="text-xs text-muted-foreground">{page.url}</div>
+                  </TableCell>
+                  <TableCell>
+                    {page.category ? <Badge variant="outline">{page.category}</Badge> : <span className="text-sm text-muted-foreground">Uncategorized</span>}
                   </TableCell>
                   <TableCell>
                     <Badge variant={page.status === 'Indexed' ? 'default' : 'destructive'}>

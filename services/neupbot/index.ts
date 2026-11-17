@@ -741,9 +741,12 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
 
   if (pageData.status === "Indexed" && pageData.type === "text/html" && pageData.content?.trim()) {
     if (existingPage && isHomepagePageUrl(existingPage.url)) {
+      const pageDetails = pageData.details && typeof pageData.details === "object" && !Array.isArray(pageData.details)
+        ? pageData.details as Record<string, unknown>
+        : {}
       await getBasics({
         siteId: existingPage.domainId,
-        siteUrl: existingPage.url,
+        siteUrl: typeof pageDetails.resolvedUrl === "string" ? pageDetails.resolvedUrl : existingPage.url,
         homepageName: pageData.title || "",
         homepageContent: pageData.content,
         renderedContent: getRenderedPageContent(pageData.data),
@@ -1567,16 +1570,32 @@ async function crawlStoredPage({
   }
 
   try {
-    const response = await fetch(pageUrl, {
+    let response = await fetch(pageUrl, {
       headers: { "User-Agent": neupbotUserAgent },
       redirect: "manual",
     })
     crawledUrls.add(normalizedUrl)
 
-    const contentType = response.headers.get("content-type")
-    const redirectLocation = response.headers.get("location")
+    let fetchedPageUrl = pageUrl
+    let contentType = response.headers.get("content-type")
+    let redirectLocation = response.headers.get("location")
+    if (isHomepagePageUrl(pageUrl) && response.status >= 300 && response.status < 400 && redirectLocation) {
+      for (let redirectCount = 0; redirectCount < 10; redirectCount++) {
+        const targetUrl = new URL(redirectLocation, fetchedPageUrl)
+        if (targetUrl.hostname.toLowerCase() !== rootHostname.toLowerCase()) break
+        fetchedPageUrl = targetUrl.toString()
+        response = await fetch(fetchedPageUrl, {
+          headers: { "User-Agent": neupbotUserAgent },
+          redirect: "manual",
+        })
+        contentType = response.headers.get("content-type")
+        redirectLocation = response.headers.get("location")
+        if (response.status < 300 || response.status >= 400 || !redirectLocation) break
+      }
+    }
+
     if (response.status >= 300 && response.status < 400) {
-      const targetUrl = redirectLocation ? new URL(redirectLocation, pageUrl).toString() : null
+      const targetUrl = redirectLocation ? new URL(redirectLocation, fetchedPageUrl).toString() : null
       const data = buildPageData(
         null,
         Object.fromEntries(response.headers.entries()),
@@ -1653,7 +1672,7 @@ async function crawlStoredPage({
     let pageDocument = cheerio.load(html)
     const initialDocumentTitle = pageDocument("title").text().trim()
     const shouldRenderWithJavaScript = assessment.score >= 50 || !initialDocumentTitle
-    let resolvedPageUrl = response.url || pageUrl
+    let resolvedPageUrl = response.url || fetchedPageUrl
     let pageStatusCode = response.status
     let javascriptRendered = false
 
@@ -1688,6 +1707,7 @@ async function crawlStoredPage({
       statusCode: pageStatusCode,
       details: {
         contentType,
+        ...(fetchedPageUrl !== pageUrl ? { redirectedFrom: pageUrl, resolvedUrl: fetchedPageUrl } : {}),
         javascriptRendering: {
           attempted: shouldRenderWithJavaScript,
           used: javascriptRendered,

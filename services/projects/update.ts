@@ -11,6 +11,29 @@ export async function updateDomainDetails(domainId: string, details: DomainDetai
   await prisma.domain.update({ where: { id: domainId }, data: { details: { ...readDetails(existing?.details), ...details } } })
 }
 
+// Follow homepage redirects only while the destination remains on the same hostname.
+async function fetchHomepageWithinDomain(homepageUrl: URL, requestedSiteUrl: string): Promise<Response> {
+  const allowedHostname = new URL(requestedSiteUrl).hostname.toLowerCase()
+  let currentUrl = homepageUrl
+
+  for (let redirectCount = 0; redirectCount <= 10; redirectCount++) {
+    if (currentUrl.hostname.toLowerCase() !== allowedHostname) {
+      throw new Error("Homepage redirect leaves the site's domain.")
+    }
+    const response = await fetch(currentUrl, {
+      headers: { "User-Agent": neupbotUserAgent },
+      cache: "no-store",
+      redirect: "manual",
+    })
+    if (response.status < 300 || response.status >= 400) return response
+    const location = response.headers.get("location")
+    if (!location) throw new Error("Homepage redirect did not provide a destination.")
+    currentUrl = new URL(location, currentUrl)
+  }
+
+  throw new Error("Homepage exceeded the redirect limit.")
+}
+
 // Fetch the homepage and use Logica Intelligence to generate and save site basics.
 export async function summarizeDomain(siteId: string, siteUrl: string) {
   await updateDomainDetails(siteId, { currentActivity: "Summarizing domain..." })
@@ -18,14 +41,14 @@ export async function summarizeDomain(siteId: string, siteUrl: string) {
   homepageUrl.pathname = "/"
   homepageUrl.search = ""
   homepageUrl.hash = ""
-  const response = await fetch(homepageUrl, { headers: { "User-Agent": neupbotUserAgent }, cache: "no-store" })
+  const response = await fetchHomepageWithinDomain(homepageUrl, siteUrl)
   const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
   if (!response.ok || (contentType !== "text/html" && contentType !== "application/xhtml+xml")) throw new Error("Could not fetch an HTML page to summarize.")
   const html = await response.text()
   const $ = cheerio.load(html)
   const basics = await getBasics({
     siteId,
-    siteUrl: homepageUrl.toString(),
+    siteUrl: response.url || homepageUrl.toString(),
     homepageName: $("title").text().trim(),
     homepageContent: $("body").text().replace(/\s+/g, " ").trim().slice(0, 12_000),
     renderedContent: html,
