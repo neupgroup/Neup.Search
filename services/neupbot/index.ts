@@ -9,6 +9,7 @@ import { updateDomainDetails } from "@/services/projects/update"
 import { upsertDomainRecord } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
 import { summarizePage } from "@/services/intelligence/summarize"
+import { categorizePage } from "@/services/intelligence/categorize"
 import { getBasics } from "@/services/intelligence/basics"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
@@ -57,6 +58,7 @@ export type ManagedPage = {
   statusCode: number | null
   lastIndexed: string | null
   createdAt: Date
+  category?: string | null
   description?: string
   content?: string
 }
@@ -250,6 +252,7 @@ type PersistedPageData = {
   type: string
   data: Prisma.InputJsonValue[]
   content?: string | null
+  category?: string | null
   status: ManagedPage["status"]
   statusCode?: number | null
   details?: Prisma.InputJsonValue
@@ -712,7 +715,7 @@ async function getNextPendingPage(siteId: string) {
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   const existingPage = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { details: true, content: true, data: true, url: true, domainId: true },
+    select: { details: true, content: true, data: true, url: true, domainId: true, category: true },
   })
   const existingDetails = existingPage?.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details)
     ? existingPage.details
@@ -726,6 +729,7 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       type: pageData.type,
       data: pageData.data,
       content: pageData.content ?? null,
+      ...(pageData.category !== undefined ? { category: pageData.category } : {}),
       status: pageData.status,
       statusCode: pageData.statusCode ?? null,
       lastCrawled: new Date(),
@@ -737,11 +741,6 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
   })
 
   if (pageData.status === "Indexed" && pageData.type === "text/html" && pageData.content?.trim()) {
-    await saveAutomaticPageSummary(pageId, pageData.content, {
-      content: existingPage?.content ?? null,
-      data: existingPage?.data,
-    })
-
     if (existingPage && isHomepagePageUrl(existingPage.url)) {
       await getBasics({
         siteId: existingPage.domainId,
@@ -751,6 +750,12 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
         renderedContent: getRenderedPageContent(pageData.data),
       })
     }
+
+    await saveAutomaticPageAnalysis(pageId, pageData.content, {
+      content: existingPage?.content ?? null,
+      data: existingPage?.data,
+      category: existingPage?.category ?? null,
+    })
   }
 }
 
@@ -775,6 +780,7 @@ function getRenderedPageContent(data: unknown): string {
 type SummaryPageSnapshot = {
   content: string | null
   data: unknown
+  category: string | null
 }
 
 // Find the page summary and its generation timestamp in stored crawler data.
@@ -786,6 +792,14 @@ function findStoredSummary(data: unknown): { summary: string; addedOn?: string }
     summary: entry.summary,
     addedOn: "addedOn" in entry && typeof entry.addedOn === "string" ? entry.addedOn : undefined,
   }
+}
+
+// Read the timestamp for the saved page category analysis.
+function findStoredCategorization(data: unknown): { addedOn?: string } | undefined {
+  if (!Array.isArray(data)) return undefined
+  const entry = data.find((value) => value && typeof value === "object" && "kind" in value && value.kind === "categorization")
+  if (!entry || typeof entry !== "object") return undefined
+  return { addedOn: "addedOn" in entry && typeof entry.addedOn === "string" ? entry.addedOn : undefined }
 }
 
 // Convert page text, image URLs, and link URLs into the atomic elements compared by the crawler diff.
@@ -863,14 +877,17 @@ function countGitStyleElementChanges(previous: string[], next: string[], stopAft
   return maximumDistance
 }
 
-// Decide whether a crawl should refresh its summary using element changes or the ten-day age limit.
-function shouldRegeneratePageSummary(previousPage: SummaryPageSnapshot, currentContent: string, currentData: unknown): boolean {
+// Decide whether a crawl should refresh page analysis using content changes or the ten-day age limit.
+function shouldRegeneratePageAnalysis(previousPage: SummaryPageSnapshot, currentContent: string, currentData: unknown): boolean {
   const storedSummary = findStoredSummary(previousPage.data)
-  if (!storedSummary) return true
+  const storedCategorization = findStoredCategorization(previousPage.data)
+  if (!storedSummary || !storedCategorization) return true
 
-  const generatedAt = storedSummary.addedOn ? Date.parse(storedSummary.addedOn) : Number.NaN
-  const summaryIsOlderThanTenDays = !Number.isFinite(generatedAt) || Date.now() - generatedAt > 10 * 24 * 60 * 60 * 1000
-  if (summaryIsOlderThanTenDays) return true
+  const summaryGeneratedAt = storedSummary.addedOn ? Date.parse(storedSummary.addedOn) : Number.NaN
+  const categoryGeneratedAt = storedCategorization.addedOn ? Date.parse(storedCategorization.addedOn) : Number.NaN
+  const tenDays = 10 * 24 * 60 * 60 * 1000
+  if (!Number.isFinite(summaryGeneratedAt) || Date.now() - summaryGeneratedAt > tenDays) return true
+  if (!Number.isFinite(categoryGeneratedAt) || Date.now() - categoryGeneratedAt > tenDays) return true
 
   const previousElements = getSummaryChangeElements(previousPage.content, previousPage.data)
   const currentElements = getSummaryChangeElements(currentContent, currentData)
@@ -881,47 +898,75 @@ function shouldRegeneratePageSummary(previousPage: SummaryPageSnapshot, currentC
   return changedElements > totalElements * 0.1
 }
 
-// Store crawler generated summaries without interrupting a successful crawl on AI errors.
-async function saveAutomaticPageSummary(pageId: string, pageContent: string, previousPage: SummaryPageSnapshot) {
+// Store crawler generated summaries and categories without interrupting successful crawls on AI errors.
+async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, previousPage: SummaryPageSnapshot) {
   try {
     const page = await prisma.page.findUnique({
       where: { id: pageId },
-      select: { data: true, url: true, domainId: true },
+      select: { data: true, url: true, title: true, domainId: true, category: true, domain: { select: { categories: true } } },
     })
     if (!page) return
 
-    const shouldGenerateSummary = shouldRegeneratePageSummary(previousPage, pageContent, page.data)
+    const shouldGenerateAnalysis = shouldRegeneratePageAnalysis(previousPage, pageContent, page.data)
     const currentData = (Array.isArray(page.data) ? page.data.filter((entry) => {
-      return entry !== null && !(typeof entry === "object" && "kind" in entry && entry.kind === "summary")
+      return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
     }) : []) as Prisma.InputJsonValue[]
     const previousSummaryEntry = (Array.isArray(previousPage.data) ? previousPage.data.find((entry) => {
       return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "summary"
     }) : undefined) as Prisma.InputJsonValue | undefined
+    const previousCategorizationEntry = (Array.isArray(previousPage.data) ? previousPage.data.find((entry) => {
+      return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "categorization"
+    }) : undefined) as Prisma.InputJsonValue | undefined
 
-    if (!shouldGenerateSummary) {
-      if (previousSummaryEntry) {
-        await prisma.page.update({ where: { id: pageId }, data: { data: [...currentData, previousSummaryEntry] } })
+    if (!shouldGenerateAnalysis) {
+      await prisma.page.update({
+        where: { id: pageId },
+        data: { data: [...currentData, ...(previousSummaryEntry ? [previousSummaryEntry] : []), ...(previousCategorizationEntry ? [previousCategorizationEntry] : [])] },
+      })
+      if (previousPage.category !== page.category) {
+        await prisma.page.update({ where: { id: pageId }, data: { category: previousPage.category } })
       }
       return
     }
 
-    if (previousSummaryEntry) {
-      await prisma.page.update({ where: { id: pageId }, data: { data: [...currentData, previousSummaryEntry] } })
-    }
     await updateDomainDetails(page.domainId, {
-      currentActivity: `Generating summary for ${page.url}`,
+      currentActivity: `Analyzing ${page.url}`,
       currentCrawlUrl: page.url,
     })
-    const summary = await summarizePage(pageContent)
+    const [summaryResult, categoryResult] = await Promise.allSettled([
+      summarizePage(pageContent),
+      categorizePage({
+        pageUrl: page.url,
+        pageTitle: page.title || "",
+        pageContent,
+        siteCategory: page.domain.categories,
+        onGenericDetected: async () => {
+          await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
+        },
+      }),
+    ])
+    if (summaryResult.status === "rejected") throw summaryResult.reason
+    if (categoryResult.status === "rejected") {
+      await logError({ error: categoryResult.reason, pageId }, "categorizePage")
+    }
+    const category = categoryResult.status === "fulfilled" ? categoryResult.value : undefined
+    const addedOn = new Date().toISOString()
 
     await prisma.page.update({
       where: { id: pageId },
       data: {
-        data: [...currentData, { kind: "summary", summary, addedOn: new Date().toISOString() }],
+        ...(category !== undefined ? { category } : {}),
+        data: [
+          ...currentData,
+          { kind: "summary", summary: summaryResult.value, addedOn },
+          ...(category !== undefined
+            ? [{ kind: "categorization", category, addedOn }]
+            : previousCategorizationEntry ? [previousCategorizationEntry] : []),
+        ],
       },
     })
   } catch (error) {
-    await logError({ error, pageId }, "saveAutomaticPageSummary")
+    await logError({ error, pageId }, "saveAutomaticPageAnalysis")
   }
 }
 

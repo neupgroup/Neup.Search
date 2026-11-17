@@ -2,6 +2,7 @@
 
 import { Suspense } from "react"
 import { Button } from "@neup/components/ui/button"
+import { Badge } from "@neup/components/ui/badge"
 import { Card, CardContent } from "@neup/components/ui/card"
 import { Skeleton } from "@neup/components/ui/skeleton"
 import { ExternalLink, Search } from "lucide-react"
@@ -138,6 +139,7 @@ async function PagesList({search, page, pageSize, propertyId}: {search?: string,
                                         {page.title}
                                         </div>
                                     </div>
+                                    {page.category ? <Badge variant="secondary" className="ml-6 w-fit">{page.category}</Badge> : null}
                                     <div className="flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground">
                                         <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{page.url}</span>
                                         <ExternalLink className="h-3.5 w-3.5 shrink-0" />

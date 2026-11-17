@@ -316,6 +316,7 @@ function PagesSection({
                   >
                     {page.title}
                   </Link>
+                  {page.category ? <Badge variant="secondary">{page.category}</Badge> : null}
                   <a
                     href={page.url}
                     target="_blank"

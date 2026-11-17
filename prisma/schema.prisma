@@ -66,6 +66,7 @@ model Page {
   data        Json[]    @default([])
   details     Json?
   content     String?   @db.Text
+  category    String?   @db.VarChar(256)
   status      String
   statusCode  Int?
   addedOn     DateTime  @default(now())

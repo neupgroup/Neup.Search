@@ -24,6 +24,7 @@ export type Page = {
   createdAt: Date
   description?: string
   summary?: string
+  category?: string | null
   content?: string
   data?: unknown
 }
@@ -84,6 +85,7 @@ type PageRow = {
   statusCode: number | null
   lastCrawled: Date | null
   addedOn: Date
+  category?: string | null
   content?: string | null
   data?: unknown
   domain: {
@@ -230,6 +232,7 @@ function mapPage(page: PageRow): Page {
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
     summary: readSummary(page.data),
+    category: page.category,
     content: page.content || undefined,
     data: page.data,
   }

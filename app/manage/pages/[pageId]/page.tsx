@@ -144,6 +144,7 @@ export default async function PageDetailPage({ params, searchParams }: { params:
                   {page.url}
                 </Link>
               </CardDescription>
+              {page.category ? <Badge variant="secondary" className="mt-2">{page.category}</Badge> : null}
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-2">
               {!isNonHtmlPage(page) && (

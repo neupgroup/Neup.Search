@@ -39,6 +39,7 @@ Fields:
 > data: json[], default: empty;
 > details: json, nullable;
 > content: text, nullable;
+> category: string, nullable, varchar(256);
 > status: string;
 > statusCode: int, nullable;
 > addedOn: timestamp, default: now;

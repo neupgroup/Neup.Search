@@ -1,0 +1,2 @@
+ALTER TABLE "page"
+ADD COLUMN "category" VARCHAR(256);
