@@ -10,8 +10,8 @@ import Link from "next/link"
 import type { ReactNode } from "react"
 import {
   ArrowRightLeft,
+  Activity,
   ExternalLink,
-  FileText,
   Globe,
   Image as ImageIcon,
   Search,
@@ -472,53 +472,76 @@ function PropertyDashboardView({
   const { property, counts } = dashboard
 
   return (
-    <div className="space-y-6">
-      <Card className="border-border/60">
-        <CardHeader className="space-y-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                <CardTitle>{property.name || property.url}</CardTitle>
+    <div className="space-y-8">
+      <Card className="overflow-hidden border-border/60">
+        <CardContent className="flex flex-col gap-6 p-6 md:flex-row md:items-center md:justify-between md:p-8">
+          <div className="flex min-w-0 items-center gap-5">
+            <SiteAppIcon
+              name={property.name}
+              url={property.url}
+              appIconUrl={property.appIconUrl}
+              appIconBackgroundColor={property.appIconBackgroundColor}
+              className="h-16 w-16 rounded-xl"
+              imageClassName="h-10 w-10"
+            />
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">{property.name || property.url}</h1>
+                <Badge variant="outline">{property.status}</Badge>
               </div>
-              <CardDescription className="text-sm">{property.url}</CardDescription>
+              <a href={property.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-primary">
+                <span className="truncate">{property.url}</span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+              </a>
               {property.summary ? <p className="max-w-3xl text-sm text-muted-foreground">{property.summary}</p> : null}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{property.status}</Badge>
-              {property.lastCrawled ? <Badge variant="secondary">Last crawled: {property.lastCrawled}</Badge> : null}
-            </div>
           </div>
-        </CardHeader>
+          <div className="shrink-0 rounded-lg bg-muted/50 px-4 py-3 text-sm">
+            <div className="text-muted-foreground">Last crawled</div>
+            <div className="mt-1 font-medium">{property.lastCrawled || "Never"}</div>
+          </div>
+        </CardContent>
       </Card>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard title="Pages" value={counts.totalPages} description="All crawled records for this property." />
-        <StatCard title="Indexed Pages" value={counts.indexedPages} description="Pages currently marked as indexed." />
-        <StatCard title="Links" value={counts.links} description="Inbound and outbound links tied to this property." />
-        <StatCard title="Crawl Errors" value={counts.crawlErrors} description="Redirect, skipped, and failed crawl results." />
-        <StatCard title="Content Samples" value={counts.contentSamples} description="Previewable resources found for this property." />
-      </div>
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Site overview</h2>
+          <p className="text-sm text-muted-foreground">Crawl and indexing activity for this site.</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <StatCard title="Pages discovered" value={counts.totalPages} description="Total pages found on this site." />
+          <StatCard title="Pages indexed" value={counts.indexedPages} description="Pages available in the index." />
+          <StatCard title="Links found" value={counts.links} description="Inbound and outbound site links." />
+          <StatCard title="Crawl issues" value={counts.crawlErrors} description="Redirected, skipped, or failed pages." />
+          <StatCard title="Content samples" value={counts.contentSamples} description="Previewable media and files found." />
+        </div>
+      </section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <PagesSection
-          title="Pages"
-          description="Latest pages discovered for this property."
-          pages={dashboard.recentPages}
-          selectedPropertyId={selectedPropertyId}
-        />
-        <PagesSection
-          title="Indexed Pages"
-          description="Recently crawled pages that are in indexed state."
-          pages={dashboard.indexedPages}
-          selectedPropertyId={selectedPropertyId}
-        />
-      </div>
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" />
+          <h2 className="text-lg font-semibold">Crawl activity</h2>
+        </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          <PagesSection
+            title="Pages"
+            description="Latest pages discovered for this property."
+            pages={dashboard.recentPages}
+            selectedPropertyId={selectedPropertyId}
+          />
+          <PagesSection
+            title="Indexed Pages"
+            description="Recently crawled pages that are in indexed state."
+            pages={dashboard.indexedPages}
+            selectedPropertyId={selectedPropertyId}
+          />
+        </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <CrawlErrorsSection issues={dashboard.crawlErrors} selectedPropertyId={selectedPropertyId} />
-        <LinksSection links={dashboard.links} />
-      </div>
+        <div className="grid gap-6 xl:grid-cols-2">
+          <CrawlErrorsSection issues={dashboard.crawlErrors} selectedPropertyId={selectedPropertyId} />
+          <LinksSection links={dashboard.links} />
+        </div>
+      </section>
 
       <ContentSection content={dashboard.content} selectedPropertyId={selectedPropertyId} />
     </div>

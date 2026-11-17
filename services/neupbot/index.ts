@@ -1733,7 +1733,16 @@ export async function runPageCrawler(pageId: string) {
   })
 }
 
-// Crawl and persist one requested page without processing its discovered URLs.
+// Build the root URL used for a site's first crawl.
+function getSiteHomepageUrl(siteUrl: string): string {
+  const homepageUrl = new URL(siteUrl)
+  homepageUrl.pathname = "/"
+  homepageUrl.search = ""
+  homepageUrl.hash = ""
+  return homepageUrl.toString()
+}
+
+// Crawl the homepage first for a new site, save its basics, then crawl the requested page.
 export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
   if (!siteId || !pageUrl) {
     throw new Error("siteId and pageUrl are required.")
@@ -1741,44 +1750,72 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
 
   const domain = await prisma.domain.findUnique({
     where: { id: siteId },
-    select: { id: true, domain: true, details: true },
+    select: { id: true, domain: true, details: true, lastCrawled: true },
   })
   if (!domain) throw new Error("Domain not found.")
 
-  const pageId = await saveDiscoveredPage({ siteId, url: pageUrl, source: "seed", kind: "page" })
-  if (!pageId) throw new Error("The requested URL cannot be crawled.")
-
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
-  await updateDomainDetails(siteId, {
-    currentActivity: `Crawling ${pageUrl}`,
-    currentCrawlUrl: pageUrl,
-  })
+  let pagesCrawled = 0
+  let pageId: string | undefined
+  const isFirstCrawl = domain.lastCrawled === null
+  const homepageUrl = getSiteHomepageUrl(pageUrl)
 
-  await crawlStoredPage({
-    siteId,
-    pageId,
-    pageUrl,
-    rootHostname: domain.domain,
-    disallow: [],
-    sitemapReferencesByUrl: new Map<string, Set<string>>(),
-    stats,
-  })
+  if (isFirstCrawl) {
+    const homepagePageId = await saveDiscoveredPage({ siteId, url: homepageUrl, source: "seed", kind: "page" })
+    if (homepagePageId) {
+      await updateDomainDetails(siteId, {
+        currentActivity: `Crawling homepage ${homepageUrl}`,
+        currentCrawlUrl: homepageUrl,
+      })
+      if (await crawlStoredPage({
+        siteId,
+        pageId: homepagePageId,
+        pageUrl: homepageUrl,
+        rootHostname: domain.domain,
+        disallow: [],
+        sitemapReferencesByUrl: new Map<string, Set<string>>(),
+        stats,
+      })) {
+        pagesCrawled++
+      }
+      if (isHomepagePageUrl(pageUrl) && !new URL(pageUrl).search) pageId = homepagePageId
+    }
+  }
+
+  if (!pageId) {
+    pageId = await saveDiscoveredPage({ siteId, url: pageUrl, source: "seed", kind: "page" })
+    if (!pageId) throw new Error("The requested URL cannot be crawled.")
+    await updateDomainDetails(siteId, {
+      currentActivity: `Crawling ${pageUrl}`,
+      currentCrawlUrl: pageUrl,
+    })
+    if (await crawlStoredPage({
+      siteId,
+      pageId,
+      pageUrl,
+      rootHostname: domain.domain,
+      disallow: [],
+      sitemapReferencesByUrl: new Map<string, Set<string>>(),
+      stats,
+    })) {
+      pagesCrawled++
+    }
+  }
 
   const page = await prisma.page.findUnique({
     where: { id: pageId },
     select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true },
   })
-  const currentDetails = readDetails(domain.details)
   await prisma.domain.update({
     where: { id: siteId },
     data: {
       status: page?.status === "Error" ? "Error" : "Active",
       lastCrawled: new Date(),
       details: {
-        ...currentDetails,
+        ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
         currentActivity: "Single page crawl complete.",
         currentCrawlUrl: "",
-        pagesCrawled: 1,
+        pagesCrawled,
         internalResourcesFound: stats.internalResourcesFound,
         externalResourcesFound: stats.externalResourcesFound,
       },
@@ -1794,8 +1831,9 @@ async function crawlPendingPagesForDomain(
   disallow: RegExp[],
   stats: CrawlResourceStats,
   sitemapReferencesByUrl = new Map<string, Set<string>>(),
+  alreadyCrawledUrls: Set<string> = new Set<string>(),
 ) {
-  const crawledUrls = new Set<string>()
+  const crawledUrls = new Set(alreadyCrawledUrls)
   let pagesProcessed = 0
 
   while (true) {
@@ -1921,12 +1959,20 @@ export async function runCrawler(siteId: string, siteUrl: string) {
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
 
   try {
+    const initialDomain = await prisma.domain.findUnique({
+      where: { id: siteId },
+      select: { lastCrawled: true, details: true },
+    })
+    if (!initialDomain) throw new Error("Domain not found.")
+    const isFirstCrawl = initialDomain.lastCrawled === null
+    const firstCrawlUrls = new Set<string>()
+
     await prisma.domain.update({
       where: { id: siteId },
       data: {
         status: "Crawling",
         details: {
-          ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
+          ...readDetails(initialDomain.details),
           currentActivity: "Fetching robots.txt...",
           currentCrawlUrl: "",
           pagesCrawled: 0,
@@ -1939,6 +1985,27 @@ export async function runCrawler(siteId: string, siteUrl: string) {
     const robotsTxt = await getRobotsTxt(siteUrl)
     const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
     const robotsUrl = new URL("/robots.txt", siteUrl).toString()
+
+    if (isFirstCrawl) {
+      const homepageUrl = getSiteHomepageUrl(siteUrl)
+      const homepagePageId = await saveDiscoveredPage({ siteId, url: homepageUrl, source: "seed", kind: "page" })
+      if (homepagePageId) {
+        await updateDomainDetails(siteId, {
+          currentActivity: `Crawling homepage ${homepageUrl}`,
+          currentCrawlUrl: homepageUrl,
+        })
+        await crawlStoredPage({
+          siteId,
+          pageId: homepagePageId,
+          pageUrl: homepageUrl,
+          rootHostname: getDomainName(siteUrl),
+          disallow,
+          sitemapReferencesByUrl,
+          stats,
+          crawledUrls: firstCrawlUrls,
+        })
+      }
+    }
 
     if (sitemaps.length > 0) {
       await updateDomainDetails(siteId, { currentActivity: `Found ${sitemaps.length} sitemaps. Parsing...` })
@@ -1957,9 +2024,11 @@ export async function runCrawler(siteId: string, siteUrl: string) {
       }
     }
 
-    await saveDiscoveredPage({ siteId, url: siteUrl, source: "seed", kind: "page" })
+    if (!isFirstCrawl) {
+      await saveDiscoveredPage({ siteId, url: siteUrl, source: "seed", kind: "page" })
+    }
 
-    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, getDomainName(siteUrl), disallow, stats, sitemapReferencesByUrl)
+    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, getDomainName(siteUrl), disallow, stats, sitemapReferencesByUrl, firstCrawlUrls)
 
     await prisma.domain.update({
       where: { id: siteId },
