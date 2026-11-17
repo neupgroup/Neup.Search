@@ -8,6 +8,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum DomainStatus {
+  Requested
+  Pending
+  Active
+  Paused
+  Error
+  Crawling
+  Crawled
+  Cancelled
+  Stopped
+}
+
 model Account {
   id           String    @id
   type         String
@@ -21,21 +33,21 @@ model Account {
 }
 
 model Domain {
-  id             String    @id
-  domain         String    @unique
-  name           String
-  lastCrawled    DateTime?
-  crawlWorkerId  String?
+  id              String       @id
+  domain          String       @unique
+  name            String
+  lastCrawled     DateTime?
+  crawlWorkerId   String?
   crawlLeaseUntil DateTime?
-  status         String
-  addedOn        DateTime  @default(now())
-  details        Json?
-  categories     String?   @db.VarChar(256)
+  status          DomainStatus
+  addedOn         DateTime     @default(now())
+  details         Json?
+  categories      String?      @db.VarChar(256)
 
-  pages Page[]
-  linksFrom Link[] @relation("FromDomainLinks")
-  linksTo   Link[] @relation("ToDomainLinks")
-  sitemaps Sitemap[]
+  pages     Page[]
+  linksFrom Link[]    @relation("FromDomainLinks")
+  linksTo   Link[]    @relation("ToDomainLinks")
+  sitemaps  Sitemap[]
 
   @@index([addedOn])
   @@index([status])
@@ -60,21 +72,21 @@ model Sitemap {
 }
 
 model Page {
-  id          String    @id @default(cuid())
-  domainId    String
-  url         String
-  title       String?
-  description String?
-  type        String
-  data        Json[]    @default([])
-  details     Json?
-  content     String?   @db.Text
-  category    String?   @db.VarChar(256)
-  status      String
-  statusCode  Int?
-  addedOn     DateTime  @default(now())
-  lastCrawled DateTime?
-  crawlWorkerId String?
+  id              String    @id @default(cuid())
+  domainId        String
+  url             String
+  title           String?
+  description     String?
+  type            String
+  data            Json[]    @default([])
+  details         Json?
+  content         String?   @db.Text
+  category        String?   @db.VarChar(256)
+  status          String
+  statusCode      Int?
+  addedOn         DateTime  @default(now())
+  lastCrawled     DateTime?
+  crawlWorkerId   String?
   crawlLeaseUntil DateTime?
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)

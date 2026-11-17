@@ -15,7 +15,7 @@ Fields:
 > lastCrawled: timestamp, nullable;
 > crawlWorkerId: string, nullable;
 > crawlLeaseUntil: timestamp, nullable;
-> status: string;
+> status: enum(Requested, Pending, Active, Paused, Error, Crawling, Crawled, Cancelled, Stopped);
 > addedOn: timestamp, default: now;
 > details: json, nullable;
 > categories: string, nullable, varchar(256);

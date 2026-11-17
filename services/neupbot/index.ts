@@ -34,7 +34,7 @@ export type ManagedDomain = {
   id: string
   url: string
   description: string
-  status: "Requested" | "Pending" | "Active" | "Paused" | "Error" | "Crawling"
+  status: "Requested" | "Pending" | "Active" | "Paused" | "Error" | "Crawling" | "Crawled" | "Cancelled" | "Stopped"
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number

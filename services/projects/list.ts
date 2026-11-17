@@ -1,15 +1,27 @@
 import { prisma } from "@/lib/prisma"
+import type { DomainStatus } from "@prisma/client"
 import { mapDomainToSite, enrichManagedDomainBranding } from "@/services/projects/view"
 import type { ManagedDomain, PaginatedDomains, PaginatedPropertyOptions } from "@/services/neupbot"
+
+const domainStatuses: DomainStatus[] = ["Requested", "Pending", "Active", "Paused", "Error", "Crawling", "Crawled", "Cancelled", "Stopped"]
+
+// Search domain status labels alongside domain names and hostnames.
+function getDomainSearchWhere(search?: string) {
+  if (!search) return undefined
+  const matchingStatuses = domainStatuses.filter((status) => status.toLowerCase().includes(search.toLowerCase()))
+  return {
+    OR: [
+      { domain: { contains: search, mode: "insensitive" as const } },
+      { name: { contains: search, mode: "insensitive" as const } },
+      ...(matchingStatuses.length > 0 ? [{ status: { in: matchingStatuses } }] : []),
+    ],
+  }
+}
 
 // List managed projects with cursor pagination.
 export async function getManagedDomains(search?: string, startAfterDocId?: string): Promise<PaginatedDomains> {
   const take = 20
-  const where = search ? { OR: [
-    { domain: { contains: search, mode: "insensitive" as const } },
-    { name: { contains: search, mode: "insensitive" as const } },
-    { status: { contains: search, mode: "insensitive" as const } },
-  ] } : undefined
+  const where = getDomainSearchWhere(search)
   const rows = await prisma.domain.findMany({ where, orderBy: { addedOn: "desc" }, take: search ? 1000 : take, ...(startAfterDocId && !search ? { cursor: { id: startAfterDocId }, skip: 1 } : {}), include: { _count: { select: { pages: true } } } })
   const startIndex = search && startAfterDocId ? rows.findIndex((domain) => domain.id === startAfterDocId) + 1 : 0
   const slice = search ? rows.slice(Math.max(startIndex, 0), Math.max(startIndex, 0) + take) : rows
@@ -21,11 +33,7 @@ export async function getManagedDomains(search?: string, startAfterDocId?: strin
 export async function getPropertyOptions(search?: string): Promise<ManagedDomain[]> {
   const trimmedSearch = search?.trim()
   const domains = await prisma.domain.findMany({
-    where: trimmedSearch ? { OR: [
-      { domain: { contains: trimmedSearch, mode: "insensitive" as const } },
-      { name: { contains: trimmedSearch, mode: "insensitive" as const } },
-      { status: { contains: trimmedSearch, mode: "insensitive" as const } },
-    ] } : undefined,
+    where: getDomainSearchWhere(trimmedSearch),
     orderBy: [{ name: "asc" }, { domain: "asc" }], include: { _count: { select: { pages: true } } },
   })
   return domains.map(mapDomainToSite)
@@ -36,11 +44,7 @@ export async function getPaginatedPropertyOptions(input?: { search?: string; pag
   const trimmedSearch = input?.search?.trim()
   const requestedPageSize = input?.pageSize ?? 10
   const pageSize = Math.min(100, Math.max(1, Math.floor(requestedPageSize)))
-  const where = trimmedSearch ? { OR: [
-    { domain: { contains: trimmedSearch, mode: "insensitive" as const } },
-    { name: { contains: trimmedSearch, mode: "insensitive" as const } },
-    { status: { contains: trimmedSearch, mode: "insensitive" as const } },
-  ] } : undefined
+  const where = getDomainSearchWhere(trimmedSearch)
   const requestedPage = Math.max(1, Math.floor(input?.page ?? 1))
   const [totalCount, selectedDomain] = await Promise.all([
     prisma.domain.count({ where }),

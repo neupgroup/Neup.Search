@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma"
+import type { DomainStatus } from "@prisma/client"
 import { getPropertyAddress, assertValidSiteDomain, normalizeSiteUrl } from "@/services/projects/domain"
 import { readDetails } from "@/services/projects/view"
 import type { DomainDetails } from "@/services/neupbot"
@@ -10,7 +11,7 @@ function mergeProjectLocations(locations: string[] | undefined, nextLocation: st
 }
 
 // Create or reuse a project record for a crawl request.
-export async function upsertDomainRecord(input: { url: string; name: string; status: string; details?: DomainDetails }) {
+export async function upsertDomainRecord(input: { url: string; name: string; status: DomainStatus; details?: DomainDetails }) {
   const siteUrl = normalizeSiteUrl(input.url)
   const propertyAddress = getPropertyAddress(siteUrl)
   assertValidSiteDomain(siteUrl)

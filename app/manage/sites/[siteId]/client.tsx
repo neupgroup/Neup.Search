@@ -32,10 +32,10 @@ function SubmitButton({ children, variant = "default", ...props }: { children: R
 type LiveCrawlStatusState = NonNullable<Awaited<ReturnType<typeof getSiteCrawlStatus>>>
 
 function getStatusVariant(status: string) {
-    if (status === "Active") return "default"
+    if (status === "Active" || status === "Crawled") return "default"
     if (status === "Crawling") return "default"
-    if (status === "Pending") return "outline"
-    if (status === "Paused") return "secondary"
+    if (status === "Requested" || status === "Pending") return "outline"
+    if (status === "Paused" || status === "Cancelled" || status === "Stopped") return "secondary"
     return "destructive"
 }
 
