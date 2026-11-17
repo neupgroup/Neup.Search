@@ -8,8 +8,7 @@ import { readDetails, mapDomainToSite } from "@/services/projects/view"
 import { updateDomainDetails } from "@/services/projects/update"
 import { upsertDomainRecord } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
-import { summarizePage } from "@/services/intelligence/summarize"
-import { categorizePage } from "@/services/intelligence/categorize"
+import { generatePageInsight } from "@/services/intelligence/page-insight"
 import { getBasics } from "@/services/intelligence/basics"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
@@ -929,38 +928,44 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, pr
       return
     }
 
+    if (!page.domain.categories) {
+      await prisma.page.update({
+        where: { id: pageId },
+        data: {
+          data: [...currentData, ...(previousSummaryEntry ? [previousSummaryEntry] : []), ...(previousCategorizationEntry ? [previousCategorizationEntry] : [])],
+          category: previousPage.category,
+        },
+      })
+      return
+    }
+
     await updateDomainDetails(page.domainId, {
-      currentActivity: `Analyzing ${page.url}`,
+      currentActivity: `Generating page insight for ${page.url}`,
       currentCrawlUrl: page.url,
     })
-    const [summaryResult, categoryResult] = await Promise.allSettled([
-      summarizePage(pageContent),
-      categorizePage({
-        pageUrl: page.url,
-        pageTitle: page.title || "",
-        pageContent,
-        siteCategory: page.domain.categories,
-        onGenericDetected: async () => {
-          await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
-        },
-      }),
-    ])
-    if (summaryResult.status === "rejected") throw summaryResult.reason
-    if (categoryResult.status === "rejected") {
-      await logError({ error: categoryResult.reason, pageId }, "categorizePage")
+    const insight = await generatePageInsight({
+      pageUrl: page.url,
+      pageTitle: page.title || "",
+      pageContent,
+      siteCategory: page.domain.categories,
+      onGenericDetected: async () => {
+        await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
+      },
+    })
+    if (insight.categorizationError) {
+      await logError({ error: insight.categorizationError, pageId }, "generatePageInsight_categorization")
     }
-    const category = categoryResult.status === "fulfilled" ? categoryResult.value : undefined
     const addedOn = new Date().toISOString()
 
     await prisma.page.update({
       where: { id: pageId },
       data: {
-        ...(category !== undefined ? { category } : {}),
+        ...(!insight.categorizationError ? { category: insight.category } : {}),
         data: [
           ...currentData,
-          { kind: "summary", summary: summaryResult.value, addedOn },
-          ...(category !== undefined
-            ? [{ kind: "categorization", category, addedOn }]
+          { kind: "summary", summary: insight.summary, addedOn },
+          ...(!insight.categorizationError
+            ? [{ kind: "categorization", category: insight.category, addedOn }]
             : previousCategorizationEntry ? [previousCategorizationEntry] : []),
         ],
       },

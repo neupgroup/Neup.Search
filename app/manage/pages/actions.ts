@@ -9,7 +9,7 @@ import * as cheerio from "cheerio"
 import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
 import { crawlPageToHtml } from "@/services/crawl/html"
 import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
-import { summarizePage } from "@/services/intelligence/summarize"
+import { generatePageInsight } from "@/services/intelligence/page-insight"
 
 export type Page = {
   id: string
@@ -593,31 +593,53 @@ export async function summarizePageAction(_previousState: SummaryActionState, fo
   try {
     const page = await prisma.page.findUnique({
       where: { id: pageId },
-      select: { content: true, data: true },
+      select: { content: true, data: true, url: true, title: true, domain: { select: { categories: true } } },
     })
     if (!page?.content?.trim()) {
       return { success: false, error: { code: "page_content_missing", description: "Page content is missing, so it cannot be summarized." } }
     }
+    if (!page.domain.categories) {
+      return { success: false, error: { code: "site_category_missing", description: "The site must have a category before page insights can be generated." } }
+    }
 
-    const summary = await summarizePage(page.content)
+    const insight = await generatePageInsight({
+      pageUrl: page.url,
+      pageTitle: page.title || "",
+      pageContent: page.content,
+      siteCategory: page.domain.categories,
+      onGenericDetected: async () => {
+        await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
+      },
+    })
+    if (insight.categorizationError) {
+      await logError({ error: insight.categorizationError, pageId }, "summarizePageAction_categorization")
+    }
     const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
-      return entry !== null && !(entry && typeof entry === "object" && "kind" in entry && entry.kind === "summary")
+      return entry !== null && !(entry && typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
     }) : []) as Prisma.InputJsonValue[]
+    const previousCategorizationEntry = Array.isArray(page.data) ? page.data.find((entry) => {
+      return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "categorization"
+    }) as Prisma.InputJsonValue | undefined : undefined
+    const addedOn = new Date().toISOString()
 
     await prisma.page.update({
       where: { id: pageId },
       data: {
+        ...(!insight.categorizationError ? { category: insight.category } : {}),
         data: [
           ...data,
           {
             kind: "summary",
-            summary,
-            addedOn: new Date().toISOString(),
+            summary: insight.summary,
+            addedOn,
           },
+          ...(!insight.categorizationError
+            ? [{ kind: "categorization", category: insight.category, addedOn }]
+            : previousCategorizationEntry ? [previousCategorizationEntry] : []),
         ],
       },
     })
-    return { success: true, result: { summary } }
+    return { success: true, result: { summary: insight.summary } }
   } catch (error) {
     await logError({ error, pageId }, "summarizePageAction")
     return {

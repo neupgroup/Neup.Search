@@ -45,13 +45,25 @@ export function LiveCrawlStatus({ siteId, initialStatus }: { siteId: string, ini
     useEffect(() => {
         if (status.status !== "Crawling") return
 
-        const interval = window.setInterval(() => {
-            getSiteCrawlStatus(siteId).then((nextStatus) => {
-                if (nextStatus) setStatus(nextStatus)
-            })
-        }, 3000)
+        let active = true
+        let timeout: number | undefined
 
-        return () => window.clearInterval(interval)
+        const refreshStatus = async () => {
+            try {
+                const nextStatus = await getSiteCrawlStatus(siteId)
+                if (!active) return
+                if (nextStatus) setStatus(nextStatus)
+            } finally {
+                if (active) timeout = window.setTimeout(refreshStatus, 5000)
+            }
+        }
+
+        timeout = window.setTimeout(refreshStatus, 5000)
+
+        return () => {
+            active = false
+            if (timeout !== undefined) window.clearTimeout(timeout)
+        }
     }, [siteId, status.status])
 
     return (

@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
-import { cookies } from "next/headers"
 import { z } from "zod"
 import type { Page } from "../pages/actions"
 import { logError } from "@/lib/logica-logging"
@@ -18,7 +17,7 @@ import {
 } from "@/services/neupbot"
 import { createDomainForCrawl } from "@/services/projects/create"
 import { InvalidDomainError } from "@/services/projects/domain"
-import { getManagedDomainById } from "@/services/projects/view"
+import { getManagedDomainById, getManagedDomainCrawlStatus } from "@/services/projects/view"
 import { markDomainSummaryFailed, summarizeDomain } from "@/services/projects/update"
 
 const DomainSchema = z.object({
@@ -87,11 +86,10 @@ export async function summarizeSiteAction(formData: FormData) {
   }
 
   try {
-    const authAccountToken = (await cookies()).get("auth_account")?.value
-    await summarizeDomain(siteId, siteUrl, authAccountToken)
+    await summarizeDomain(siteId, siteUrl)
   } catch (error) {
     await logError(error, "summarizeSiteAction")
-    await markDomainSummaryFailed(siteId)
+    await markDomainSummaryFailed(siteId, error)
   } finally {
     revalidatePath(`/manage/sites/${siteId}`)
   }
@@ -129,19 +127,7 @@ export async function getSiteById(siteId: string): Promise<Site | null> {
 
 export async function getSiteCrawlStatus(siteId: string) {
   try {
-    const site = await getManagedDomainById(siteId)
-    if (!site) return null
-
-    return {
-      status: site.status,
-      lastCrawled: site.lastCrawled,
-      pagesCrawled: site.pagesCrawled ?? 0,
-      internalResourcesFound: site.internalResourcesFound ?? 0,
-      externalResourcesFound: site.externalResourcesFound ?? 0,
-      currentlyCrawling: site.currentlyCrawling,
-      currentCrawlUrl: site.currentCrawlUrl,
-      createdAt: site.createdAt.toISOString(),
-    }
+    return await getManagedDomainCrawlStatus(siteId)
   } catch (error) {
     await logError({ error, siteId }, "getSiteCrawlStatus")
     return null

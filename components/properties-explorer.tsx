@@ -382,7 +382,7 @@ function LinksSection({ links }: { links: PropertyLinkPreview[] }) {
     <Card className="border-border/60">
       <CardHeader>
         <CardTitle className="text-xl">Links</CardTitle>
-        <CardDescription>Latest discovered inbound and outbound links connected to this property.</CardDescription>
+        <CardDescription>Latest outbound links discovered while crawling this property.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {links.length === 0 ? (
@@ -466,9 +466,11 @@ function ContentSection({
 function PropertyDashboardView({
   dashboard,
   selectedPropertyId,
+  showActivityDetails,
 }: {
   dashboard: PropertyDashboard
   selectedPropertyId?: string
+  showActivityDetails: boolean
 }) {
   const { property, counts } = dashboard
 
@@ -512,39 +514,43 @@ function PropertyDashboardView({
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard title="Pages discovered" value={counts.totalPages} description="Total pages found on this site." />
           <StatCard title="Pages indexed" value={counts.indexedPages} description="Pages available in the index." />
-          <StatCard title="Links found" value={counts.links} description="Inbound and outbound site links." />
+          <StatCard title="Links found" value={counts.links} description="Outbound links discovered while crawling this site." />
           <StatCard title="Crawl issues" value={counts.crawlErrors} description="Redirected, skipped, or failed pages." />
           <StatCard title="Content samples" value={counts.contentSamples} description="Previewable media and files found." />
         </div>
       </section>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-primary" />
-          <h2 className="text-lg font-semibold">Crawl activity</h2>
-        </div>
-        <div className="grid gap-6 xl:grid-cols-2">
-          <PagesSection
-            title="Pages"
-            description="Latest pages discovered for this property."
-            pages={dashboard.recentPages}
-            selectedPropertyId={selectedPropertyId}
-          />
-          <PagesSection
-            title="Indexed Pages"
-            description="Recently crawled pages that are in indexed state."
-            pages={dashboard.indexedPages}
-            selectedPropertyId={selectedPropertyId}
-          />
-        </div>
+      {showActivityDetails ? (
+        <>
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-primary" />
+              <h2 className="text-lg font-semibold">Crawl activity</h2>
+            </div>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <PagesSection
+                title="Pages"
+                description="Latest pages discovered for this property."
+                pages={dashboard.recentPages}
+                selectedPropertyId={selectedPropertyId}
+              />
+              <PagesSection
+                title="Indexed Pages"
+                description="Recently crawled pages that are in indexed state."
+                pages={dashboard.indexedPages}
+                selectedPropertyId={selectedPropertyId}
+              />
+            </div>
 
-        <div className="grid gap-6 xl:grid-cols-2">
-          <CrawlErrorsSection issues={dashboard.crawlErrors} selectedPropertyId={selectedPropertyId} />
-          <LinksSection links={dashboard.links} />
-        </div>
-      </section>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <CrawlErrorsSection issues={dashboard.crawlErrors} selectedPropertyId={selectedPropertyId} />
+              <LinksSection links={dashboard.links} />
+            </div>
+          </section>
 
-      <ContentSection content={dashboard.content} selectedPropertyId={selectedPropertyId} />
+          <ContentSection content={dashboard.content} selectedPropertyId={selectedPropertyId} />
+        </>
+      ) : null}
     </div>
   )
 }
@@ -564,6 +570,8 @@ export function PropertiesExplorer({
   searchPlaceholder,
   searchParam = "q",
   showDashboard = true,
+  showActivityDetails = true,
+  showPropertySelector = true,
   selectedCardOnly = false,
   hideSelectedCard = false,
   wrapSelectorInCard = true,
@@ -585,6 +593,8 @@ export function PropertiesExplorer({
   searchPlaceholder?: string
   searchParam?: string
   showDashboard?: boolean
+  showActivityDetails?: boolean
+  showPropertySelector?: boolean
   selectedCardOnly?: boolean
   hideSelectedCard?: boolean
   wrapSelectorInCard?: boolean
@@ -603,33 +613,43 @@ export function PropertiesExplorer({
 }) {
   return (
     <div className="space-y-8">
-      <div className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">{heading}</h1>
-        <p className="max-w-3xl text-sm text-muted-foreground">
-          {headingDescription}
-        </p>
-      </div>
+      {heading || headingDescription ? (
+        <div className="space-y-3">
+          {heading ? <h1 className="text-3xl font-semibold tracking-tight">{heading}</h1> : null}
+          {headingDescription ? (
+            <p className="max-w-3xl text-sm text-muted-foreground">{headingDescription}</p>
+          ) : null}
+        </div>
+      ) : null}
 
-      <PropertySelector
-        properties={properties}
-        selectedPropertyId={selectedPropertyId}
-        basePath={basePath}
-        cardsPath={cardsPath}
-        title={title}
-        description={description}
-        search={search}
-        showSearch={showSearch}
-        searchPlaceholder={searchPlaceholder}
-        searchParam={searchParam}
-        selectedCardOnly={selectedCardOnly}
-        hideSelectedCard={hideSelectedCard}
-        wrapInCard={wrapSelectorInCard}
-        showSelectField={showSelectField}
-        pagination={pagination}
-        leadingCard={leadingCard}
-      />
+      {showPropertySelector ? (
+        <PropertySelector
+          properties={properties}
+          selectedPropertyId={selectedPropertyId}
+          basePath={basePath}
+          cardsPath={cardsPath}
+          title={title}
+          description={description}
+          search={search}
+          showSearch={showSearch}
+          searchPlaceholder={searchPlaceholder}
+          searchParam={searchParam}
+          selectedCardOnly={selectedCardOnly}
+          hideSelectedCard={hideSelectedCard}
+          wrapInCard={wrapSelectorInCard}
+          showSelectField={showSelectField}
+          pagination={pagination}
+          leadingCard={leadingCard}
+        />
+      ) : null}
 
-      {showDashboard && dashboard ? <PropertyDashboardView dashboard={dashboard} selectedPropertyId={selectedPropertyId} /> : null}
+      {showDashboard && dashboard ? (
+        <PropertyDashboardView
+          dashboard={dashboard}
+          selectedPropertyId={selectedPropertyId}
+          showActivityDetails={showActivityDetails}
+        />
+      ) : null}
     </div>
   )
 }

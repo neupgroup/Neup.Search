@@ -1,8 +1,8 @@
 
 
 import Link from "next/link"
-import Image from "next/image"
 import { getSiteById, getPagesForSite } from "@/app/manage/sites/actions"
+import { getProxiedImageUrl } from "@/services/properties/imageProxy"
 import { Badge } from "@neup/components/ui/badge"
 import { Button } from "@neup/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@neup/components/ui/card"
@@ -52,12 +52,12 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div className="flex items-center gap-4">
             {site.logoUrl && (
-              <Image 
-                src={site.logoUrl} 
+              <img
+                src={getProxiedImageUrl(site.logoUrl)}
                 alt={`${site.name || site.url} logo`} 
-                width={64} 
-                height={64} 
-                className="rounded-md border"
+                width={64}
+                height={64}
+                className="h-16 w-16 rounded-md border object-contain"
               />
             )}
             <div>

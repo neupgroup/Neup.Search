@@ -10,6 +10,7 @@ Shared site/property icon renderer with image fallback.
 
 import { useState } from "react"
 import { Globe } from "lucide-react"
+import { getProxiedImageUrl } from "@/services/properties/imageProxy"
 
 export function SiteAppIcon({
   name,
@@ -27,15 +28,16 @@ export function SiteAppIcon({
   imageClassName?: string
 }) {
   const [hasImageError, setHasImageError] = useState(!appIconUrl)
+  const proxiedImageUrl = getProxiedImageUrl(appIconUrl)
 
   return (
     <div
       className={`flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/40 bg-muted ${className}`}
       style={appIconBackgroundColor ? { backgroundColor: appIconBackgroundColor } : undefined}
     >
-      {appIconUrl && !hasImageError ? (
+      {proxiedImageUrl && !hasImageError ? (
         <img
-          src={appIconUrl}
+          src={proxiedImageUrl}
           alt={`${name || url} icon`}
           className={`object-contain ${imageClassName}`}
           onError={() => setHasImageError(true)}

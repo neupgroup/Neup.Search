@@ -42,10 +42,31 @@ export async function enrichManagedDomainBranding(site: ManagedDomain): Promise<
   return { ...site, appIconUrl: branding.appIconUrl, appIconBackgroundColor: branding.appIconBackgroundColor }
 }
 
-// Load one managed project by its database ID.
+// Load one managed project by its database ID using only persisted branding.
 export async function getManagedDomainById(siteId: string): Promise<ManagedDomain | null> {
   const domain = await prisma.domain.findUnique({ where: { id: siteId }, include: { _count: { select: { pages: true } } } })
-  return domain ? enrichManagedDomainBranding(mapDomainToSite(domain)) : null
+  return domain ? mapDomainToSite(domain) : null
+}
+
+// Load only crawl status fields so status polling does not fetch page counts or remote branding.
+export async function getManagedDomainCrawlStatus(siteId: string) {
+  const domain = await prisma.domain.findUnique({
+    where: { id: siteId },
+    select: { id: true, domain: true, name: true, status: true, lastCrawled: true, addedOn: true, details: true },
+  })
+  if (!domain) return null
+
+  const site = mapDomainToSite(domain)
+  return {
+    status: site.status,
+    lastCrawled: site.lastCrawled,
+    pagesCrawled: site.pagesCrawled ?? 0,
+    internalResourcesFound: site.internalResourcesFound ?? 0,
+    externalResourcesFound: site.externalResourcesFound ?? 0,
+    currentlyCrawling: site.currentlyCrawling,
+    currentCrawlUrl: site.currentCrawlUrl,
+    createdAt: site.createdAt.toISOString(),
+  }
 }
 
 // Load the project dashboard and its recent crawl, link, and content summaries.
@@ -56,12 +77,12 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
   const [totalPages, indexedPagesCount, linksCount, crawlErrorsCount, recentPageRows, indexedPageRows, crawlErrorRows, linkRows, contentPageRows] = await Promise.all([
     prisma.page.count({ where: { domainId: propertyId } }),
     prisma.page.count({ where: { domainId: propertyId, status: "Indexed" } }),
-    prisma.link.count({ where: { OR: [{ fromDomain: propertyId }, { toDomain: propertyId }] } }),
+    prisma.link.count({ where: { fromDomain: propertyId } }),
     prisma.page.count({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { status: { in: ["Error", "Redirect", "Skipped"] } }] } }),
     prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
     prisma.page.findMany({ where: { domainId: propertyId, status: "Indexed" }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
     prisma.page.findMany({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { status: { in: ["Error", "Redirect", "Skipped"] } }] }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true } } } }),
-    prisma.link.findMany({ where: { OR: [{ fromDomain: propertyId }, { toDomain: propertyId }] }, orderBy: { firstCrawlOn: "desc" }, take: 10, include: { from: { select: { domain: true } }, to: { select: { domain: true } } } }),
+    prisma.link.findMany({ where: { fromDomain: propertyId }, orderBy: { firstCrawlOn: "desc" }, take: 10, include: { from: { select: { domain: true } }, to: { select: { domain: true } } } }),
     prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 200, select: { id: true, url: true, title: true, type: true, data: true, category: true, status: true, statusCode: true, domain: { select: { domain: true } } } }),
   ])
   const contentItems: ContentItem[] = []

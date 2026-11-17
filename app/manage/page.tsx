@@ -44,6 +44,8 @@ export default async function ManagePage({
       heading=""
       headingDescription=""
       showDashboard
+      showActivityDetails={false}
+      showPropertySelector={false}
       showSearch={false}
       selectedCardOnly
       hideSelectedCard
