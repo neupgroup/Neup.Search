@@ -18,6 +18,7 @@
     "dev": "next dev --turbopack --experimental-https --hostname dev.neupgroup.com --port 7327",
     "build": "npx prisma generate && npx next build",
     "start": "next start --port 7327",
+    "crawler:runner": "node --import tsx scripts/neupbot/runner.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
@@ -64,6 +65,7 @@
     "recharts": "^2.15.1",
     "tailwind-merge": "^3.0.1",
     "tailwindcss-animate": "^1.0.7",
+    "tsx": "^4.20.3",
     "use-debounce": "^10.0.1",
     "zod": "^3.24.2"
   },

@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio"
+import { randomUUID } from "node:crypto"
 import type { Prisma } from "@prisma/client"
 import { assist } from "@neup/logica/assist"
 import { logError } from "@/lib/logica-logging"
@@ -23,6 +24,7 @@ export type DomainDetails = {
   locations?: string[]
   currentActivity?: string
   currentCrawlUrl?: string
+  crawlStartedAt?: string
   pagesCrawled?: number
   internalResourcesFound?: number
   externalResourcesFound?: number
@@ -684,31 +686,6 @@ async function saveSitemapPages(
       sitemapReferences: readSitemapReferences(sitemapReferencesByUrl, entry.url),
     })
   }
-}
-
-async function getNextPendingPage(siteId: string) {
-  const pendingPages = await prisma.page.findMany({
-    where: { domainId: siteId, status: "Pending" },
-    orderBy: { addedOn: "asc" },
-    take: 50,
-    select: { id: true, url: true },
-  })
-
-  for (const page of pendingPages) {
-    if (!isIgnoredCrawlUrl(page.url)) return page
-
-    await prisma.page.update({
-      where: { id: page.id },
-      data: {
-        status: "Skipped",
-        details: {
-          ignoredReason: "Ignored Next.js generated asset.",
-        },
-      },
-    })
-  }
-
-  return null
 }
 
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
@@ -1434,8 +1411,6 @@ export async function getContentItemById(contentItemId: string): Promise<Content
   }
 }
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
 async function getRobotsTxt(siteUrl: string): Promise<string | null> {
   try {
     const robotsUrl = new URL("/robots.txt", siteUrl)
@@ -1745,7 +1720,47 @@ async function crawlStoredPage({
   }
 }
 
-export async function runPageCrawler(pageId: string) {
+export async function runPageCrawler(
+  pageId: string,
+  options: { updateDomainProgress?: boolean; leaseAlreadyClaimed?: boolean } = {},
+) {
+  if (options.leaseAlreadyClaimed) return crawlPage(pageId, options)
+
+  const workerId = `manual-${randomUUID()}`
+  const now = new Date()
+  const claim = await prisma.page.updateMany({
+    where: {
+      id: pageId,
+      OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }],
+    },
+    data: {
+      crawlWorkerId: workerId,
+      crawlLeaseUntil: new Date(now.getTime() + 15 * 60_000),
+    },
+  })
+  if (claim.count !== 1) throw new Error("This page is already being crawled.")
+  const heartbeat = setInterval(() => {
+    void prisma.page.updateMany({
+      where: { id: pageId, crawlWorkerId: workerId },
+      data: { crawlLeaseUntil: new Date(Date.now() + 15 * 60_000) },
+    }).catch((error) => console.error(`[manual-page-crawl:${pageId}] Could not renew page lease.`, error))
+  }, 60_000)
+
+  try {
+    await crawlPage(pageId, options)
+  } finally {
+    clearInterval(heartbeat)
+    await prisma.page.updateMany({
+      where: { id: pageId, crawlWorkerId: workerId },
+      data: { crawlWorkerId: null, crawlLeaseUntil: null },
+    })
+    const page = await prisma.page.findUnique({ where: { id: pageId }, select: { domainId: true } })
+    if (page) await completeDomainCrawlIfIdle(page.domainId)
+  }
+}
+
+// Fetch and persist one page whose lease has already been claimed.
+async function crawlPage(pageId: string, options: { updateDomainProgress?: boolean }) {
   if (!pageId) {
     throw new Error("pageId is required.")
   }
@@ -1766,17 +1781,20 @@ export async function runPageCrawler(pageId: string) {
 
   const sitemapReferencesByUrl = new Map<string, Set<string>>()
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
-  const robotsTxt = await getRobotsTxt(page.domain.domain)
+  const siteOrigin = `https://${page.domain.domain}`
+  const robotsTxt = await getRobotsTxt(siteOrigin)
   const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
 
-  for (const reference of await findSitemapReferencesForUrl(page.url, page.domain.domain)) {
+  for (const reference of await findSitemapReferencesForUrl(page.url, siteOrigin)) {
     addSitemapReference(sitemapReferencesByUrl, page.url, reference.sitemapUrl)
   }
 
-  await updateDomainDetails(page.domainId, {
-    currentActivity: `Crawling ${page.url}`,
-    currentCrawlUrl: page.url,
-  })
+  if (options.updateDomainProgress !== false) {
+    await updateDomainDetails(page.domainId, {
+      currentActivity: `Crawling ${page.url}`,
+      currentCrawlUrl: page.url,
+    })
+  }
 
   await crawlStoredPage({
     siteId: page.domainId,
@@ -1788,19 +1806,24 @@ export async function runPageCrawler(pageId: string) {
     stats,
   })
 
-  await prisma.domain.update({
-    where: { id: page.domainId },
-    data: {
-      lastCrawled: new Date(),
-      details: {
-        ...readDetails((await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } }))?.details),
-        currentActivity: "Page crawl complete.",
-        currentCrawlUrl: "",
-        internalResourcesFound: stats.internalResourcesFound,
-        externalResourcesFound: stats.externalResourcesFound,
+  const pageCrawlTime = new Date()
+  if (options.updateDomainProgress === false) {
+    await prisma.domain.update({ where: { id: page.domainId }, data: { lastCrawled: pageCrawlTime } })
+  } else {
+    await prisma.domain.update({
+      where: { id: page.domainId },
+      data: {
+        lastCrawled: pageCrawlTime,
+        details: {
+          ...readDetails((await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } }))?.details),
+          currentActivity: "Page crawl complete.",
+          currentCrawlUrl: "",
+          internalResourcesFound: stats.internalResourcesFound,
+          externalResourcesFound: stats.externalResourcesFound,
+        },
       },
-    },
-  })
+    })
+  }
 }
 
 // Build the root URL used for a site's first crawl.
@@ -1895,132 +1918,57 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
   return page
 }
 
-async function crawlPendingPagesForDomain(
-  siteId: string,
-  rootHostname: string,
-  disallow: RegExp[],
-  stats: CrawlResourceStats,
-  sitemapReferencesByUrl = new Map<string, Set<string>>(),
-  alreadyCrawledUrls: Set<string> = new Set<string>(),
-) {
-  const crawledUrls = new Set(alreadyCrawledUrls)
-  let pagesProcessed = 0
+// Queue an existing domain for background crawling, optionally marking all its pages for refresh.
+export async function queueDomainCrawl(siteId: string, refreshExistingPages = false): Promise<void> {
+  if (!siteId) throw new Error("siteId is required.")
 
-  while (true) {
-    const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
-    if (currentDomain?.status !== "Crawling") {
-      await updateDomainDetails(siteId, { currentActivity: "Crawl cancelled." })
-      break
+  await prisma.$transaction(async (transaction) => {
+    const domain = await transaction.domain.findUnique({
+      where: { id: siteId },
+      select: { status: true, details: true, crawlLeaseUntil: true },
+    })
+    if (!domain) throw new Error("Domain not found.")
+    if (domain.status === "Crawling" || (domain.crawlLeaseUntil && domain.crawlLeaseUntil > new Date())) {
+      throw new Error("This domain is already being crawled.")
     }
 
-    const pendingPage = await getNextPendingPage(siteId)
-    if (!pendingPage) break
-
-    await updateDomainDetails(siteId, {
-      currentActivity: `Crawling ${pendingPage.url}`,
-      currentCrawlUrl: pendingPage.url,
-      pagesCrawled: pagesProcessed,
-      internalResourcesFound: stats.internalResourcesFound,
-      externalResourcesFound: stats.externalResourcesFound,
-    })
-
-    const crawledHtmlPage = await crawlStoredPage({
-      siteId,
-      pageId: pendingPage.id,
-      pageUrl: pendingPage.url,
-      rootHostname,
-      disallow,
-      sitemapReferencesByUrl,
-      stats,
-      crawledUrls,
-    })
-    if (crawledHtmlPage) {
-      pagesProcessed++
+    if (refreshExistingPages) {
+      await transaction.page.updateMany({
+        where: {
+          domainId: siteId,
+          OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: new Date() } }],
+        },
+        data: { status: "Pending", crawlWorkerId: null, crawlLeaseUntil: null },
+      })
+      await transaction.page.updateMany({
+        where: { domainId: siteId, crawlLeaseUntil: { gt: new Date() } },
+        data: { status: "Pending" },
+      })
     }
 
-    await updateDomainDetails(siteId, {
-      pagesCrawled: pagesProcessed,
-      internalResourcesFound: stats.internalResourcesFound,
-      externalResourcesFound: stats.externalResourcesFound,
+    await transaction.domain.update({
+      where: { id: siteId },
+      data: {
+        status: "Pending",
+        crawlWorkerId: null,
+        crawlLeaseUntil: null,
+        details: {
+          ...readDetails(domain.details),
+          currentActivity: "Queued for background crawl.",
+          currentCrawlUrl: "",
+        },
+      },
     })
-
-    await sleep(100)
-  }
-
-  return {
-    pagesProcessed,
-    crawledUrls,
-  }
+  })
 }
 
+// Requeue pending pages for workers instead of crawling them inside the request process.
 export async function resumePendingCrawler(siteId: string) {
-  if (!siteId) {
-    throw new Error("siteId is required.")
-  }
-
-  try {
-    const domain = await prisma.domain.findUnique({
-      where: { id: siteId },
-      select: { domain: true, details: true },
-    })
-
-    if (!domain) {
-      throw new Error("Domain not found.")
-    }
-    const details = readDetails(domain.details)
-    const stats: CrawlResourceStats = {
-      internalResourcesFound: details.internalResourcesFound ?? 0,
-      externalResourcesFound: details.externalResourcesFound ?? 0,
-    }
-
-    await prisma.domain.update({
-      where: { id: siteId },
-      data: {
-        status: "Crawling",
-        details: {
-          ...details,
-          currentActivity: "Resuming pending crawl queue...",
-          currentCrawlUrl: "",
-          internalResourcesFound: stats.internalResourcesFound,
-          externalResourcesFound: stats.externalResourcesFound,
-        },
-      },
-    })
-
-    const robotsTxt = await getRobotsTxt(domain.domain)
-    const { disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { disallow: [] }
-    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, domain.domain, disallow, stats)
-
-    await prisma.domain.update({
-      where: { id: siteId },
-      data: {
-        status: "Active",
-        lastCrawled: new Date(),
-        details: {
-          ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
-          pagesCrawled: crawledUrls.size,
-          currentActivity: "Pending crawl complete.",
-          currentCrawlUrl: "",
-          internalResourcesFound: stats.internalResourcesFound,
-          externalResourcesFound: stats.externalResourcesFound,
-        },
-      },
-    })
-  } catch (error: any) {
-    await logError(error, "resumePendingCrawler")
-    await prisma.domain.update({
-      where: { id: siteId },
-      data: {
-        status: "Error",
-        details: {
-          currentActivity: `Pending crawl failed: ${error.message}`,
-        },
-      },
-    })
-  }
+  await queueDomainCrawl(siteId)
 }
 
-export async function runCrawler(siteId: string, siteUrl: string) {
+// Prepare a site's discovery queue so independent page workers can crawl it concurrently.
+export async function prepareCrawler(siteId: string, siteUrl: string) {
   if (!siteId || !siteUrl) {
     throw new Error("siteId and siteUrl are required.")
   }
@@ -2035,16 +1983,14 @@ export async function runCrawler(siteId: string, siteUrl: string) {
     })
     if (!initialDomain) throw new Error("Domain not found.")
     const isFirstCrawl = initialDomain.lastCrawled === null
-    const firstCrawlUrls = new Set<string>()
-
     await prisma.domain.update({
       where: { id: siteId },
       data: {
-        status: "Crawling",
         details: {
           ...readDetails(initialDomain.details),
           currentActivity: "Fetching robots.txt...",
           currentCrawlUrl: "",
+          crawlStartedAt: new Date().toISOString(),
           pagesCrawled: 0,
           internalResourcesFound: 0,
           externalResourcesFound: 0,
@@ -2053,28 +1999,12 @@ export async function runCrawler(siteId: string, siteUrl: string) {
     })
 
     const robotsTxt = await getRobotsTxt(siteUrl)
-    const { sitemaps, disallow } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
+    const { sitemaps } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
     const robotsUrl = new URL("/robots.txt", siteUrl).toString()
 
     if (isFirstCrawl) {
       const homepageUrl = getSiteHomepageUrl(siteUrl)
-      const homepagePageId = await saveDiscoveredPage({ siteId, url: homepageUrl, source: "seed", kind: "page" })
-      if (homepagePageId) {
-        await updateDomainDetails(siteId, {
-          currentActivity: `Crawling homepage ${homepageUrl}`,
-          currentCrawlUrl: homepageUrl,
-        })
-        await crawlStoredPage({
-          siteId,
-          pageId: homepagePageId,
-          pageUrl: homepageUrl,
-          rootHostname: getDomainName(siteUrl),
-          disallow,
-          sitemapReferencesByUrl,
-          stats,
-          crawledUrls: firstCrawlUrls,
-        })
-      }
+      await saveDiscoveredPage({ siteId, url: homepageUrl, source: "seed", kind: "page" })
     }
 
     if (sitemaps.length > 0) {
@@ -2098,21 +2028,17 @@ export async function runCrawler(siteId: string, siteUrl: string) {
       await saveDiscoveredPage({ siteId, url: siteUrl, source: "seed", kind: "page" })
     }
 
-    const { crawledUrls } = await crawlPendingPagesForDomain(siteId, getDomainName(siteUrl), disallow, stats, sitemapReferencesByUrl, firstCrawlUrls)
-
+    await updateDomainDetails(siteId, {
+      currentActivity: "Crawling discovered pages...",
+      currentCrawlUrl: "",
+      pagesCrawled: 0,
+      internalResourcesFound: stats.internalResourcesFound,
+      externalResourcesFound: stats.externalResourcesFound,
+    })
     await prisma.domain.update({
       where: { id: siteId },
       data: {
-        status: "Active",
-        lastCrawled: new Date(),
-        details: {
-          ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
-          pagesCrawled: crawledUrls.size,
-          currentActivity: "Crawl complete.",
-          currentCrawlUrl: "",
-          internalResourcesFound: stats.internalResourcesFound,
-          externalResourcesFound: stats.externalResourcesFound,
-        },
+        status: "Crawling",
       },
     })
   } catch (error: any) {
@@ -2127,6 +2053,41 @@ export async function runCrawler(siteId: string, siteUrl: string) {
       },
     })
   }
+}
+
+// Mark a site complete only when no queued page or active page lease remains.
+export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean> {
+  return prisma.$transaction(async (transaction) => {
+    const now = new Date()
+    const [pendingPages, activePageLeases, domain] = await Promise.all([
+      transaction.page.count({ where: { domainId: siteId, status: "Pending" } }),
+      transaction.page.count({ where: { domainId: siteId, crawlLeaseUntil: { gt: now } } }),
+      transaction.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } }),
+    ])
+
+    if (!domain || domain.status !== "Crawling" || pendingPages > 0 || activePageLeases > 0) return false
+    const details = readDetails(domain.details)
+    const crawlStartedAt = details.crawlStartedAt ? new Date(details.crawlStartedAt) : null
+    const pagesCrawled = crawlStartedAt && !Number.isNaN(crawlStartedAt.getTime())
+      ? await transaction.page.count({ where: { domainId: siteId, lastCrawled: { gte: crawlStartedAt } } })
+      : 0
+
+    const result = await transaction.domain.updateMany({
+      where: { id: siteId, status: "Crawling" },
+      data: {
+        status: "Active",
+        lastCrawled: now,
+        details: {
+          ...details,
+          pagesCrawled,
+          currentActivity: "Crawl complete.",
+          currentCrawlUrl: "",
+        },
+      },
+    })
+
+    return result.count === 1
+  }, { isolationLevel: "RepeatableRead" })
 }
 
 export async function getActiveNeupbotCrawls(): Promise<NeupbotCrawlActivity[]> {

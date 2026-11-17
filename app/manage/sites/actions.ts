@@ -12,7 +12,7 @@ import {
   getNeupbotDashboardStats,
   getPagesForDomain,
   resumePendingCrawler,
-  runCrawler,
+  queueDomainCrawl,
   type ManagedDomain,
 } from "@/services/neupbot"
 import { createDomainForCrawl } from "@/services/projects/create"
@@ -57,9 +57,8 @@ export async function addSite(prevState: any, formData: FormData) {
   let createdDomainId = ""
 
   try {
-    const { domain, siteUrl } = await createDomainForCrawl({ url: validatedFields.data.url })
+    const { domain } = await createDomainForCrawl({ url: validatedFields.data.url })
     createdDomainId = domain.id
-    runCrawler(domain.id, siteUrl).catch((error) => logError(error, "crawlSite_async"))
   } catch (error) {
     if (error instanceof InvalidDomainError) {
       return {
@@ -97,9 +96,8 @@ export async function summarizeSiteAction(formData: FormData) {
 
 export async function crawlSite(formData: FormData) {
   const siteId = formData.get("siteId") as string
-  const siteUrl = formData.get("siteUrl") as string
 
-  await runCrawler(siteId, siteUrl)
+  await queueDomainCrawl(siteId, true)
   revalidatePath(`/manage/sites/${siteId}`)
   revalidatePath("/manage/pages")
 }

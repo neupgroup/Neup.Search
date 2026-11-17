@@ -21,14 +21,16 @@ model Account {
 }
 
 model Domain {
-  id          String    @id
-  domain      String    @unique
-  name        String
-  lastCrawled DateTime?
-  status      String
-  addedOn     DateTime  @default(now())
-  details     Json?
-  categories  String?   @db.VarChar(256)
+  id             String    @id
+  domain         String    @unique
+  name           String
+  lastCrawled    DateTime?
+  crawlWorkerId  String?
+  crawlLeaseUntil DateTime?
+  status         String
+  addedOn        DateTime  @default(now())
+  details        Json?
+  categories     String?   @db.VarChar(256)
 
   pages Page[]
   linksFrom Link[] @relation("FromDomainLinks")
@@ -37,6 +39,7 @@ model Domain {
 
   @@index([addedOn])
   @@index([status])
+  @@index([status, crawlLeaseUntil])
   @@map("domains")
 }
 
@@ -71,6 +74,8 @@ model Page {
   statusCode  Int?
   addedOn     DateTime  @default(now())
   lastCrawled DateTime?
+  crawlWorkerId String?
+  crawlLeaseUntil DateTime?
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
@@ -78,6 +83,7 @@ model Page {
   @@index([domainId])
   @@index([status])
   @@index([url])
+  @@index([status, crawlLeaseUntil])
   @@map("page")
 }
 

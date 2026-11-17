@@ -13,6 +13,8 @@ Fields:
 > domain: string, unique;
 > name: string;
 > lastCrawled: timestamp, nullable;
+> crawlWorkerId: string, nullable;
+> crawlLeaseUntil: timestamp, nullable;
 > status: string;
 > addedOn: timestamp, default: now;
 > details: json, nullable;
@@ -44,6 +46,8 @@ Fields:
 > statusCode: int, nullable;
 > addedOn: timestamp, default: now;
 > lastCrawled: timestamp, nullable;
+> crawlWorkerId: string, nullable;
+> crawlLeaseUntil: timestamp, nullable;
 
 Table: Links, Model: Link
 Fields:
