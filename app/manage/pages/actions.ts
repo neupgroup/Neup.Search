@@ -3,13 +3,11 @@
 import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logica-logging"
 import { revalidatePath } from "next/cache"
-import { redirect } from "next/navigation"
 import type { Prisma } from "@prisma/client"
 import * as cheerio from "cheerio"
-import { deleteManagedPage, findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
+import { findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
 import { crawlPageToHtml } from "@/services/crawl/html"
 import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
-import { generatePageInsight } from "@/services/intelligence/page-insight"
 
 export type Page = {
   id: string
@@ -17,7 +15,7 @@ export type Page = {
   type: string
   title: string
   siteUrl: string
-  status: "Indexed" | "Error" | "Pending" | "Skipped" | "Redirect"
+  status: string
   domainStatus?: "Requested" | "Pending" | "Active" | "Paused" | "Error" | "Crawling" | "Crawled" | "Cancelled" | "Stopped"
   statusCode: number | null
   lastIndexed: string | null
@@ -27,6 +25,7 @@ export type Page = {
   category?: string | null
   content?: string
   data?: unknown
+  isCrawling: boolean
 }
 
 export type Backlink = {
@@ -41,12 +40,6 @@ export type Backlink = {
 }
 
 export type PageSitemapReference = SitemapReference
-
-export type SummaryActionState = {
-  success: boolean
-  error?: { code: string; description: string }
-  result?: { summary: string; category: string | null }
-}
 
 export type LiveCrawlerDataState = {
   data?: {
@@ -79,15 +72,18 @@ export type PaginatedPages = {
 type PageRow = {
   id: string
   url: string
+  type: string
   title: string | null
   description: string | null
   status: string
+  details?: unknown
   statusCode: number | null
   lastCrawled: Date | null
   addedOn: Date
   category?: string | null
   content?: string | null
   data?: unknown
+  crawlLeaseUntil?: Date | null
   domain: {
     domain: string
     status?: string
@@ -226,7 +222,7 @@ function mapPage(page: PageRow): Page {
     title: page.title || "No title",
     description: page.description || "No description",
     siteUrl: page.domain.domain,
-    status: page.status as Page["status"],
+    status: page.status,
     domainStatus: page.domain.status as Page["domainStatus"],
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
@@ -235,6 +231,7 @@ function mapPage(page: PageRow): Page {
     category: page.category,
     content: page.content || undefined,
     data: page.data,
+    isCrawling: Boolean(page.crawlLeaseUntil && page.crawlLeaseUntil > new Date()),
   }
 }
 
@@ -598,109 +595,34 @@ export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, fo
   }
 }
 
-// Generate, persist, and return the page summary through the server action response.
-export async function summarizePageAction(_previousState: SummaryActionState, formData: FormData): Promise<SummaryActionState> {
-  const pageId = String(formData.get("pageId") || "")
-  if (!pageId) {
-    return { success: false, error: { code: "page_id_required", description: "Page ID is required." } }
-  }
-
-  try {
-    const page = await prisma.page.findUnique({
-      where: { id: pageId },
-      select: { content: true, data: true, url: true, title: true, domain: { select: { categories: true } } },
-    })
-    if (!page?.content?.trim()) {
-      return { success: false, error: { code: "page_content_missing", description: "Page content is missing, so it cannot be summarized." } }
-    }
-    if (!page.domain.categories) {
-      return { success: false, error: { code: "site_category_missing", description: "The site must have a category before page insights can be generated." } }
-    }
-
-    const insight = await generatePageInsight({
-      pageUrl: page.url,
-      pageTitle: page.title || "",
-      pageContent: page.content,
-      siteCategory: page.domain.categories,
-      onGenericDetected: async () => {
-        await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
-      },
-    })
-    if (insight.categorizationError) {
-      await logError({ error: insight.categorizationError, pageId }, "summarizePageAction_categorization")
-    }
-    const data = (Array.isArray(page?.data) ? page.data.filter((entry) => {
-      return entry !== null && !(entry && typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
-    }) : []) as Prisma.InputJsonValue[]
-    const previousCategorizationEntry = Array.isArray(page.data) ? page.data.find((entry) => {
-      return entry !== null && typeof entry === "object" && "kind" in entry && entry.kind === "categorization"
-    }) as Prisma.InputJsonValue | undefined : undefined
-    const addedOn = new Date().toISOString()
-
-    await prisma.page.update({
-      where: { id: pageId },
-      data: {
-        ...(!insight.categorizationError ? { category: insight.category } : {}),
-        data: [
-          ...data,
-          {
-            kind: "summary",
-            summary: insight.summary,
-            addedOn,
-          },
-          ...(!insight.categorizationError
-            ? [{ kind: "categorization", category: insight.category, addedOn }]
-            : previousCategorizationEntry ? [previousCategorizationEntry] : []),
-        ],
-      },
-    })
-    return { success: true, result: { summary: insight.summary, category: insight.category } }
-  } catch (error) {
-    await logError({ error, pageId }, "summarizePageAction")
-    return {
-      success: false,
-      error: { code: "summary_generation_failed", description: "Could not generate the summary. Please try again." },
-    }
-  } finally {
-    revalidatePath(`/manage/pages/${pageId}`)
-  }
+export type CrawlPageActionState = {
+  success: boolean
+  error?: string
+  alreadyCrawling?: boolean
 }
 
-export async function crawlPageAction(formData: FormData) {
+export async function crawlPageAction(_previousState: CrawlPageActionState, formData: FormData): Promise<CrawlPageActionState> {
   const pageId = String(formData.get("pageId") || "")
 
   if (!pageId) {
     throw new Error("pageId is required.")
   }
 
+  let result: CrawlPageActionState
   try {
     await runPageCrawler(pageId)
+    result = { success: true }
   } catch (error) {
+    console.error(`[crawlPageAction] Crawl failed for page ${pageId}.`, error)
     await logError({ error, pageId }, "crawlPageAction")
+    const alreadyCrawling = error instanceof Error && error.message === "This page is already being crawled."
+    result = alreadyCrawling
+      ? { success: false, alreadyCrawling: true }
+      : { success: false, error: "Could not crawl this page." }
   } finally {
     revalidatePath(`/manage/pages/${pageId}`)
     revalidatePath("/manage/pages")
   }
-}
 
-export async function deletePageAction(formData: FormData) {
-  const pageId = String(formData.get("pageId") || "")
-
-  if (!pageId) {
-    throw new Error("pageId is required.")
-  }
-
-  let siteId: string | undefined
-
-  try {
-    const deletedPage = await deleteManagedPage(pageId)
-    siteId = deletedPage?.siteId
-  } catch (error) {
-    await logError({ error, pageId }, "deletePageAction")
-    throw new Error("Could not delete page.")
-  }
-
-  revalidatePath("/manage/pages")
-  if (siteId) revalidatePath(`/manage/sites/${siteId}`)
-  redirect("/manage/pages")
+  return result
 }

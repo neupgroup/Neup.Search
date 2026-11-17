@@ -1,26 +1,13 @@
 
 
 import { notFound } from "next/navigation"
-import { crawlPageAction, deletePageAction, getPageById, getBacklinks, getPageSitemapReferences } from "../actions"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
-import { Button } from "@neup/components/ui/button"
+import { getPageById, getBacklinks, getPageSitemapReferences } from "../actions"
+import { Card, CardContent, CardHeader, CardTitle } from "@neup/components/ui/card"
 import { Badge } from "@neup/components/ui/badge"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@neup/components/ui/alert-dialog"
 import Link from "next/link"
 import { AlertTriangle } from "lucide-react"
 import { CrawlerDataPanel } from "./crawler-data-panel"
 import { CrawlPageButton } from "./crawl-page-button"
-import { SummaryForm } from "./summary-form"
 import { getPageIssues, type PageIssue } from "@/services/neupbot"
 
 function getIssueKindLabel(kind: PageIssue["kind"]) {
@@ -136,56 +123,26 @@ export default async function PageDetailPage({ params, searchParams }: { params:
     <div className="grid gap-6">
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-2xl break-all">{page.title}</CardTitle>
-              <CardDescription>
+          <div>
+            <div className="min-w-0 space-y-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <CardTitle className="min-w-0 break-all text-2xl">{page.title}</CardTitle>
+                {!isNonHtmlPage(page) && <CrawlPageButton pageId={page.id} initiallyCrawling={page.isCrawling} />}
+              </div>
+              <p className="text-sm">
+                <span className="text-muted-foreground">{page.category || "Uncategorized"} · </span>
                 <Link href={page.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
                   {page.url}
                 </Link>
-              </CardDescription>
-              {page.category ? <Badge variant="secondary" className="mt-2">{page.category}</Badge> : null}
-            </div>
-            <div className="flex shrink-0 flex-wrap justify-end gap-2">
-              {!isNonHtmlPage(page) && (
-                <form action={crawlPageAction}>
-                  <input type="hidden" name="pageId" value={page.id} />
-                  <CrawlPageButton />
-                </form>
-              )}
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive">Delete Page</Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <form action={deletePageAction}>
-                    <input type="hidden" name="pageId" value={page.id} />
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete this page?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This action cannot be undone. This will permanently delete this indexed page and its recorded links.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction asChild>
-                        <Button type="submit" variant="destructive">
-                          Delete Page
-                        </Button>
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </form>
-                </AlertDialogContent>
-              </AlertDialog>
+              </p>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          <h3 className="font-semibold text-lg mb-2">AI Generated Summary</h3>
           {page.summary ? (
             <p className="text-sm text-muted-foreground">{page.summary}</p>
           ) : (
-            <SummaryForm pageId={page.id} hasContent={Boolean(page.content)} />
+            <p className="text-sm text-muted-foreground">Insights will appear after the page crawl completes.</p>
           )}
         </CardContent>
       </Card>

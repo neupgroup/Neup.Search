@@ -4,18 +4,8 @@ import { NeupbotLivePanel } from "./client"
 
 export const dynamic = "force-dynamic"
 
-function readQueryParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value
-}
-
-export default async function ManageNeupbotPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
-}) {
+export default async function ManageNeupbotPage() {
   const workers = await getLiveNeupbotWorkers()
-  const resolvedSearchParams = await searchParams
-  const propertyId = readQueryParam(resolvedSearchParams.property)
 
   return (
     <div className="space-y-4">
@@ -29,7 +19,7 @@ export default async function ManageNeupbotPage({
         </p>
       </div>
 
-      <NeupbotLivePanel initialWorkers={workers} propertyId={propertyId} />
+      <NeupbotLivePanel initialWorkers={workers} />
     </div>
   )
 }

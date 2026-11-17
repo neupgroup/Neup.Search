@@ -177,7 +177,8 @@ async function processDomain(domain: { id: string; domain: string }): Promise<vo
 // Crawl one claimed page and release it so another worker can safely process the next page.
 async function processPage(page: { id: string; domainId: string; url: string }): Promise<void> {
   const domain = await prisma.domain.findUnique({ where: { id: page.domainId }, select: { domain: true } })
-  await updateWorkerState({ status: "Working", activity: "Crawling page", siteId: page.domainId, siteUrl: domain ? `https://${domain.domain}` : null, currentUrl: page.url })
+  await updateWorkerState({ status: "Working", activity: "Starting", siteId: page.domainId, siteUrl: domain ? `https://${domain.domain}` : null, currentUrl: page.url })
+  await sleep(300)
   const heartbeat = startLeaseHeartbeat("page", page.id)
   try {
     await runPageCrawler(page.id, {
@@ -185,16 +186,36 @@ async function processPage(page: { id: string; domainId: string; url: string }):
       leaseAlreadyClaimed: true,
       onActivity: appendWorkerStage,
     })
-    await appendWorkerStage("Completed")
+    if (workerState.activity.split(" → ").at(-1) === "Skipping") {
+      await sleep(300)
+      await appendWorkerStage("Exiting")
+    }
   } catch (error) {
     console.error(`[crawler-worker:${workerId}] Page crawl failed for ${page.url}.`, error)
-    await appendWorkerStage("Failed")
+    const currentStage = workerState.activity.split(" → ").at(-1) || ""
+    if (!currentStage.endsWith("(failed)") && currentStage !== "Skipping") {
+      const failureStage = currentStage === "Generating Insights"
+        ? "Generating Insights (failed)"
+        : currentStage === "Saving Content"
+          ? "Saving Content (failed)"
+          : "Skipping"
+      await appendWorkerStage(failureStage)
+    }
+    await sleep(300)
+    await appendWorkerStage("Exiting")
     await prisma.page.updateMany({
-      where: { id: page.id, crawlWorkerId: workerId, status: "Pending" },
+      where: {
+        id: page.id,
+        crawlWorkerId: workerId,
+        status: { in: ["Pending", "discovered-page", "crawling-page", "saved-content", "reported-errors", "analyzing-page"] },
+      },
       data: {
         status: "Error",
         lastCrawled: new Date(),
-        details: { crawlError: error instanceof Error ? error.message : String(error) },
+        details: {
+          ...(await prisma.page.findUnique({ where: { id: page.id }, select: { details: true } }))?.details as Record<string, unknown>,
+          crawlError: error instanceof Error ? error.message : String(error),
+        },
       },
     })
   } finally {

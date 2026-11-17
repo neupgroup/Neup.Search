@@ -5,6 +5,7 @@ import { assist } from "@neup/logica/assist"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
 import { crawlPageToHtml } from "@/services/crawl/html"
+import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
 import { readDetails, mapDomainToSite } from "@/services/projects/view"
 import { updateDomainDetails } from "@/services/projects/update"
 import { upsertDomainRecord } from "@/services/projects/create"
@@ -56,13 +57,24 @@ export type ManagedPage = {
   url: string
   title: string
   siteUrl: string
-  status: "Indexed" | "Error" | "Pending" | "Skipped" | "Redirect"
+  status: string
   statusCode: number | null
   lastIndexed: string | null
   createdAt: Date
   category?: string | null
   description?: string
   content?: string
+}
+
+// Read the HTTP crawl result separately from the page's current workflow status.
+function getPageResultStatus(status: string, details: unknown): ManagedPage["status"] {
+  if (details && typeof details === "object" && !Array.isArray(details) && "crawlResultStatus" in details) {
+    const crawlResultStatus = details.crawlResultStatus
+    if (crawlResultStatus === "Indexed" || crawlResultStatus === "Error" || crawlResultStatus === "Pending" || crawlResultStatus === "Skipped" || crawlResultStatus === "Redirect") {
+      return crawlResultStatus
+    }
+  }
+  return status as ManagedPage["status"]
 }
 
 export type PaginatedDomains = {
@@ -245,6 +257,17 @@ type PersistedPageData = {
   status: ManagedPage["status"]
   statusCode?: number | null
   details?: Prisma.InputJsonValue
+}
+
+type PageFlowStage = "discovered-page" | "crawling-page" | "saved-content" | "reported-errors" | "analyzing-page" | "completed-flow"
+
+const pageFlowActivity: Record<PageFlowStage, string> = {
+  "discovered-page": "Starting",
+  "crawling-page": "Crawling Page",
+  "saved-content": "Saving Content",
+  "reported-errors": "Reporting HTML Errors",
+  "analyzing-page": "Generating Insights",
+  "completed-flow": "Completing",
 }
 
 const imageFileTypes = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff"])
@@ -437,7 +460,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
       where: { id: existingPage.id },
       data: {
         details: {
-          ...(existingPage.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details) ? existingPage.details : {}),
+          ...(existingPage.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details) ? existingPage.details as Prisma.JsonObject : {}),
           ...details,
         },
       },
@@ -462,6 +485,19 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
   })
 
   return created.id
+}
+
+// Save the current crawl-flow milestone alongside the page's crawl metadata.
+async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<void> {
+  const page = await prisma.page.findUnique({ where: { id: pageId }, select: { details: true } })
+  const currentDetails = page?.details && typeof page.details === "object" && !Array.isArray(page.details)
+    ? page.details as Record<string, unknown>
+    : {}
+  const { crawlFlowStatus: _legacyFlowStatus, ...details } = currentDetails
+  await prisma.page.update({
+    where: { id: pageId },
+    data: { status: stage, details: { ...details, crawlFlowUpdatedAt: new Date().toISOString() } },
+  })
 }
 
 type DiscoveredLinkInput = {
@@ -699,12 +735,12 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       }), ...previousAnalysis],
       content: pageData.content ?? null,
       ...(pageData.category !== undefined ? { category: pageData.category } : {}),
-      status: pageData.status,
       statusCode: pageData.statusCode ?? null,
       lastCrawled: new Date(),
       details: {
         ...existingDetails,
         ...(pageData.details && typeof pageData.details === "object" && !Array.isArray(pageData.details) ? pageData.details : {}),
+        crawlResultStatus: pageData.status,
       },
     },
   })
@@ -736,7 +772,7 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
   })
   if (!page) throw new Error(`Page ${pageId} was not found while generating insights.`)
 
-  await onActivity?.("Generating page insights")
+  await onActivity?.(pageFlowActivity["analyzing-page"])
   await updateDomainDetails(page.domainId, {
     currentActivity: `Generating page insight for ${page.url}`,
     currentCrawlUrl: page.url,
@@ -746,29 +782,33 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
     pageTitle: page.title || "",
     pageContent,
     siteCategory: page.domain.categories,
-    onGenericDetected: async () => {
-      await prisma.page.update({ where: { id: pageId }, data: { category: "generic" } })
-    },
   })
-  if (insight.categorizationError) {
-    await logError({ error: insight.categorizationError, pageId }, "generatePageInsight_categorization")
-  }
 
   const currentData = (Array.isArray(page.data) ? page.data.filter((entry) => {
     return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
   }) : []) as Prisma.InputJsonValue[]
   const addedOn = new Date().toISOString()
+  const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { details: true } })
+  const currentPageDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
+    ? currentPage.details as Record<string, unknown>
+    : {}
   await prisma.page.update({
     where: { id: pageId },
     data: {
-      ...(!insight.categorizationError ? { category: insight.category } : {}),
+      category: insight.category,
       data: [
         ...currentData,
         { kind: "summary", summary: insight.summary, addedOn },
-        ...(!insight.categorizationError ? [{ kind: "categorization", category: insight.category, addedOn }] : []),
+        { kind: "categorization", category: insight.category, addedOn },
       ],
+      details: {
+        ...currentPageDetails,
+        crawlFlowUpdatedAt: new Date().toISOString(),
+      },
+      status: "completed-flow",
     },
   })
+  await onActivity?.(pageFlowActivity["completed-flow"])
 }
 
 // Ensure the site profile exists and save fresh insights before the worker completes this page.
@@ -786,22 +826,26 @@ async function completePageCrawlEnrichment(
       data: true,
       category: true,
       status: true,
+      details: true,
       type: true,
       domainId: true,
       domain: { select: { domain: true, categories: true, details: true } },
     },
   })
   if (!page) throw new Error(`Page ${pageId} was not found after crawling.`)
-  if (page.status !== "Indexed" || page.type !== "text/html" || !page.content?.trim()) {
+  const resultStatus = getPageResultStatus(page.status, page.details)
+  if (resultStatus !== "Indexed" || page.type !== "text/html" || !page.content?.trim()) {
     await onActivity?.(`Enrichment skipped (${page.status}, ${page.type || "no type"}).`)
     return
   }
 
   const details = readDetails(page.domain.details)
+  await setPageFlowStage(pageId, "analyzing-page")
+  await onActivity?.(pageFlowActivity["analyzing-page"])
   const profileExists = !!details.summary || !!details.siteProfileGeneratedAt
   let profileError: Error | undefined
   if (!profileExists) {
-    await onActivity?.("Generating site profile")
+    await onActivity?.(pageFlowActivity["analyzing-page"])
     const workerId = `profile-${randomUUID()}`
     const leaseDurationMs = 5 * 60_000
     const deadline = Date.now() + 5 * 60_000
@@ -840,7 +884,7 @@ async function completePageCrawlEnrichment(
 
       try {
         const homepage = await prisma.page.findFirst({
-          where: { domainId: page.domainId, status: "Indexed", type: "text/html" },
+          where: { domainId: page.domainId, status: { in: ["Indexed", "completed-flow"] }, type: "text/html" },
           orderBy: { url: "asc" },
           select: { url: true, title: true, content: true, data: true },
         })
@@ -873,14 +917,13 @@ async function completePageCrawlEnrichment(
             homepageContent,
             renderedContent,
           })
-          if (basics) await onActivity?.("Site profile saved")
+          if (basics) await onActivity?.(pageFlowActivity["analyzing-page"])
           else profileError = new Error("Site profile generation returned no result.")
         } else {
           profileError = new Error("The homepage did not return usable content for a site profile.")
         }
       } catch (error) {
         profileError = error instanceof Error ? error : new Error(String(error))
-        await logError({ error, pageId, siteId: page.domainId }, "completePageCrawlEnrichment_siteProfile")
       } finally {
         clearInterval(profileHeartbeat)
         await prisma.domain.updateMany({
@@ -893,13 +936,13 @@ async function completePageCrawlEnrichment(
       const currentDomain = await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } })
       const currentDetails = readDetails(currentDomain?.details)
       if (currentDetails.summary || currentDetails.siteProfileGeneratedAt) {
-        await onActivity?.("Site profile ready")
+        await onActivity?.(pageFlowActivity["analyzing-page"])
       } else {
         profileError = new Error("Could not acquire the site profile lease.")
       }
     }
   } else {
-    await onActivity?.("Using existing site profile")
+    await onActivity?.(pageFlowActivity["analyzing-page"])
   }
 
   try {
@@ -909,10 +952,7 @@ async function completePageCrawlEnrichment(
     await logError({ error, pageId }, "completePageCrawlEnrichment_pageInsight")
     throw error
   }
-  if (profileError) {
-    await onActivity?.("Site profile generation failed")
-    throw profileError
-  }
+  if (profileError) await logError({ error: profileError, pageId, siteId: page.domainId }, "completePageCrawlEnrichment_siteProfile")
 }
 
 function extractPageLinks($: cheerio.Root): PageLink[] {
@@ -1472,6 +1512,8 @@ type CrawlStoredPageInput = {
   disallow: RegExp[]
   sitemapReferencesByUrl: Map<string, Set<string>>
   stats: CrawlResourceStats
+  abortIfDomainInactive?: boolean
+  onContentSave?: () => Promise<void>
   crawledUrls?: Set<string>
 }
 
@@ -1483,8 +1525,11 @@ async function crawlStoredPage({
   disallow,
   sitemapReferencesByUrl,
   stats,
+  abortIfDomainInactive,
+  onContentSave,
   crawledUrls = new Set<string>(),
 }: CrawlStoredPageInput) {
+  let savingContent = false
   const parsedCurrentUrl = new URL(pageUrl)
   const normalizedUrl = parsedCurrentUrl.origin + parsedCurrentUrl.pathname
 
@@ -1628,10 +1673,33 @@ async function crawlStoredPage({
       }
     }
 
-    const pageTitle = pageDocument("title").text() || pageDocument("h1").first().text()
-    const pageContent = pageDocument("body").text().replace(/\s\s+/g, " ").trim()
+    if (abortIfDomainInactive) {
+      const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
+      if (!currentDomain || currentDomain.status !== "Crawling") {
+        const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { details: true } })
+        const currentDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
+          ? currentPage.details as Record<string, unknown>
+          : {}
+        await prisma.page.update({
+          where: { id: pageId },
+          data: {
+            status: "Skipped",
+            content: null,
+            lastCrawled: new Date(),
+            details: { ...currentDetails, crawlResultStatus: "Skipped", skipReason: "domain-crawl-cancelled" },
+          },
+        })
+        return false
+      }
+    }
+
+    const markdown = extractMarkdownFromHtml(pageHtml, resolvedPageUrl)
+    const pageTitle = markdown.title || pageDocument("title").text() || pageDocument("h1").first().text()
+    const pageContent = markdown.markdown
     const data = buildPageData(pageHtml, pageHeaders, pageDocument)
 
+    savingContent = true
+    await onContentSave?.()
     await saveCrawledPage(pageId, {
       title: pageTitle || null,
       description: pageDocument("meta[name=\"description\"]").attr("content") || pageDocument("meta[property=\"og:description\"]").attr("content") || null,
@@ -1658,12 +1726,14 @@ async function crawlStoredPage({
         },
       },
     })
+    savingContent = false
 
     await saveDiscoveredLinksAndPages(siteId, resolvedPageUrl, extractPageLinks(pageDocument), sitemapReferencesByUrl, rootHostname, stats, pageId)
     await saveDiscoveredAssets(siteId, resolvedPageUrl, extractPageAssets(pageDocument), sitemapReferencesByUrl, rootHostname, stats, pageId)
     return true
   } catch (fetchError) {
     await logError({ error: fetchError, currentUrl: pageUrl }, "crawlSite_fetch")
+    if (savingContent) throw fetchError
     await saveCrawledPage(pageId, {
       title: getUrlTitle(pageUrl),
       description: null,
@@ -1688,9 +1758,69 @@ export async function runPageCrawler(
     onActivity?: (activity: string) => Promise<void>
   } = {},
 ) {
+  // Persist the shared lifecycle stages for both queued and manually requested crawls.
+  let activeStage: PageFlowStage = "discovered-page"
+  const reportPageFlowStage = async (stage: PageFlowStage) => {
+    activeStage = stage
+    await setPageFlowStage(pageId, stage)
+    if (stage !== "reported-errors") await options.onActivity?.(pageFlowActivity[stage])
+  }
+
+  const runTrackedPageFlow = async (crawl: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      await reportPageFlowStage("discovered-page")
+      await reportPageFlowStage("crawling-page")
+      await crawl()
+      const page = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
+      const resultStatus = page ? getPageResultStatus(page.status, page.details) : "Error"
+      if (resultStatus === "Error" || resultStatus === "Skipped" || resultStatus === "Redirect") {
+        await prisma.page.update({ where: { id: pageId }, data: { status: resultStatus === "Error" ? "Error" : "Skipped" } })
+        await options.onActivity?.("Skipping")
+        return false
+      }
+
+      await getPageIssues(pageId)
+      await reportPageFlowStage("reported-errors")
+      if (resultStatus === "Indexed") {
+        activeStage = "analyzing-page"
+        await completePageCrawlEnrichment(pageId, options.onActivity)
+      }
+      return resultStatus === "Indexed"
+    } catch (error) {
+      const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
+      const currentDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
+        ? currentPage.details as Record<string, unknown>
+        : {}
+      await prisma.page.update({
+        where: { id: pageId },
+        data: {
+          status: "Error",
+          details: {
+            ...currentDetails,
+            failedFlowStage: currentPage?.status || activeStage,
+            crawlError: error instanceof Error ? error.message : String(error),
+            crawlFlowUpdatedAt: new Date().toISOString(),
+          },
+        },
+      })
+      const failureStage = currentPage?.status === "analyzing-page" || activeStage === "analyzing-page"
+        ? "Generating Insights (failed)"
+        : currentPage?.status === "saved-content" || activeStage === "saved-content"
+          ? "Saving Content (failed)"
+          : "Skipping"
+      await options.onActivity?.(failureStage)
+      throw error
+    }
+  }
+
+  const crawlCurrentPage = () => crawlPage(pageId, {
+    updateDomainProgress: options.updateDomainProgress,
+    abortIfDomainInactive: options.leaseAlreadyClaimed,
+    onContentSave: () => reportPageFlowStage("saved-content"),
+  })
+
   if (options.leaseAlreadyClaimed) {
-    await crawlPage(pageId, options)
-    await completePageCrawlEnrichment(pageId, options.onActivity)
+    await runTrackedPageFlow(crawlCurrentPage)
     return
   }
 
@@ -1715,8 +1845,7 @@ export async function runPageCrawler(
   }, 60_000)
 
   try {
-    await crawlPage(pageId, options)
-    await completePageCrawlEnrichment(pageId, options.onActivity)
+    await runTrackedPageFlow(crawlCurrentPage)
   } finally {
     clearInterval(heartbeat)
     await prisma.page.updateMany({
@@ -1729,7 +1858,7 @@ export async function runPageCrawler(
 }
 
 // Fetch and persist one page whose lease has already been claimed.
-async function crawlPage(pageId: string, options: { updateDomainProgress?: boolean }) {
+async function crawlPage(pageId: string, options: { updateDomainProgress?: boolean; abortIfDomainInactive?: boolean; onContentSave?: () => Promise<void> }) {
   if (!pageId) {
     throw new Error("pageId is required.")
   }
@@ -1773,6 +1902,8 @@ async function crawlPage(pageId: string, options: { updateDomainProgress?: boole
     disallow,
     sitemapReferencesByUrl,
     stats,
+    abortIfDomainInactive: options.abortIfDomainInactive,
+    onContentSave: options.onContentSave,
   })
 
   const pageCrawlTime = new Date()
@@ -1829,18 +1960,9 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
         currentActivity: `Crawling homepage ${homepageUrl}`,
         currentCrawlUrl: homepageUrl,
       })
-      if (await crawlStoredPage({
-        siteId,
-        pageId: homepagePageId,
-        pageUrl: homepageUrl,
-        rootHostname: domain.domain,
-        disallow: [],
-        sitemapReferencesByUrl: new Map<string, Set<string>>(),
-        stats,
-      })) {
-        pagesCrawled++
-        await completePageCrawlEnrichment(homepagePageId)
-      }
+      await runPageCrawler(homepagePageId, { updateDomainProgress: false })
+      const homepageCrawl = await prisma.page.findUnique({ where: { id: homepagePageId }, select: { status: true, details: true } })
+      if (homepageCrawl && getPageResultStatus(homepageCrawl.status, homepageCrawl.details) === "Indexed") pagesCrawled++
       if (isHomepagePageUrl(pageUrl) && !new URL(pageUrl).search) pageId = homepagePageId
     }
   }
@@ -1852,18 +1974,9 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
       currentActivity: `Crawling ${pageUrl}`,
       currentCrawlUrl: pageUrl,
     })
-    if (await crawlStoredPage({
-      siteId,
-      pageId,
-      pageUrl,
-      rootHostname: domain.domain,
-      disallow: [],
-      sitemapReferencesByUrl: new Map<string, Set<string>>(),
-      stats,
-    })) {
-      pagesCrawled++
-      await completePageCrawlEnrichment(pageId)
-    }
+    await runPageCrawler(pageId, { updateDomainProgress: false })
+    const requestedPageCrawl = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
+    if (requestedPageCrawl && getPageResultStatus(requestedPageCrawl.status, requestedPageCrawl.details) === "Indexed") pagesCrawled++
   }
 
   const page = await prisma.page.findUnique({
@@ -2064,7 +2177,7 @@ export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean
 // Return workers whose heartbeat shows that their process is still alive.
 export async function getLiveNeupbotWorkers() {
   const heartbeatCutoff = new Date(Date.now() - 30_000)
-  return prisma.crawlerWorker.findMany({
+  const workers = await prisma.crawlerWorker.findMany({
     where: { lastSeenAt: { gte: heartbeatCutoff }, status: { not: "Stopped" } },
     orderBy: { startedAt: "asc" },
     select: {
@@ -2077,6 +2190,17 @@ export async function getLiveNeupbotWorkers() {
       lastSeenAt: true,
     },
   })
+
+  const workersWithPageIds = await Promise.all(workers.map(async (worker) => {
+    if (!worker.siteId || !worker.currentUrl) return { ...worker, pageId: null }
+    const page = await prisma.page.findFirst({
+      where: { domainId: worker.siteId, url: worker.currentUrl },
+      select: { id: true },
+    })
+    return { ...worker, pageId: page?.id || null }
+  }))
+
+  return workersWithPageIds
 }
 
 export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20): Promise<PaginatedDomainPages> {
@@ -2099,7 +2223,7 @@ export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20)
     title: page.title || "No title",
     description: page.description || "No description",
     siteUrl: page.domain.domain,
-    status: page.status as ManagedPage["status"],
+    status: page.status,
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.addedOn,
@@ -2456,8 +2580,10 @@ export async function getManagedLinks(input?: {
   }
 }
 
-function hasCrawlError(page: { status: string; statusCode: number | null }) {
-  return (page.statusCode !== null && page.statusCode >= 400) || page.status === "Error"
+function hasCrawlError(page: { status: string; statusCode: number | null; details?: unknown }) {
+  return (page.statusCode !== null && page.statusCode >= 400)
+    || page.status === "Error"
+    || getPageResultStatus(page.status, page.details) === "Error"
 }
 
 function isIframeUrl(url: string) {
@@ -2626,8 +2752,8 @@ export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
         title: true,
         status: true,
         statusCode: true,
-        type: true,
         details: true,
+        type: true,
       },
     })
     const targetPageByUrl = new Map(targetPages.map((targetPage) => [targetPage.url, targetPage]))
@@ -2644,7 +2770,7 @@ export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
         title: content ? "Linked file has a crawl error" : "Linked page has a crawl error",
         message: targetPage.statusCode === 404 ? "This linked URL returned 404." : "This linked URL returned a crawl error.",
         url: link.linkTo,
-        status: targetPage.status,
+        status: getPageResultStatus(targetPage.status, targetPage.details),
         statusCode: targetPage.statusCode,
       })
     }
@@ -2665,7 +2791,7 @@ export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
         title: kind === "iframe" ? "Iframe has a crawl error" : "Embedded file has a crawl error",
         message: targetPage.statusCode === 404 ? "This embedded URL returned 404." : "This embedded URL returned a crawl error.",
         url: asset.url,
-        status: targetPage.status,
+        status: getPageResultStatus(targetPage.status, targetPage.details),
         statusCode: targetPage.statusCode,
       })
     }
@@ -2689,6 +2815,8 @@ export async function getCrawlIssues(): Promise<CrawlIssue[]> {
       OR: [
         { statusCode: { gte: 300 } },
         { status: { in: ["Error", "Redirect", "Skipped"] } },
+        { details: { path: ["crawlResultStatus"], equals: "Skipped" } },
+        { details: { path: ["crawlResultStatus"], equals: "Redirect" } },
       ],
     },
     orderBy: [
@@ -2713,7 +2841,7 @@ export async function getCrawlIssues(): Promise<CrawlIssue[]> {
       domain: page.domain.domain,
       url: page.url,
       title: page.title || "No title",
-      status: page.status,
+      status: getPageResultStatus(page.status, page.details),
       statusCode: page.statusCode,
       type: isRedirect ? "Redirect" : isError ? "Error" : "Skipped",
       targetUrl: readRedirectTarget(page.data),

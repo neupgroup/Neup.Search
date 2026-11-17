@@ -1,27 +1,232 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Activity } from "lucide-react"
+import { Activity, Check } from "lucide-react"
 import { Badge } from "@neup/components/ui/badge"
 import { Card, CardContent } from "@neup/components/ui/card"
 import { getLiveNeupbotWorkers } from "./actions"
 
 type WorkerActivity = Awaited<ReturnType<typeof getLiveNeupbotWorkers>>[number]
 
-const refreshIntervalMs = 1_000
+const refreshIntervalMs = 5_000
+const minimumProgressStateMs = 300
+const completionHoldMs = 500
+const progressActivityStages = ["Starting", "Crawling Page", "Saving Content", "Saving Content (failed)", "Generating Insights", "Generating Insights (failed)", "Skipping", "Exiting", "Completing", "Completed flow", "Completed"]
 
-function buildProfileHref(siteId: string, propertyId?: string) {
-  if (!propertyId) return `/manage/property/${siteId}`
-  return `/manage/property/${siteId}?property=${encodeURIComponent(propertyId)}`
+// Compare the live worker snapshot so unchanged heartbeats do not redraw the panel.
+function haveWorkersChanged(previous: WorkerActivity[], next: WorkerActivity[]): boolean {
+  return JSON.stringify(previous) !== JSON.stringify(next)
+}
+
+type CrawlProgress = { label: string; percent: number }
+
+// Map the worker's persisted activity trail to the crawl progress milestones.
+function getCrawlProgress(worker: WorkerActivity): CrawlProgress {
+  const currentActivity = worker.activity.split(" → ").at(-1) || worker.activity
+  if (currentActivity === "Starting") return { label: "Starting", percent: 0 }
+  if (currentActivity === "Completing" || currentActivity === "Completed flow" || currentActivity === "Completed") return { label: "Completing", percent: 100 }
+  if (currentActivity === "Skipping") return { label: "Skipping", percent: 90 }
+  if (currentActivity === "Exiting") return { label: "Exiting", percent: 100 }
+  if (currentActivity === "Generating Insights") return { label: "Generating Insights", percent: 80 }
+  if (currentActivity === "Generating Insights (failed)") return { label: "Generating Insights (failed)", percent: 80 }
+  if (currentActivity === "Saving Content") return { label: "Saving Content", percent: 55 }
+  if (currentActivity === "Saving Content (failed)") return { label: "Saving Content (failed)", percent: 55 }
+  if (currentActivity === "Crawling Page") return { label: "Crawling Page", percent: 30 }
+  return { label: "Crawling Page", percent: 30 }
+}
+
+// Render a circular progress ring and the current crawl milestone.
+function CrawlProgressIndicator({ progress }: { progress: CrawlProgress }) {
+  const radius = 16
+  const circumference = 2 * Math.PI * radius
+  const [showCheckmark, setShowCheckmark] = useState(progress.label === "Completing")
+  const [isBlurred, setIsBlurred] = useState(false)
+
+  useEffect(() => {
+    const shouldShowCheckmark = progress.label === "Completing"
+    if (showCheckmark === shouldShowCheckmark) return
+
+    setIsBlurred(true)
+    const transitionTimer = window.setTimeout(() => {
+      setShowCheckmark(shouldShowCheckmark)
+      window.requestAnimationFrame(() => setIsBlurred(false))
+    }, 180)
+
+    return () => window.clearTimeout(transitionTimer)
+  }, [progress.label, showCheckmark])
+
+  const iconTransitionClass = `transition-all duration-200 ease-out ${isBlurred ? "scale-75 blur-sm opacity-0" : "scale-100 blur-0 opacity-100"}`
+
+  return (
+    <div className="flex items-center gap-2" aria-live="polite">
+      {showCheckmark ? (
+        <Check className={`h-7 w-7 shrink-0 text-primary ${iconTransitionClass}`} role="img" aria-label="Complete" />
+      ) : (
+        <svg className={`h-7 w-7 shrink-0 -rotate-90 ${iconTransitionClass}`} viewBox="0 0 40 40" role="img" aria-label="In progress">
+          <circle cx="20" cy="20" r={radius} fill="none" stroke="currentColor" strokeWidth="3" className="text-muted" />
+          <circle
+            cx="20"
+            cy="20"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - progress.percent / 100)}
+            className="text-primary transition-[stroke-dashoffset] duration-700 ease-out"
+          />
+        </svg>
+      )}
+      <p className="text-sm font-medium">{progress.label}</p>
+    </div>
+  )
+}
+
+// Hold the finished URL briefly when a worker moves directly to its next page.
+function NeupbotWorkerCard({ worker }: { worker: WorkerActivity }) {
+  const [displayWorker, setDisplayWorker] = useState(worker)
+  const latestWorker = useRef(worker)
+  const previousWorker = useRef(worker)
+  const lastSeenActivity = useRef(worker.activity)
+  const activityQueue = useRef<Array<{ worker: WorkerActivity; activity: string; currentUrl: string | null }>>([])
+  const displayedWorker = useRef(displayWorker)
+  const transitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  latestWorker.current = worker
+  displayedWorker.current = displayWorker
+
+  useEffect(() => {
+    const previous = previousWorker.current
+    previousWorker.current = worker
+    const previousActivity = previous.activity.split(" → ").at(-1) || ""
+    const nextStages = worker.activity.split(" → ")
+    const latestActivity = nextStages.at(-1) || worker.activity
+    const failureBeforeExit = latestActivity === "Exiting" ? nextStages.slice(0, -1).at(-1) : null
+
+    if ((failureBeforeExit?.endsWith("(failed)") || failureBeforeExit === "Skipping") && previous.activity !== worker.activity) {
+      if (transitionTimer.current) clearTimeout(transitionTimer.current)
+      activityQueue.current = []
+      lastSeenActivity.current = worker.activity
+      const failureSnapshot = {
+        ...worker,
+        activity: nextStages.slice(0, -1).join(" → "),
+        currentUrl: worker.currentUrl || previous.currentUrl || displayedWorker.current.currentUrl,
+      }
+      setDisplayWorker(failureSnapshot)
+      transitionTimer.current = setTimeout(() => {
+        setDisplayWorker({ ...latestWorker.current, currentUrl: latestWorker.current.currentUrl || failureSnapshot.currentUrl })
+        transitionTimer.current = null
+      }, minimumProgressStateMs)
+      return
+    }
+    const movedToNextPage = previous.status === "Working"
+      && worker.status === "Working"
+      && Boolean(previous.currentUrl && worker.currentUrl && previous.currentUrl !== worker.currentUrl)
+    const startedAfterCompletion = (previousActivity === "Completing" || previousActivity === "Exiting" || previousActivity === "Completed flow" || previousActivity === "Completed")
+      && worker.status === "Working"
+      && Boolean(worker.currentUrl)
+
+    if (movedToNextPage || startedAfterCompletion) {
+      if (transitionTimer.current) clearTimeout(transitionTimer.current)
+      lastSeenActivity.current = worker.activity
+      activityQueue.current = []
+      setDisplayWorker(displayedWorker.current.currentUrl ? displayedWorker.current : previous)
+      transitionTimer.current = setTimeout(() => {
+        const nextWorker = latestWorker.current
+        setDisplayWorker({ ...nextWorker, activity: "Starting" })
+        transitionTimer.current = setTimeout(() => {
+          setDisplayWorker(latestWorker.current)
+          transitionTimer.current = null
+        }, minimumProgressStateMs)
+      }, completionHoldMs)
+      return
+    }
+
+    const previousStages = lastSeenActivity.current.split(" → ")
+    const hasPreviousTrail = previousStages.length <= nextStages.length
+      && previousStages.every((stage, index) => nextStages[index] === stage)
+    const appendedStages = hasPreviousTrail ? nextStages.slice(previousStages.length) : []
+    lastSeenActivity.current = worker.activity
+    for (const activity of appendedStages) {
+      if (!progressActivityStages.includes(activity)) continue
+      const trailIndex = nextStages.indexOf(activity, previousStages.length)
+      activityQueue.current.push({
+        worker,
+        activity: nextStages.slice(0, trailIndex + 1).join(" → "),
+        currentUrl: worker.currentUrl || previous.currentUrl || displayedWorker.current.currentUrl,
+      })
+    }
+
+    if (!transitionTimer.current && activityQueue.current.length > 0) {
+      const playNextStage = () => {
+        const nextStage = activityQueue.current.shift()
+        if (nextStage) {
+          setDisplayWorker({ ...nextStage.worker, activity: nextStage.activity, currentUrl: nextStage.currentUrl })
+          transitionTimer.current = setTimeout(playNextStage, minimumProgressStateMs)
+          return
+        }
+
+        const latest = latestWorker.current
+        const terminal = ["Completing", "Exiting", "Completed flow", "Completed"].includes(latest.activity.split(" → ").at(-1) || "")
+        setDisplayWorker({
+          ...latest,
+          currentUrl: latest.currentUrl || (terminal ? previous.currentUrl || displayedWorker.current.currentUrl : null),
+        })
+        transitionTimer.current = null
+      }
+      playNextStage()
+    } else if (!transitionTimer.current && appendedStages.length === 0) {
+      const isTerminal = latestActivity === "Completing" || latestActivity === "Exiting" || latestActivity === "Completed flow" || latestActivity === "Completed"
+      setDisplayWorker({ ...worker, currentUrl: worker.currentUrl || (isTerminal ? previous.currentUrl || displayedWorker.current.currentUrl : null) })
+    }
+  }, [worker])
+
+  useEffect(() => () => {
+    if (transitionTimer.current) clearTimeout(transitionTimer.current)
+  }, [])
+
+  const terminalStage = displayWorker.activity.split(" → ").at(-1) || ""
+  const showProgress = Boolean(displayWorker.currentUrl) && (displayWorker.status === "Working" || progressActivityStages.includes(terminalStage))
+
+  return (
+    <Card>
+      <CardContent className="flex min-h-14 items-center justify-between gap-4 px-3 py-2">
+        {showProgress && (
+          <>
+            <CrawlProgressIndicator progress={getCrawlProgress(displayWorker)} />
+            {displayWorker.currentUrl && (
+              <Link
+                href={displayWorker.pageId && displayWorker.siteId
+                  ? `/manage/pages/${displayWorker.pageId}?property=${encodeURIComponent(displayWorker.siteId)}`
+                  : "/manage/pages"}
+                title={displayWorker.currentUrl}
+                className="min-w-0 truncate text-right text-sm text-muted-foreground hover:underline"
+              >
+                {displayWorker.currentUrl}
+              </Link>
+            )}
+          </>
+        )}
+        {!showProgress && (
+          <>
+            <p className="min-w-0 truncate text-sm text-muted-foreground">
+              {displayWorker.status === "Idle" && displayWorker.activity.includes("Failed")
+                ? `Last job: ${displayWorker.activity}`
+                : displayWorker.activity}
+            </p>
+            <Badge variant="outline">{displayWorker.status}</Badge>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 export function NeupbotLivePanel({
   initialWorkers,
-  propertyId,
 }: {
   initialWorkers: WorkerActivity[]
-  propertyId?: string
 }) {
   const [workers, setWorkers] = useState(initialWorkers)
   const activeCrawls = workers.filter((worker) => worker.status === "Working" && worker.siteId && worker.currentUrl)
@@ -36,7 +241,9 @@ export function NeupbotLivePanel({
 
       try {
         const nextWorkers = await getLiveNeupbotWorkers()
-        if (isMounted) setWorkers(nextWorkers)
+        if (isMounted) {
+          setWorkers((currentWorkers) => haveWorkersChanged(currentWorkers, nextWorkers) ? nextWorkers : currentWorkers)
+        }
       } finally {
         isRefreshing = false
       }
@@ -58,7 +265,7 @@ export function NeupbotLivePanel({
           <Activity className="h-4 w-4" />
           <span>{workers.length.toLocaleString()} live workers · {activeCrawls.length.toLocaleString()} active crawls</span>
         </div>
-        <Badge variant="outline">Updates every {refreshIntervalMs / 1000} second</Badge>
+        <Badge variant="outline">Updates when worker activity changes</Badge>
       </div>
 
       <section className="space-y-3">
@@ -70,60 +277,14 @@ export function NeupbotLivePanel({
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {workers.map((worker, index) => (
-              <Card key={worker.id}>
-                <CardContent className="space-y-2 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium">Worker {worker.id.split("-").at(-1) || index + 1}</span>
-                    <Badge variant={worker.status === "Working" ? "default" : "outline"}>{worker.status}</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {worker.status === "Idle" && (worker.activity.includes("Completed") || worker.activity.includes("Failed"))
-                      ? `Last job: ${worker.activity}`
-                      : worker.activity}
-                  </p>
-                  {worker.siteUrl && (
-                    <Link href={worker.siteId ? buildProfileHref(worker.siteId, propertyId) : worker.siteUrl} className="block truncate text-sm hover:underline">
-                      {worker.siteUrl}
-                    </Link>
-                  )}
-                  {worker.currentUrl && (
-                    <p className="break-all text-xs text-muted-foreground">{worker.currentUrl}</p>
-                  )}
-                </CardContent>
-              </Card>
+          <div className="space-y-2">
+            {workers.map((worker) => (
+              <NeupbotWorkerCard key={worker.id} worker={worker} />
             ))}
           </div>
         )}
       </section>
 
-      <h2 className="pt-2 text-lg font-semibold">Active page crawls</h2>
-      {activeCrawls.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            NeupBot is not crawling any site right now.
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {activeCrawls.map((worker) => (
-            <Card key={worker.id}>
-              <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">Worker {worker.id.split("-").at(-1)} is crawling</div>
-                  <p className="break-all text-sm text-muted-foreground">{worker.currentUrl}</p>
-                </div>
-                {worker.siteId && (
-                  <Link href={buildProfileHref(worker.siteId, propertyId)} className="shrink-0 text-sm hover:underline">
-                    {worker.siteUrl}
-                  </Link>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

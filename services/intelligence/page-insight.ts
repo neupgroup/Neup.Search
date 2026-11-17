@@ -7,13 +7,11 @@ export type GeneratePageInsightInput = {
   pageTitle: string
   pageContent: string
   siteCategory: string | null
-  onGenericDetected?: () => Promise<void>
 }
 
 export type PageInsight = {
   summary: string
   category: string | null
-  categorizationError?: unknown
 }
 
 // Generate a page summary and site-aware category in one JSON intelligence request.
@@ -26,14 +24,15 @@ export async function generatePageInsight(input: GeneratePageInsightInput): Prom
         type: "text",
         role: "system",
         text: [
-          "Analyze this webpage and return JSON only with keys summary and category.",
+          "Analyze this webpage and return valid JSON only with keys summary, category, and genericCategory.",
           "Write a plain-language summary of at most 50 words stating the page purpose and key points.",
-          input.siteCategory
+          categoryOptions.some((category) => category !== "generic")
             ? "Choose exactly one category from the supplied allowed categories."
             : "The site's category is unknown, so choose a generic page category from the supplied allowed categories when one fits.",
-          'If the page is generic, set category to "generic". If no category fits, set it to "not-any".',
-          `When category is generic, also choose genericCategory from: ${getGenericPageCategories().join(", ")}.`,
+          'Set category to "generic" for general pages, or "not-any" only if the page cannot be classified.',
+          `When category is generic, genericCategory must be exactly one of: ${getGenericPageCategories().join(", ")}.`,
           `Allowed categories: ${categoryOptions.join(", ")}.`,
+          "Do not include markdown fences or any text outside the JSON object.",
         ].join(" "),
       },
       {
@@ -50,12 +49,14 @@ export async function generatePageInsight(input: GeneratePageInsightInput): Prom
 
   let category = typeof parsed.category === "string" && categoryOptions.includes(parsed.category) ? parsed.category : null
   if (parsed.category === "generic") {
-    await input.onGenericDetected?.()
     const genericOptions = getGenericPageCategories()
     category = typeof parsed.genericCategory === "string" && genericOptions.includes(parsed.genericCategory)
       ? `generic.${parsed.genericCategory}`
-      : "generic"
+      : null
   }
   if (parsed.category === "not-any") category = null
+  if (!category && parsed.category !== "not-any") {
+    throw new Error(`Logica Assist returned an invalid page category: ${String(parsed.category)}`)
+  }
   return { summary, category }
 }
