@@ -25,6 +25,39 @@ export async function upsertDomainRecord(input: { url: string; name: string; sta
 
 // Create or find a project record and mark it ready for crawling.
 export async function createDomainForCrawl(input: { url: string; description?: string }) {
-  const { domain, siteUrl } = await upsertDomainRecord({ url: input.url, name: getPropertyAddress(input.url), status: "Pending", details: { description: input.description || "", currentActivity: "Queued for crawl.", pagesCrawled: 0 } })
+  const { domain, siteUrl } = await upsertDomainRecord({ url: input.url, name: getPropertyAddress(input.url), status: "Requested", details: { description: input.description || "", currentActivity: "Queued for crawl.", pagesCrawled: 0 } })
+
+  await prisma.$transaction(async (transaction) => {
+    const currentDomain = await transaction.domain.findUnique({
+      where: { id: domain.id },
+      select: { status: true, crawlLeaseUntil: true, details: true },
+    })
+    if (!currentDomain) throw new Error("Domain not found after creation.")
+    if (currentDomain.status === "Crawling" || (currentDomain.crawlLeaseUntil && currentDomain.crawlLeaseUntil > new Date())) return
+
+    const now = new Date()
+    await transaction.page.updateMany({
+      where: { domainId: domain.id, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+      data: { status: "Pending", crawlWorkerId: null, crawlLeaseUntil: null },
+    })
+    await transaction.page.updateMany({
+      where: { domainId: domain.id, crawlLeaseUntil: { gt: now } },
+      data: { status: "Pending" },
+    })
+    await transaction.domain.update({
+      where: { id: domain.id },
+      data: {
+        status: "Requested",
+        crawlWorkerId: null,
+        crawlLeaseUntil: null,
+        details: {
+          ...readDetails(currentDomain.details),
+          currentActivity: "Queued for crawl.",
+          currentCrawlUrl: "",
+        },
+      },
+    })
+  })
+
   return { domain, siteUrl }
 }

@@ -34,7 +34,7 @@ export type ManagedDomain = {
   id: string
   url: string
   description: string
-  status: "Pending" | "Active" | "Paused" | "Error" | "Crawling"
+  status: "Requested" | "Pending" | "Active" | "Paused" | "Error" | "Crawling"
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number
@@ -509,7 +509,7 @@ async function saveDiscoveredLink(input: DiscoveredLinkInput) {
   const targetDomain = await upsertDomainRecord({
     url: normalizedTargetSiteUrl,
     name: targetHostname,
-    status: "Pending",
+    status: "Active",
     details: {
       discoveredFrom: sourceUrl,
     },
@@ -1949,7 +1949,7 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
     await transaction.domain.update({
       where: { id: siteId },
       data: {
-        status: "Pending",
+        status: "Requested",
         crawlWorkerId: null,
         crawlLeaseUntil: null,
         details: {

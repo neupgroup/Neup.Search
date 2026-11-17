@@ -26,7 +26,7 @@ async function claimNextDomain() {
   const now = new Date()
   const candidate = await prisma.domain.findFirst({
     where: {
-      status: "Pending",
+      status: "Requested",
       OR: [
         { crawlLeaseUntil: null },
         { crawlLeaseUntil: { lte: now } },
@@ -41,7 +41,7 @@ async function claimNextDomain() {
   const claim = await prisma.domain.updateMany({
     where: {
       id: candidate.id,
-      status: "Pending",
+      status: "Requested",
       OR: [
         { crawlLeaseUntil: null },
         { crawlLeaseUntil: { lte: now } },
