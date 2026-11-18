@@ -17,12 +17,9 @@ export async function POST(request: NextRequest) {
   const category = typeof input.category === "string" ? input.category : null
 
   const claimedOn = new Date(input.claimedOn)
-  const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { data: true, details: true, domainId: true, status: true, analyzedOn: true } })
+  const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, domainId: true, status: true, analyzedOn: true } })
   if (!page) return workerApiError("page_not_found", "Page not found.", 404)
   if (page.status !== "analyzing" || page.analyzedOn?.getTime() !== claimedOn.getTime()) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
-  const currentData = Array.isArray(page.data)
-    ? page.data.filter((entry) => !entry || typeof entry !== "object" || !("kind" in entry) || (entry.kind !== "summary" && entry.kind !== "categorization"))
-    : []
   const addedOn = new Date().toISOString()
   const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
     ? page.details as Record<string, unknown>
@@ -33,12 +30,7 @@ export async function POST(request: NextRequest) {
     where: { id: input.pageId, status: "analyzing", analyzedOn: claimedOn },
     data: {
       category,
-      data: [
-        ...currentData as Prisma.InputJsonValue[],
-        { kind: "summary", summary: input.summary, addedOn },
-        { kind: "categorization", category, addedOn },
-      ],
-      details: { ...details, crawlFlowUpdatedAt: addedOn },
+      details: { ...details, summary: input.summary, summaryAddedOn: addedOn, crawlFlowUpdatedAt: addedOn },
       status: "analyzed",
       analyzedOn,
       crawlLeaseUntil: null,

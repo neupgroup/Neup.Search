@@ -24,7 +24,6 @@ export type Page = {
   summary?: string
   category?: string | null
   content?: string
-  data?: unknown
   isCrawling: boolean
 }
 
@@ -82,7 +81,6 @@ type PageRow = {
   discoveredOn: Date | null
   category?: string | null
   content?: string | null
-  data?: unknown
   crawlLeaseUntil?: Date | null
   domain: {
     domain: string
@@ -180,40 +178,6 @@ function parsePageSearch(search?: string): PageSearchFilter {
   }
 }
 
-function readSummary(data: unknown): string | undefined {
-  if (!Array.isArray(data)) return undefined
-  const summaryEntry = data.find((entry) => {
-    return entry && typeof entry === "object" && "kind" in entry && entry.kind === "summary"
-  })
-  return summaryEntry && typeof summaryEntry === "object" && "summary" in summaryEntry && typeof summaryEntry.summary === "string"
-    ? summaryEntry.summary
-    : undefined
-}
-
-function readStoredSitemapReferences(data: unknown): PageSitemapReference[] {
-  if (!Array.isArray(data)) return []
-
-  const references = new Set<string>()
-  for (const entry of data) {
-    if (!entry || typeof entry !== "object" || !("sitemapReferences" in entry)) continue
-    const sitemapReferences = entry.sitemapReferences
-    if (!Array.isArray(sitemapReferences)) continue
-
-    for (const reference of sitemapReferences) {
-      if (
-        reference &&
-        typeof reference === "object" &&
-        "sitemapUrl" in reference &&
-        typeof reference.sitemapUrl === "string"
-      ) {
-        references.add(reference.sitemapUrl)
-      }
-    }
-  }
-
-  return [...references].map((sitemapUrl) => ({ sitemapUrl }))
-}
-
 function mapPage(page: PageRow): Page {
   return {
     id: page.id,
@@ -227,10 +191,9 @@ function mapPage(page: PageRow): Page {
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.discoveredOn ?? new Date(0),
-    summary: readSummary(page.data),
+    summary: page.details && typeof page.details === "object" && !Array.isArray(page.details) && "summary" in page.details && typeof page.details.summary === "string" ? page.details.summary : undefined,
     category: page.category,
     content: page.content || undefined,
-    data: page.data,
     isCrawling: Boolean(page.crawlLeaseUntil && page.crawlLeaseUntil > new Date()),
   }
 }
@@ -402,8 +365,8 @@ export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
   if (!pageUrl) return []
 
   try {
-    const links = await prisma.link.findMany({
-      where: { linkTo: pageUrl },
+    const links = await prisma.resource.findMany({
+      where: { linkTo: pageUrl, type: "link" },
       orderBy: { firstCrawlOn: "desc" },
       select: {
         id: true,
@@ -446,10 +409,6 @@ export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
 
 export async function getPageSitemapReferences(page: Page): Promise<PageSitemapReference[]> {
   const references = new Map<string, PageSitemapReference>()
-
-  for (const reference of readStoredSitemapReferences(page.data)) {
-    references.set(reference.sitemapUrl, reference)
-  }
 
   for (const reference of await findSitemapReferencesForUrl(page.url, page.siteUrl)) {
     references.set(reference.sitemapUrl, reference)

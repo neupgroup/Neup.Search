@@ -51,7 +51,6 @@ Fields:
 > title: string, nullable;
 > description: string, nullable;
 > type: string;
-> data: json[], default: empty;
 > details: json, nullable;
 > content: text, nullable;
 > category: string, nullable, varchar(256);
@@ -63,9 +62,10 @@ Fields:
 > lastCrawled: timestamp, nullable;
 > crawlLeaseUntil: timestamp, nullable;
 
-Table: Links, Model: Link
+Table: Resources, Model: Resource
 Fields:
 > id: string, default: cuid;
+> type: string;
 > linkFrom: string;
 > linkTo: string;
 > fromDomain: string;
@@ -79,4 +79,5 @@ Fields:
 > altText: string, nullable;
 > titleText: string, nullable;
 > rel: string, nullable;
+> metadata: json, nullable;
 > firstCrawlOn: timestamp, default: now;

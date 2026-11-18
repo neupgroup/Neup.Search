@@ -8,6 +8,8 @@ import { createDomainForCrawl } from "@/services/projects/create"
 import { InvalidDomainError } from "@/services/projects/domain"
 import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
 import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
+import { crawlPageToHtml } from "@/services/crawl/html"
+import * as cheerio from "cheerio"
 
 const crawlResponseFormats = ["markdown", "html", "raw", "links", "images"] as const
 type CrawlResponseFormat = typeof crawlResponseFormats[number]
@@ -64,13 +66,11 @@ async function buildRequestedCrawlResult(
   page: NonNullable<Awaited<ReturnType<typeof runSinglePageCrawler>>>,
   formats: CrawlResponseFormat[],
 ) {
-  const firstData = page.data[0]
-  const captured = firstData && typeof firstData === "object" && !Array.isArray(firstData)
-    ? firstData as Record<string, unknown>
-    : {}
   const result: Record<string, unknown> = {}
-  const baseUrl = typeof captured.finalUrl === "string" ? captured.finalUrl : page.url
-  const html = typeof captured.html === "string" ? captured.html : ""
+  const needsHtml = formats.some((format) => format === "markdown" || format === "html" || format === "raw" || format === "images")
+  const live = needsHtml ? await crawlPageToHtml(page.url) : null
+  const baseUrl = live?.url || page.url
+  const html = live?.html || ""
   const fixedHtml = makeHtmlLinksAbsolute(html, baseUrl)
 
   if (formats.includes("markdown")) {
@@ -83,28 +83,16 @@ async function buildRequestedCrawlResult(
     result.raw = fixedHtml
   }
   if (formats.includes("links")) {
-    const links = await prisma.link.findMany({
-      where: { sourcePageId: page.id, sourceType: "anchor" },
+    const links = await prisma.resource.findMany({
+      where: { sourcePageId: page.id, type: "link" },
       orderBy: { firstCrawlOn: "asc" },
       select: { anchorText: true, linkTo: true },
     })
     result.links = links.map((link) => ({ text: link.anchorText || "", link: link.linkTo }))
   }
   if (formats.includes("images")) {
-    const images = Array.isArray(captured.images) ? captured.images : []
-    result.images = images.flatMap((value) => {
-      if (!value || typeof value !== "object") return []
-      const image = value as Record<string, unknown>
-      if (typeof image.src !== "string") return []
-      try {
-        return [{
-          caption: typeof image.caption === "string" ? image.caption : "",
-          imageurl: new URL(image.src, baseUrl).toString(),
-        }]
-      } catch {
-        return []
-      }
-    })
+    const $ = cheerio.load(fixedHtml)
+    result.images = $("img[src]").map((_, image) => ({ caption: $(image).attr("alt") || "", imageurl: new URL($(image).attr("src") || "", baseUrl).toString() })).get()
   }
 
   return result
@@ -137,13 +125,8 @@ export async function POST(request: NextRequest) {
     const page = await runSinglePageCrawler(domain.id, siteUrl)
     if (!page) return crawlFailure("The page could not be saved.", 500, "crawl_failed")
     if (page.details && typeof page.details === "object" && !Array.isArray(page.details) && "crawlResultStatus" in page.details && page.details.crawlResultStatus === "Error") {
-      const firstData = page.data[0]
-      const captured = firstData && typeof firstData === "object" && !Array.isArray(firstData)
-        ? firstData as Record<string, unknown>
-        : {}
-      const description = typeof captured.error === "string"
-        ? captured.error
-        : `The requested page returned an error${page.statusCode ? ` (HTTP ${page.statusCode})` : ""}.`
+      const details = page.details && typeof page.details === "object" && !Array.isArray(page.details) ? page.details as Record<string, unknown> : {}
+      const description = typeof details.crawlError === "string" ? details.crawlError : `The requested page returned an error${page.statusCode ? ` (HTTP ${page.statusCode})` : ""}.`
       return crawlFailure(description, 502, "crawl_failed")
     }
 

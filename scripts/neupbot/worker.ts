@@ -103,6 +103,15 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
         rel: $(element).attr("rel") || undefined,
       })).get()
       : []
+    const images = isHtml
+      ? $("img[src], img[data-src], img[data-lazy-src]").map((_, element) => ({
+        url: $(element).attr("src") || $(element).attr("data-src") || $(element).attr("data-lazy-src") || "",
+        alt: $(element).attr("alt") || "",
+      })).get()
+      : []
+    const videos = isHtml
+      ? $("video[src], video source[src]").map((_, element) => ({ url: $(element).attr("src") || "" })).get()
+      : []
     activity = `Saving crawl data for ${page.url}.`
     await callWorkerApi("api/worker/pages", {
       workerId,
@@ -114,8 +123,9 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
       title: isHtml ? $("title").first().text().trim() : "",
       description: isHtml ? $("meta[name='description']").attr("content") || "" : "",
       content: isHtml ? $("body").text().replace(/\s+/g, " ").trim().slice(0, 100_000) : responseText.slice(0, 20_000),
-      html: isHtml ? responseText.slice(0, 300_000) : "",
       links,
+      images,
+      videos,
     }, signal)
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
   } catch (error) {

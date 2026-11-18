@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
+import { crawlPageToHtml } from "@/services/crawl/html"
 
 const ANALYSIS_LEASE_MS = 5 * 60_000
 const STALE_ANALYSIS_AGE_MS = 60 * 60_000
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
   if (!domainDetails.summary && !domainDetails.siteProfileGeneratedAt) {
     const homepageCandidates = await prisma.page.findMany({
       where: { domainId: page.domainId, type: "text/html", content: { not: null }, status: { in: ["crawled", "analyzing", "analyzed", "indexed"] } },
-      select: { url: true, title: true, content: true, data: true },
+      select: { url: true, title: true, content: true },
       orderBy: { discoveredOn: "asc" },
       take: 20,
     })
@@ -82,12 +83,7 @@ export async function POST(request: NextRequest) {
       }
     })
     if (homepage?.content) {
-      const crawlEntry = Array.isArray(homepage.data)
-        ? homepage.data.find((entry) => entry && typeof entry === "object" && "kind" in entry && entry.kind === "crawl")
-        : null
-      const renderedContent = crawlEntry && typeof crawlEntry === "object" && "html" in crawlEntry && typeof crawlEntry.html === "string"
-        ? crawlEntry.html
-        : ""
+      const renderedContent = (await crawlPageToHtml(homepage.url)).html
       siteProfile = {
         siteId: page.domainId,
         siteUrl: homepage.url,

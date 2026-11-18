@@ -83,19 +83,27 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
   const domain = await prisma.domain.findUnique({ where: { id: propertyId }, include: { _count: { select: { pages: true } } } })
   if (!domain) return null
   const property = mapDomainToSite(domain)
-  const [totalPages, indexedPagesCount, linksCount, crawlErrorsCount, recentPageRows, indexedPageRows, crawlErrorRows, linkRows, contentPageRows] = await Promise.all([
+  const [totalPages, indexedPagesCount, linksCount, crawlErrorsCount, recentPageRows, indexedPageRows, crawlErrorRows, linkRows, contentPageRows, contentResourceRows] = await Promise.all([
     prisma.page.count({ where: { domainId: propertyId } }),
     prisma.page.count({ where: { domainId: propertyId, status: { in: ["analyzed", "indexed"] } } }),
-    prisma.link.count({ where: { fromDomain: propertyId } }),
+    prisma.resource.count({ where: { fromDomain: propertyId, type: "link" } }),
     prisma.page.count({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { details: { path: ["crawlResultStatus"], equals: "Error" } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] } }),
     prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
     prisma.page.findMany({ where: { domainId: propertyId, status: { in: ["analyzed", "indexed"] } }, orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
     prisma.page.findMany({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { details: { path: ["crawlResultStatus"], equals: "Error" } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] }, orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }], take: 8, include: { domain: { select: { domain: true } } } }),
-    prisma.link.findMany({ where: { fromDomain: propertyId }, orderBy: { firstCrawlOn: "desc" }, take: 10, include: { from: { select: { domain: true } }, to: { select: { domain: true } } } }),
-    prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }], take: 200, select: { id: true, url: true, title: true, type: true, data: true, details: true, category: true, status: true, statusCode: true, domain: { select: { domain: true } } } }),
+    prisma.resource.findMany({ where: { fromDomain: propertyId, type: "link" }, orderBy: { firstCrawlOn: "desc" }, take: 10, include: { from: { select: { domain: true } }, to: { select: { domain: true } } } }),
+    prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }], take: 200, select: { id: true, url: true, title: true, type: true, details: true, category: true, status: true, statusCode: true, domain: { select: { domain: true } } } }),
+    prisma.resource.findMany({ where: { fromDomain: propertyId, type: { in: ["image", "video", "audio", "iframe"] } } }),
   ])
   const contentItems: ContentItem[] = []
   const seenContentUrls = new Set<string>()
+  const contentResourcesByPage = new Map<string, typeof contentResourceRows>()
+  for (const resource of contentResourceRows) {
+    if (!resource.sourcePageId) continue
+    const resources = contentResourcesByPage.get(resource.sourcePageId) ?? []
+    resources.push(resource)
+    contentResourcesByPage.set(resource.sourcePageId, resources)
+  }
   for (const page of contentPageRows) {
     if (contentItems.length >= 12) break
     const sourcePageTitle = page.title || page.url
@@ -105,7 +113,8 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
       contentItems.push({ id: `${page.id}:direct`, url: page.url, kind: directContent.kind, fileType: directContent.fileType, sourcePageId: page.id, sourcePageUrl: page.url, sourcePageTitle, siteUrl: page.domain.domain, status: readPageResultStatus(page.status, page.details), statusCode: page.statusCode })
     }
     if (contentItems.length >= 12) break
-    for (const asset of readContentAssets(page.data, page.url)) {
+    const resources = contentResourcesByPage.get(page.id) ?? []
+    for (const asset of readContentAssets(resources, page.url)) {
       if (contentItems.length >= 12) break
       const content = asset.kind && asset.fileType ? { kind: asset.kind, fileType: asset.fileType } : classifyContentUrl(asset.url)
       if (!content || seenContentUrls.has(asset.url)) continue
@@ -118,7 +127,7 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
     counts: { totalPages, indexedPages: indexedPagesCount, links: linksCount, crawlErrors: crawlErrorsCount, contentSamples: contentItems.length },
     recentPages: recentPageRows.map((page): ManagedPage => ({ id: page.id, url: page.url, title: page.title || "No title", siteUrl: page.domain.domain, status: readPageResultStatus(page.status, page.details) as ManagedPage["status"], statusCode: page.statusCode, lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never", createdAt: page.discoveredOn ?? new Date(0), category: page.category, description: page.description || "No description", content: page.content || undefined })),
     indexedPages: indexedPageRows.map((page): ManagedPage => ({ id: page.id, url: page.url, title: page.title || "No title", siteUrl: page.domain.domain, status: readPageResultStatus(page.status, page.details) as ManagedPage["status"], statusCode: page.statusCode, lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never", createdAt: page.discoveredOn ?? new Date(0), category: page.category, description: page.description || "No description", content: page.content || undefined })),
-    crawlErrors: crawlErrorRows.map((page): CrawlIssue => ({ id: page.id, domain: page.domain.domain, url: page.url, title: page.title || "No title", status: readPageResultStatus(page.status, page.details), statusCode: page.statusCode, type: page.statusCode !== null && page.statusCode >= 300 && page.statusCode < 400 ? "Redirect" : page.statusCode !== null && page.statusCode >= 400 ? "Error" : "Skipped", targetUrl: readRedirectTarget(page.data), lastCrawled: page.lastCrawled, addedOn: page.discoveredOn ?? new Date(0) })),
+    crawlErrors: crawlErrorRows.map((page): CrawlIssue => ({ id: page.id, domain: page.domain.domain, url: page.url, title: page.title || "No title", status: readPageResultStatus(page.status, page.details), statusCode: page.statusCode, type: page.statusCode !== null && page.statusCode >= 300 && page.statusCode < 400 ? "Redirect" : page.statusCode !== null && page.statusCode >= 400 ? "Error" : "Skipped", targetUrl: readRedirectTarget(page.details), lastCrawled: page.lastCrawled, addedOn: page.discoveredOn ?? new Date(0) })),
     links: linkRows.map((link) => ({ id: link.id, sourceUrl: link.linkFrom, targetUrl: link.linkTo, sourceDomain: link.from.domain, targetDomain: link.to.domain, sourceType: link.sourceType, anchorText: link.anchorText, firstCrawlOn: link.firstCrawlOn })),
     content: contentItems,
   }

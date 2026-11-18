@@ -475,7 +475,6 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
       title: content ? getUrlTitle(input.url) : null,
       description: null,
       type: input.fileType || content?.fileType || "unknown",
-      data: [],
       details,
       content: null,
       status: "discovered",
@@ -515,6 +514,7 @@ type DiscoveredLinkInput = {
   sourcePageId?: string
   targetPageId?: string
   sourceType?: string
+  resourceType?: string
   anchorText?: string
   altText?: string
   titleText?: string
@@ -552,32 +552,40 @@ async function saveDiscoveredLink(input: DiscoveredLinkInput) {
   }))?.id
   const metadata = {
     sourcePageId,
-    targetPageId: input.targetPageId,
     sourceType: input.sourceType,
     anchorText: cleanLinkText(input.anchorText),
     altText: cleanLinkText(input.altText),
     titleText: cleanLinkText(input.titleText),
     rel: cleanLinkText(input.rel),
   }
+  const resourceType = input.resourceType || "link"
+  const targetPageId = input.targetPageId ?? (["image", "video", "audio"].includes(resourceType)
+    ? await saveDiscoveredPage({ siteId: targetDomain.domain.id, url: targetUrl, source: resourceType as DiscoveredPageInput["source"], kind: resourceType as ContentKind })
+    : undefined)
 
-  await prisma.link.upsert({
+  await prisma.resource.upsert({
     where: {
-      linkFrom_linkTo_fromDomain_toDomain: {
+      linkFrom_linkTo_fromDomain_toDomain_type: {
         linkFrom: sourceUrl,
         linkTo: targetUrl,
         fromDomain: siteId,
         toDomain: targetDomain.domain.id,
+        type: resourceType,
       },
     },
     create: {
+      type: resourceType,
       linkFrom: sourceUrl,
       linkTo: targetUrl,
       fromDomain: siteId,
       toDomain: targetDomain.domain.id,
       ...metadata,
+      targetPageId,
     },
     update: {
       ...metadata,
+      type: resourceType,
+      targetPageId,
     },
   })
 }
@@ -662,6 +670,7 @@ async function saveDiscoveredAssets(
       }
 
       const content = classifyContentUrl(absoluteUrl)
+      const resourceKind = asset.kind || content?.kind
       const targetPageId = isInternal
         ? await saveDiscoveredPage({
             siteId,
@@ -681,6 +690,7 @@ async function saveDiscoveredAssets(
         sourcePageId,
         targetPageId,
         sourceType: asset.source,
+        resourceType: resourceKind === "image" || resourceKind === "video" || resourceKind === "audio" || resourceKind === "iframe" ? resourceKind : "link",
         anchorText: asset.anchorText,
         altText: asset.alt,
         titleText: asset.titleText,
@@ -723,14 +733,21 @@ async function saveSitemapPages(
 async function saveCrawledPage(pageId: string, pageData: PersistedPageData, claimedOn?: Date) {
   const existingPage = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { details: true, data: true },
+    select: { details: true },
   })
   const existingDetails = existingPage?.details && typeof existingPage.details === "object" && !Array.isArray(existingPage.details)
     ? existingPage.details
     : {}
-  const previousAnalysis = Array.isArray(existingPage?.data) ? existingPage.data.filter((entry) => {
-    return entry !== null && typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization")
-  }) as Prisma.InputJsonValue[] : []
+  const crawlEntry = pageData.data.find((entry) => entry !== null && typeof entry === "object")
+  const crawlRecord = crawlEntry && typeof crawlEntry === "object" && !Array.isArray(crawlEntry) ? crawlEntry as Record<string, unknown> : {}
+  const capturedLinks = Array.isArray(crawlRecord.links) ? crawlRecord.links : []
+  const capturedImages = Array.isArray(crawlRecord.images) ? crawlRecord.images : []
+  const capturedVideos = Array.isArray(crawlRecord.videos) ? crawlRecord.videos : []
+  const capturedResources = [
+    ...capturedLinks.flatMap((entry) => entry && typeof entry === "object" && "link" in entry && typeof entry.link === "string" ? [{ type: "link", url: entry.link, caption: "caption" in entry && typeof entry.caption === "string" ? entry.caption : null }] : []),
+    ...capturedImages.flatMap((entry) => entry && typeof entry === "object" && "src" in entry && typeof entry.src === "string" ? [{ type: "image", url: entry.src, caption: "caption" in entry && typeof entry.caption === "string" ? entry.caption : null }] : []),
+    ...capturedVideos.flatMap((entry) => entry && typeof entry === "object" && "video" in entry && typeof entry.video === "string" ? [{ type: "video", url: entry.video, caption: "caption" in entry && typeof entry.caption === "string" ? entry.caption : null }] : []),
+  ]
 
   const saved = await prisma.page.updateMany({
     where: claimedOn ? { id: pageId, status: "crawling", crawledOn: claimedOn } : { id: pageId, status: "crawling" },
@@ -738,9 +755,6 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData, clai
       title: pageData.title ?? null,
       description: pageData.description ?? null,
       type: pageData.type,
-      data: [...pageData.data.filter((entry) => {
-        return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
-      }), ...previousAnalysis],
       content: pageData.content ?? null,
       ...(pageData.category !== undefined ? { category: pageData.category } : {}),
       statusCode: pageData.statusCode ?? null,
@@ -755,6 +769,20 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData, clai
     },
   })
   if (saved.count !== 1) throw new Error("The page crawl claim is no longer current.")
+  const page = await prisma.page.findUnique({ where: { id: pageId }, select: { domainId: true, url: true } })
+  if (!page) return
+  await prisma.resource.deleteMany({ where: { sourcePageId: pageId } })
+  const uniqueCapturedResources = new Map(capturedResources.map((resource) => [`${resource.type}:${resource.url}`, resource]))
+  for (const resource of uniqueCapturedResources.values()) {
+    let targetUrl: string
+    try { targetUrl = new URL(resource.url, page.url).toString() } catch { continue }
+    const targetDomain = await upsertDomainRecord({ url: targetUrl, name: getPropertyAddress(targetUrl), status: "discovered" })
+    await prisma.resource.upsert({
+      where: { linkFrom_linkTo_fromDomain_toDomain_type: { linkFrom: page.url, linkTo: targetUrl, fromDomain: page.domainId, toDomain: targetDomain.domain.id, type: resource.type } },
+      create: { type: resource.type, linkFrom: page.url, linkTo: targetUrl, fromDomain: page.domainId, toDomain: targetDomain.domain.id, sourcePageId: pageId, anchorText: resource.caption, sourceType: resource.type },
+      update: { sourcePageId: pageId, anchorText: resource.caption },
+    })
+  }
 }
 
 // Check whether a crawled URL is the site's homepage.
@@ -766,20 +794,11 @@ function isHomepagePageUrl(pageUrl: string): boolean {
   }
 }
 
-// Read the saved rendered HTML from a crawler payload for intelligence analysis.
-function getRenderedPageContent(data: unknown): string {
-  if (!Array.isArray(data)) return ""
-  for (const entry of data) {
-    if (entry && typeof entry === "object" && "html" in entry && typeof entry.html === "string") return entry.html
-  }
-  return ""
-}
-
 // Generate and persist fresh page insights before the worker finishes this page job.
 async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, onActivity?: (activity: string) => Promise<void>, claimedOn?: Date): Promise<void> {
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { data: true, url: true, title: true, domainId: true, status: true, analyzedOn: true, domain: { select: { categories: true } } },
+    select: { url: true, title: true, domainId: true, status: true, analyzedOn: true, details: true, domain: { select: { categories: true } } },
   })
   if (!page) throw new Error(`Page ${pageId} was not found while generating insights.`)
 
@@ -795,9 +814,6 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
     siteCategory: page.domain.categories,
   })
 
-  const currentData = (Array.isArray(page.data) ? page.data.filter((entry) => {
-    return entry !== null && !(typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization"))
-  }) : []) as Prisma.InputJsonValue[]
   const addedOn = new Date().toISOString()
   const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { details: true } })
   const currentPageDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
@@ -811,13 +827,10 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
         : { id: pageId, status: "analyzing" },
     data: {
       category: insight.category,
-      data: [
-        ...currentData,
-        { kind: "summary", summary: insight.summary, addedOn },
-        { kind: "categorization", category: insight.category, addedOn },
-      ],
       details: {
         ...currentPageDetails,
+        summary: insight.summary,
+        summaryAddedOn: addedOn,
         crawlFlowUpdatedAt: new Date().toISOString(),
       },
       status: "analyzed",
@@ -843,7 +856,6 @@ async function completePageCrawlEnrichment(
       url: true,
       title: true,
       content: true,
-      data: true,
       category: true,
       status: true,
       analyzedOn: true,
@@ -907,12 +919,15 @@ async function completePageCrawlEnrichment(
         const homepage = await prisma.page.findFirst({
           where: { domainId: page.domainId, status: { in: ["crawled", "analyzed", "indexed"] }, type: "text/html" },
           orderBy: { url: "asc" },
-          select: { url: true, title: true, content: true, data: true },
+          select: { url: true, title: true, content: true },
         })
         const homepagePage = homepage && isHomepagePageUrl(homepage.url) ? homepage : null
         let homepageName = homepagePage?.title || ""
         let homepageContent = homepagePage?.content || ""
-        let renderedContent = getRenderedPageContent(homepagePage?.data)
+        let renderedContent = ""
+        if (homepagePage) {
+          try { renderedContent = (await crawlPageToHtml(homepagePage.url, { userAgent: neupbotUserAgent })).html } catch {}
+        }
         let siteUrl = homepagePage?.url || `https://${page.domain.domain}/`
 
         if (!homepagePage) {
@@ -1172,6 +1187,13 @@ export function readContentAssets(data: unknown, sourcePageUrl: string): Array<{
   for (const entry of data) {
     if (!entry || typeof entry !== "object") continue
 
+    if ("linkTo" in entry && typeof entry.linkTo === "string" && "type" in entry && typeof entry.type === "string") {
+      const kind = entry.type === "image" || entry.type === "video" || entry.type === "audio" || entry.type === "iframe" ? entry.type : undefined
+      const classified = classifyContentUrl(entry.linkTo)
+      assets.push({ url: entry.linkTo, alt: "anchorText" in entry && typeof entry.anchorText === "string" ? entry.anchorText : undefined, kind, fileType: classified?.fileType || kind })
+      continue
+    }
+
     if ("images" in entry && Array.isArray(entry.images)) {
       for (const image of entry.images) {
         if (!image || typeof image !== "object" || !("src" in image) || typeof image.src !== "string") continue
@@ -1272,7 +1294,6 @@ export async function getContentItemsByFileTypeSlug(
         url: true,
         title: true,
         type: true,
-        data: true,
         status: true,
         statusCode: true,
         domain: {
@@ -1317,7 +1338,8 @@ export async function getContentItemsByFileTypeSlug(
         }
       }
 
-      for (const asset of readContentAssets(page.data, page.url)) {
+      const resources = await prisma.resource.findMany({ where: { sourcePageId: page.id, type: { in: ["image", "video", "audio", "iframe"] } } })
+      for (const asset of readContentAssets(resources, page.url)) {
         const assetContent = asset.kind && asset.fileType
           ? { kind: asset.kind, fileType: asset.fileType }
           : classifyContentUrl(asset.url)
@@ -1379,7 +1401,6 @@ export async function getContentItemById(contentItemId: string): Promise<Content
         id: true,
         url: true,
         title: true,
-        data: true,
         status: true,
         statusCode: true,
         domain: {
@@ -1412,7 +1433,8 @@ export async function getContentItemById(contentItemId: string): Promise<Content
       }
     }
 
-    for (const asset of readContentAssets(page.data, page.url)) {
+    const resources = await prisma.resource.findMany({ where: { sourcePageId: page.id, type: { in: ["image", "video", "audio", "iframe"] } } })
+    for (const asset of readContentAssets(resources, page.url)) {
       if (`${page.id}:${asset.url}` !== contentItemId) continue
 
       const assetContent = asset.kind && asset.fileType
@@ -2047,7 +2069,7 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
 
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true, details: true },
+    select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, details: true },
   })
   await prisma.domain.update({
     where: { id: siteId },
@@ -2344,7 +2366,7 @@ export async function deleteDomainPages(siteId: string) {
     })
     const pageIds = pages.map((page) => page.id)
 
-    await tx.link.deleteMany({
+    await tx.resource.deleteMany({
       where: {
         OR: [
           { fromDomain: siteId },
@@ -2390,7 +2412,7 @@ export async function deleteManagedPage(pageId: string) {
   if (!page) return null
 
   await prisma.$transaction([
-    prisma.link.deleteMany({
+    prisma.resource.deleteMany({
       where: {
         OR: [
           { sourcePageId: page.id },
@@ -2414,30 +2436,9 @@ export async function getAllCrawlTargets() {
 }
 
 export function readRedirectTarget(data: unknown): string | undefined {
-  if (!Array.isArray(data)) return undefined
-  const redirectEntry = data.find((entry) => {
-    return entry && typeof entry === "object" && "links" in entry && Array.isArray(entry.links)
-  })
-  if (!redirectEntry || typeof redirectEntry !== "object" || !("links" in redirectEntry) || !Array.isArray(redirectEntry.links)) return undefined
-  const redirectLink = redirectEntry.links.find((link) => link && typeof link === "object" && "caption" in link && link.caption === "Redirect" && "link" in link)
-  return redirectLink && typeof redirectLink === "object" && "link" in redirectLink && typeof redirectLink.link === "string"
-    ? redirectLink.link
-    : undefined
-}
-
-function readPageBodyHtml(data: unknown) {
-  if (!Array.isArray(data)) return null
-
-  for (const entry of data) {
-    if (entry && typeof entry === "object" && "html" in entry && typeof entry.html === "string") {
-      return entry.html
-    }
-    if (entry && typeof entry === "object" && "bodyHtml" in entry && typeof entry.bodyHtml === "string") {
-      return entry.bodyHtml
-    }
-  }
-
-  return null
+  if (data && typeof data === "object" && !Array.isArray(data) && "redirectLocation" in data && typeof data.redirectLocation === "string") return data.redirectLocation
+  if (data && typeof data === "object" && !Array.isArray(data) && "crawlResultStatus" in data && data.crawlResultStatus === "Redirect" && "finalUrl" in data && typeof data.finalUrl === "string") return data.finalUrl
+  return undefined
 }
 
 function isManageLinkPlaceholderValue(input: string) {
@@ -2534,11 +2535,11 @@ export async function getManagedLinks(input?: {
       ],
       select: {
         id: true,
+        domainId: true,
         title: true,
         url: true,
         discoveredOn: true,
         lastCrawled: true,
-        data: true,
         domain: {
           select: {
             domain: true,
@@ -2551,19 +2552,13 @@ export async function getManagedLinks(input?: {
     const seen = new Set<string>()
 
     for (const page of pages) {
-      const bodyHtml = readPageBodyHtml(page.data)
-      if (!bodyHtml) continue
-
-      const $ = cheerio.load(bodyHtml)
-      $("a[href]").each((index: number, el: cheerio.Element) => {
-        const rawHref = $(el).attr("href") || ""
-        if (isManageLinkPlaceholderValue(rawHref)) return
-
-        const targetUrl = normalizeManagedLinkTarget(rawHref, page.url)
-        if (!targetUrl) return
+      const resources = await prisma.resource.findMany({ where: { OR: [{ sourcePageId: page.id }, { fromDomain: page.domainId, linkFrom: page.url }], type: "link" }, orderBy: { firstCrawlOn: "asc" } })
+      for (const resource of resources) {
+        const targetUrl = normalizeManagedLinkTarget(resource.linkTo, page.url)
+        if (!targetUrl || isManageLinkPlaceholderValue(targetUrl)) continue
 
         const type = classifyManagedLinkType(page.domain.domain, targetUrl)
-        if (!type) return
+        if (!type) continue
         const targetDomain = type === "internal" || type === "outgoing"
           ? getPropertyAddress(targetUrl)
           : undefined
@@ -2577,21 +2572,21 @@ export async function getManagedLinks(input?: {
 
         if (input?.type) {
           if (input.type === "incoming") {
-            if (resolvedType !== "incoming") return
+            if (resolvedType !== "incoming") continue
           } else if (resolvedType !== input.type) {
-            return
+            continue
           }
         } else if (resolvedType === "incoming") {
-          return
+          continue
         }
 
-        const anchorText = cleanLinkText($(el).text())
-        const titleText = $(el).attr("title") || undefined
-        const rel = $(el).attr("rel") || undefined
-        const linkId = `${page.id}:${resolvedType}:${targetUrl}:${index}`
+        const anchorText = cleanLinkText(resource.anchorText)
+        const titleText = resource.titleText || undefined
+        const rel = resource.rel || undefined
+        const linkId = resource.id
         const dedupeKey = `${page.id}:${resolvedType}:${targetUrl}:${anchorText || ""}:${titleText || ""}`
 
-        if (seen.has(dedupeKey)) return
+        if (seen.has(dedupeKey)) continue
         seen.add(dedupeKey)
 
         const link: ManagedLinkItem = {
@@ -2612,7 +2607,7 @@ export async function getManagedLinks(input?: {
         if (matchesManagedLinkSearch(link, input?.search)) {
           links.push(link)
         }
-      })
+      }
     }
 
     links.sort((left, right) => right.firstCrawlOn.getTime() - left.firstCrawlOn.getTime())
@@ -2738,8 +2733,6 @@ function getMediaIssuesFromHtml(bodyHtml: string | null, pageUrl: string): PageI
 }
 
 function getMediaIssuesFromStoredAssets(data: unknown, pageUrl: string): PageIssue[] {
-  if (readPageBodyHtml(data)) return []
-
   return readContentAssets(data, pageUrl).flatMap((asset, index): PageIssue[] => {
     const content = asset.kind && asset.fileType ? { kind: asset.kind, fileType: asset.fileType } : classifyContentUrl(asset.url)
     if (content?.kind !== "image") return []
@@ -2776,22 +2769,19 @@ export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
         id: true,
         url: true,
         domainId: true,
-        data: true,
       },
     })
 
     if (!page) return []
 
-    const bodyHtml = readPageBodyHtml(page.data)
-    const issues = [
-      ...getMediaIssuesFromHtml(bodyHtml, page.url),
-      ...getMediaIssuesFromStoredAssets(page.data, page.url),
-    ]
+    const resources = await prisma.resource.findMany({ where: { sourcePageId: page.id } })
+    const issues = getMediaIssuesFromStoredAssets(resources, page.url)
 
-    const outboundLinks = await prisma.link.findMany({
+    const outboundLinks = await prisma.resource.findMany({
       where: {
         fromDomain: page.domainId,
         linkFrom: page.url,
+        type: "link",
       },
       select: {
         id: true,
@@ -2800,7 +2790,7 @@ export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
     })
     const targetUrls = [...new Set([
       ...outboundLinks.map((link) => link.linkTo),
-      ...readContentAssets(page.data, page.url).map((asset) => asset.url),
+      ...readContentAssets(resources, page.url).map((asset) => asset.url),
     ])]
 
     if (targetUrls.length === 0) return issues
@@ -2836,7 +2826,7 @@ export async function getPageIssues(pageId: string): Promise<PageIssue[]> {
       })
     }
 
-    for (const asset of readContentAssets(page.data, page.url)) {
+    for (const asset of readContentAssets(resources, page.url)) {
       const targetPage = targetPageByUrl.get(asset.url)
       if (!targetPage || !hasCrawlError(targetPage)) continue
 
@@ -2905,7 +2895,7 @@ export async function getCrawlIssues(): Promise<CrawlIssue[]> {
       status: getPageResultStatus(page.status, page.details),
       statusCode: page.statusCode,
       type: isRedirect ? "Redirect" : isError ? "Error" : "Skipped",
-      targetUrl: readRedirectTarget(page.data),
+      targetUrl: readRedirectTarget(page.details),
       lastCrawled: page.lastCrawled,
       addedOn: page.discoveredOn ?? new Date(0),
     }

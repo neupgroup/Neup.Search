@@ -52,8 +52,8 @@ model Domain {
 
   pages          Page[]
   crawlerWorkers CrawlerWorker[]
-  linksFrom      Link[]          @relation("FromDomainLinks")
-  linksTo        Link[]          @relation("ToDomainLinks")
+  resourcesFrom  Resource[]       @relation("FromDomainResources")
+  resourcesTo    Resource[]       @relation("ToDomainResources")
   sitemaps       Sitemap[]
 
   @@index([addedOn])
@@ -102,7 +102,6 @@ model Page {
   title           String?
   description     String?
   type            String
-  data            Json[]    @default([])
   details         Json?
   content         String?   @db.Text
   category        String?   @db.VarChar(256)
@@ -124,8 +123,9 @@ model Page {
   @@map("page")
 }
 
-model Link {
+model Resource {
   id           String   @id @default(cuid())
+  type         String
   linkFrom     String
   linkTo       String
   fromDomain   String
@@ -137,12 +137,13 @@ model Link {
   altText      String?
   titleText    String?
   rel          String?
+  metadata     Json?
   firstCrawlOn DateTime @default(now())
 
-  from Domain @relation("FromDomainLinks", fields: [fromDomain], references: [id], onDelete: Cascade)
-  to   Domain @relation("ToDomainLinks", fields: [toDomain], references: [id], onDelete: Cascade)
+  from Domain @relation("FromDomainResources", fields: [fromDomain], references: [id], onDelete: Cascade)
+  to   Domain @relation("ToDomainResources", fields: [toDomain], references: [id], onDelete: Cascade)
 
-  @@unique([linkFrom, linkTo, fromDomain, toDomain])
+  @@unique([linkFrom, linkTo, fromDomain, toDomain, type])
   @@index([firstCrawlOn])
   @@index([fromDomain])
   @@index([toDomain])
@@ -151,5 +152,5 @@ model Link {
   @@index([sourceType])
   @@index([linkFrom])
   @@index([linkTo])
-  @@map("Links")
+  @@map("Resources")
 }
