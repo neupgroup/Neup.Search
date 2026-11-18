@@ -2,14 +2,17 @@ import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-// Keep each application or worker process within a small, explicit PostgreSQL connection budget.
-function limitDatabaseConnectionPool(databaseUrl: string | undefined): string | undefined {
+// Configure a PostgreSQL pool for the concurrent local crawler and analysis workers.
+function configureDatabaseConnectionPool(databaseUrl: string | undefined): string | undefined {
   if (!databaseUrl) return databaseUrl;
 
   try {
     const parsedUrl = new URL(databaseUrl);
     if (!parsedUrl.searchParams.has("connection_limit")) {
-      parsedUrl.searchParams.set("connection_limit", process.env.PRISMA_CONNECTION_LIMIT ?? "2");
+      parsedUrl.searchParams.set("connection_limit", process.env.PRISMA_CONNECTION_LIMIT ?? "10");
+    }
+    if (!parsedUrl.searchParams.has("pool_timeout")) {
+      parsedUrl.searchParams.set("pool_timeout", process.env.PRISMA_POOL_TIMEOUT ?? "20");
     }
     return parsedUrl.toString();
   } catch {
@@ -21,7 +24,7 @@ function limitDatabaseConnectionPool(databaseUrl: string | undefined): string | 
 export const prisma: PrismaClient =
   globalForPrisma.prisma ??
   new PrismaClient({
-    datasources: { db: { url: limitDatabaseConnectionPool(process.env.DATABASE_URL) } },
+    datasources: { db: { url: configureDatabaseConnectionPool(process.env.DATABASE_URL) } },
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
