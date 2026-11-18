@@ -8,16 +8,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum DomainStatus {
-  Requested
-  Pending
-  Active
-  Paused
-  Error
-  Crawling
-  Crawled
-  Cancelled
-  Stopped
+enum WorkflowStatus {
+  discovered
+  crawling
+  crawled
+  analyzing
+  analyzed
+  indexed
 }
 
 enum CrawlerWorkerStatus {
@@ -47,8 +44,9 @@ model Domain {
   lastCrawled     DateTime?
   crawlWorkerId   String?
   crawlLeaseUntil DateTime?
-  status          DomainStatus
+  status          WorkflowStatus
   addedOn         DateTime     @default(now())
+  analyzedOn      DateTime?
   details         Json?
   categories      String?      @db.VarChar(256)
 
@@ -108,9 +106,12 @@ model Page {
   details         Json?
   content         String?   @db.Text
   category        String?   @db.VarChar(256)
-  status          String
+  status          WorkflowStatus
   statusCode      Int?
   addedOn         DateTime  @default(now())
+  discoveredOn    DateTime  @default(now())
+  analyzedOn      DateTime?
+  crawledOn       DateTime?
   lastCrawled     DateTime?
   crawlWorkerId   String?
   crawlLeaseUntil DateTime?

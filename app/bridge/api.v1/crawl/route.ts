@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
     const { domain, siteUrl } = await createDomainForCrawl({ url })
     const page = await runSinglePageCrawler(domain.id, siteUrl)
     if (!page) return crawlFailure("The page could not be saved.", 500, "crawl_failed")
-    if (page.status === "Error") {
+    if (page.details && typeof page.details === "object" && !Array.isArray(page.details) && "crawlResultStatus" in page.details && page.details.crawlResultStatus === "Error") {
       const firstData = page.data[0]
       const captured = firstData && typeof firstData === "object" && !Array.isArray(firstData)
         ? firstData as Record<string, unknown>

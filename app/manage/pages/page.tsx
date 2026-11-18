@@ -12,12 +12,12 @@ import { SearchInput } from "@/components/search-input"
 
 function getStatusDotClass(page: Page) {
     if (page.statusCode && page.statusCode >= 400) return "bg-red-500"
-    if (page.status === "Error") return "bg-red-500"
-    if (page.status === "Redirect" || page.status === "Skipped" || (page.statusCode && page.statusCode >= 300)) {
+    if (page.statusCode !== null && page.statusCode >= 400) return "bg-red-500"
+    if (page.statusCode !== null && page.statusCode >= 300 && page.statusCode < 400 || (page.statusCode && page.statusCode >= 300)) {
         return "bg-orange-500"
     }
-    if (page.status === "Indexed") return "bg-green-500"
-    if (page.status === "Pending" && page.domainStatus === "Crawling") return "bg-slate-400"
+    if (page.status === "analyzed" || page.status === "indexed") return "bg-green-500"
+    if (page.status === "discovered" && page.domainStatus === "crawling") return "bg-slate-400"
     return "bg-blue-500"
 }
 

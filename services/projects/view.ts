@@ -85,12 +85,12 @@ export async function getPropertyDashboard(propertyId: string): Promise<Property
   const property = mapDomainToSite(domain)
   const [totalPages, indexedPagesCount, linksCount, crawlErrorsCount, recentPageRows, indexedPageRows, crawlErrorRows, linkRows, contentPageRows] = await Promise.all([
     prisma.page.count({ where: { domainId: propertyId } }),
-    prisma.page.count({ where: { domainId: propertyId, status: { in: ["Indexed", "completed-flow"] } } }),
+    prisma.page.count({ where: { domainId: propertyId, status: { in: ["analyzed", "indexed"] } } }),
     prisma.link.count({ where: { fromDomain: propertyId } }),
-    prisma.page.count({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { status: { in: ["Error", "Redirect", "Skipped"] } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] } }),
+    prisma.page.count({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { details: { path: ["crawlResultStatus"], equals: "Error" } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] } }),
     prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
-    prisma.page.findMany({ where: { domainId: propertyId, status: { in: ["Indexed", "completed-flow"] } }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
-    prisma.page.findMany({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { status: { in: ["Error", "Redirect", "Skipped"] } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true } } } }),
+    prisma.page.findMany({ where: { domainId: propertyId, status: { in: ["analyzed", "indexed"] } }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true, name: true } } } }),
+    prisma.page.findMany({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { details: { path: ["crawlResultStatus"], equals: "Error" } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 8, include: { domain: { select: { domain: true } } } }),
     prisma.link.findMany({ where: { fromDomain: propertyId }, orderBy: { firstCrawlOn: "desc" }, take: 10, include: { from: { select: { domain: true } }, to: { select: { domain: true } } } }),
     prisma.page.findMany({ where: { domainId: propertyId }, orderBy: [{ lastCrawled: "desc" }, { addedOn: "desc" }], take: 200, select: { id: true, url: true, title: true, type: true, data: true, details: true, category: true, status: true, statusCode: true, domain: { select: { domain: true } } } }),
   ])

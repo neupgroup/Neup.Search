@@ -2,7 +2,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
 
-const domainStatuses = ["Requested", "Pending", "Active", "Paused", "Error", "Crawling", "Crawled", "Cancelled", "Stopped"] as const
+const workflowStatuses = ["discovered", "crawling", "crawled", "analyzing", "analyzed", "indexed"] as const
 
 // Update a page or site crawl status through the authenticated worker API.
 export async function POST(request: NextRequest) {
@@ -16,6 +16,7 @@ export async function POST(request: NextRequest) {
   const activity = typeof input.activity === "string" ? input.activity : undefined
 
   if (typeof input.pageId === "string" && input.pageId.trim()) {
+    if (!workflowStatuses.includes(input.status as typeof workflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported page workflow status.")
     const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true } })
     if (!page) return workerApiError("page_not_found", "Page not found.", 404)
     const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
@@ -24,16 +25,19 @@ export async function POST(request: NextRequest) {
     await prisma.page.update({
       where: { id: input.pageId },
       data: {
-        status: input.status,
+        status: input.status as typeof workflowStatuses[number],
+        ...(input.status === "discovered" ? { discoveredOn: new Date() } : {}),
+        ...(input.status === "crawled" ? { crawledOn: new Date(), lastCrawled: new Date() } : {}),
+        ...(input.status === "analyzed" ? { analyzedOn: new Date() } : {}),
         details: { ...details, ...(activity ? { currentActivity: activity } : {}), crawlFlowUpdatedAt: new Date().toISOString() },
-        ...(["Error", "Skipped", "reported-errors", "completed-flow"].includes(input.status) ? { crawlWorkerId: null, crawlLeaseUntil: null } : {}),
+        ...(input.status === "crawled" || input.status === "analyzed" ? { crawlWorkerId: null, crawlLeaseUntil: null } : {}),
       },
     })
     return workerApiSuccess({ pageId: input.pageId, status: input.status, updated: true })
   }
 
   if (typeof input.siteId === "string" && input.siteId.trim()) {
-    if (!domainStatuses.includes(input.status as typeof domainStatuses[number])) return workerApiError("invalid_status", "status is not a supported site crawl status.")
+    if (!workflowStatuses.includes(input.status as typeof workflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported site workflow status.")
     const domain = await prisma.domain.findUnique({ where: { id: input.siteId }, select: { details: true } })
     if (!domain) return workerApiError("site_not_found", "Site not found.", 404)
     const details = domain.details && typeof domain.details === "object" && !Array.isArray(domain.details)
@@ -42,7 +46,8 @@ export async function POST(request: NextRequest) {
     await prisma.domain.update({
       where: { id: input.siteId },
       data: {
-        status: input.status as typeof domainStatuses[number],
+        status: input.status as typeof workflowStatuses[number],
+        ...(input.status === "analyzed" ? { analyzedOn: new Date() } : {}),
         details: { ...details, ...(activity ? { currentActivity: activity } : {}) },
       },
     })

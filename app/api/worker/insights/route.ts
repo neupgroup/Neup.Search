@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   if (typeof input.summary !== "string" || (input.category !== null && typeof input.category !== "string")) return workerApiError("invalid_insight", "summary and category are required.")
   const category = typeof input.category === "string" ? input.category : null
 
-  const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { data: true, details: true } })
+  const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { data: true, details: true, domainId: true } })
   if (!page) return workerApiError("page_not_found", "Page not found.", 404)
   const currentData = Array.isArray(page.data)
     ? page.data.filter((entry) => !entry || typeof entry !== "object" || !("kind" in entry) || (entry.kind !== "summary" && entry.kind !== "categorization"))
@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
     ? page.details as Record<string, unknown>
     : {}
 
+  const analyzedOn = new Date()
   await prisma.page.update({
     where: { id: input.pageId },
     data: {
@@ -35,10 +36,13 @@ export async function POST(request: NextRequest) {
         { kind: "categorization", category, addedOn },
       ],
       details: { ...details, crawlFlowUpdatedAt: addedOn },
-      status: "completed-flow",
+      status: "analyzed",
+      analyzedOn,
       crawlWorkerId: null,
       crawlLeaseUntil: null,
     },
   })
+  await prisma.domain.updateMany({ where: { id: page.domainId }, data: { analyzedOn } })
+  await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["analyzing", "crawled", "analyzed", "indexed"] } }, data: { status: "analyzed" } })
   return workerApiSuccess({ pageId: input.pageId, updated: true })
 }

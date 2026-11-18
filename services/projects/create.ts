@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma"
-import type { DomainStatus } from "@prisma/client"
+import type { WorkflowStatus } from "@prisma/client"
 import { getPropertyAddress, assertValidSiteDomain, normalizeSiteUrl } from "@/services/projects/domain"
 import { readDetails } from "@/services/projects/view"
 import type { DomainDetails } from "@/services/neupbot"
@@ -11,7 +11,7 @@ function mergeProjectLocations(locations: string[] | undefined, nextLocation: st
 }
 
 // Create or reuse a project record for a crawl request.
-export async function upsertDomainRecord(input: { url: string; name: string; status: DomainStatus; details?: DomainDetails }) {
+export async function upsertDomainRecord(input: { url: string; name: string; status: WorkflowStatus; details?: DomainDetails }) {
   const siteUrl = normalizeSiteUrl(input.url)
   const propertyAddress = getPropertyAddress(siteUrl)
   assertValidSiteDomain(siteUrl)
@@ -26,7 +26,7 @@ export async function upsertDomainRecord(input: { url: string; name: string; sta
 
 // Create or find a project record and mark it ready for crawling.
 export async function createDomainForCrawl(input: { url: string; description?: string }) {
-  const { domain, siteUrl } = await upsertDomainRecord({ url: input.url, name: getPropertyAddress(input.url), status: "Requested", details: { description: input.description || "", currentActivity: "Queued for crawl.", pagesCrawled: 0 } })
+  const { domain, siteUrl } = await upsertDomainRecord({ url: input.url, name: getPropertyAddress(input.url), status: "discovered", details: { description: input.description || "", currentActivity: "Queued for crawl.", pagesCrawled: 0 } })
 
   await prisma.$transaction(async (transaction) => {
     const currentDomain = await transaction.domain.findUnique({
@@ -34,21 +34,21 @@ export async function createDomainForCrawl(input: { url: string; description?: s
       select: { status: true, crawlLeaseUntil: true, details: true },
     })
     if (!currentDomain) throw new Error("Domain not found after creation.")
-    if (currentDomain.status === "Crawling" || (currentDomain.crawlLeaseUntil && currentDomain.crawlLeaseUntil > new Date())) return
+    if (currentDomain.status === "crawling" || (currentDomain.crawlLeaseUntil && currentDomain.crawlLeaseUntil > new Date())) return
 
     const now = new Date()
     await transaction.page.updateMany({
       where: { domainId: domain.id, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-      data: { status: "Pending", crawlWorkerId: null, crawlLeaseUntil: null },
+      data: { status: "discovered", crawlWorkerId: null, crawlLeaseUntil: null },
     })
     await transaction.page.updateMany({
       where: { domainId: domain.id, crawlLeaseUntil: { gt: now } },
-      data: { status: "Pending" },
+      data: { status: "discovered" },
     })
     await transaction.domain.update({
       where: { id: domain.id },
       data: {
-        status: "Requested",
+        status: "discovered",
         crawlWorkerId: null,
         crawlLeaseUntil: null,
         details: {

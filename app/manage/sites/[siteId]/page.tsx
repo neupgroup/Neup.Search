@@ -69,7 +69,7 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
              <div className="flex gap-2">
                 <RecrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
                 <ResumeCrawlButton siteId={site.id} status={site.status} />
-                {site.status === "Crawling" && (
+                {site.status === "crawling" && (
                    <CancelCrawlButton siteId={site.id} />
                 )}
              </div>

@@ -16,7 +16,7 @@ export type Page = {
   title: string
   siteUrl: string
   status: string
-  domainStatus?: "Requested" | "Pending" | "Active" | "Paused" | "Error" | "Crawling" | "Crawled" | "Cancelled" | "Stopped"
+  domainStatus?: "discovered" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed"
   statusCode: number | null
   lastIndexed: string | null
   createdAt: Date

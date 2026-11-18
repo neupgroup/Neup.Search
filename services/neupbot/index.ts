@@ -37,7 +37,7 @@ export type ManagedDomain = {
   id: string
   url: string
   description: string
-  status: "Requested" | "Pending" | "Active" | "Paused" | "Error" | "Crawling" | "Crawled" | "Cancelled" | "Stopped"
+  status: "discovered" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed"
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number
@@ -260,15 +260,14 @@ type PersistedPageData = {
   details?: Prisma.InputJsonValue
 }
 
-type PageFlowStage = "discovered-page" | "crawling-page" | "saved-content" | "reported-errors" | "analyzing-page" | "completed-flow"
+type PageFlowStage = "discovered" | "crawling" | "crawled" | "analyzing" | "analyzed"
 
 const pageFlowActivity: Record<PageFlowStage, string> = {
-  "discovered-page": "Starting",
-  "crawling-page": "Crawling Page",
-  "saved-content": "Saving Content",
-  "reported-errors": "Reporting HTML Errors",
-  "analyzing-page": "Generating Insights",
-  "completed-flow": "Completing",
+  discovered: "Starting",
+  crawling: "Crawling Page",
+  crawled: "Crawled Page",
+  analyzing: "Generating Insights",
+  analyzed: "Analysis Complete",
 }
 
 const imageFileTypes = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "ico", "bmp", "tif", "tiff"])
@@ -479,7 +478,8 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
       data: [],
       details,
       content: null,
-      status: "Pending",
+      status: "discovered",
+      discoveredOn: new Date(),
       statusCode: null,
     },
     select: { id: true },
@@ -497,7 +497,13 @@ async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<v
   const { crawlFlowStatus: _legacyFlowStatus, ...details } = currentDetails
   await prisma.page.update({
     where: { id: pageId },
-    data: { status: stage, details: { ...details, crawlFlowUpdatedAt: new Date().toISOString() } },
+    data: {
+      status: stage,
+      ...(stage === "discovered" ? { discoveredOn: new Date() } : {}),
+      ...(stage === "crawled" ? { crawledOn: new Date(), lastCrawled: new Date() } : {}),
+      ...(stage === "analyzed" ? { analyzedOn: new Date() } : {}),
+      details: { ...details, crawlFlowUpdatedAt: new Date().toISOString() },
+    },
   })
 }
 
@@ -534,7 +540,7 @@ async function saveDiscoveredLink(input: DiscoveredLinkInput) {
   const targetDomain = await upsertDomainRecord({
     url: normalizedTargetSiteUrl,
     name: targetHostname,
-    status: "Active",
+    status: "discovered",
     details: {
       discoveredFrom: sourceUrl,
     },
@@ -738,6 +744,8 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       ...(pageData.category !== undefined ? { category: pageData.category } : {}),
       statusCode: pageData.statusCode ?? null,
       lastCrawled: new Date(),
+      crawledOn: new Date(),
+      status: "crawled",
       details: {
         ...existingDetails,
         ...(pageData.details && typeof pageData.details === "object" && !Array.isArray(pageData.details) ? pageData.details : {}),
@@ -773,7 +781,7 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
   })
   if (!page) throw new Error(`Page ${pageId} was not found while generating insights.`)
 
-  await onActivity?.(pageFlowActivity["analyzing-page"])
+  await onActivity?.(pageFlowActivity.analyzing)
   await updateDomainDetails(page.domainId, {
     currentActivity: `Generating page insight for ${page.url}`,
     currentCrawlUrl: page.url,
@@ -806,10 +814,13 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
         ...currentPageDetails,
         crawlFlowUpdatedAt: new Date().toISOString(),
       },
-      status: "completed-flow",
+      status: "analyzed",
+      analyzedOn: new Date(),
     },
   })
-  await onActivity?.(pageFlowActivity["completed-flow"])
+  await prisma.domain.updateMany({ where: { id: page.domainId }, data: { analyzedOn: new Date() } })
+  await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["crawled", "analyzing", "analyzed", "indexed"] } }, data: { status: "analyzed" } })
+  await onActivity?.(pageFlowActivity.analyzed)
 }
 
 // Ensure the site profile exists and save fresh insights before the worker completes this page.
@@ -841,12 +852,12 @@ async function completePageCrawlEnrichment(
   }
 
   const details = readDetails(page.domain.details)
-  await setPageFlowStage(pageId, "analyzing-page")
-  await onActivity?.(pageFlowActivity["analyzing-page"])
+  await setPageFlowStage(pageId, "analyzing")
+  await onActivity?.(pageFlowActivity.analyzing)
   const profileExists = !!details.summary || !!details.siteProfileGeneratedAt
   let profileError: Error | undefined
   if (!profileExists) {
-    await onActivity?.(pageFlowActivity["analyzing-page"])
+    await onActivity?.(pageFlowActivity.analyzing)
     const workerId = `profile-${randomUUID()}`
     const leaseDurationMs = 5 * 60_000
     const deadline = Date.now() + 5 * 60_000
@@ -885,7 +896,7 @@ async function completePageCrawlEnrichment(
 
       try {
         const homepage = await prisma.page.findFirst({
-          where: { domainId: page.domainId, status: { in: ["Indexed", "completed-flow"] }, type: "text/html" },
+          where: { domainId: page.domainId, status: { in: ["crawled", "analyzed", "indexed"] }, type: "text/html" },
           orderBy: { url: "asc" },
           select: { url: true, title: true, content: true, data: true },
         })
@@ -919,7 +930,7 @@ async function completePageCrawlEnrichment(
             homepageContent,
             renderedContent,
           })
-          if (basics) await onActivity?.(pageFlowActivity["analyzing-page"])
+          if (basics) await onActivity?.(pageFlowActivity.analyzing)
           else profileError = new Error("Site profile generation returned no result.")
         } else {
           profileError = new Error("The homepage did not return usable content for a site profile.")
@@ -938,13 +949,13 @@ async function completePageCrawlEnrichment(
       const currentDomain = await prisma.domain.findUnique({ where: { id: page.domainId }, select: { details: true } })
       const currentDetails = readDetails(currentDomain?.details)
       if (currentDetails.summary || currentDetails.siteProfileGeneratedAt) {
-        await onActivity?.(pageFlowActivity["analyzing-page"])
+        await onActivity?.(pageFlowActivity.analyzing)
       } else {
         profileError = new Error("Could not acquire the site profile lease.")
       }
     }
   } else {
-    await onActivity?.(pageFlowActivity["analyzing-page"])
+    await onActivity?.(pageFlowActivity.analyzing)
   }
 
   if (profileError instanceof RequestTimeoutError) {
@@ -1690,7 +1701,7 @@ async function crawlStoredPage({
 
     if (abortIfDomainInactive) {
       const currentDomain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
-      if (!currentDomain || currentDomain.status !== "Crawling") {
+      if (!currentDomain || currentDomain.status !== "crawling") {
         const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { details: true } })
         const currentDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
           ? currentPage.details as Record<string, unknown>
@@ -1698,7 +1709,7 @@ async function crawlStoredPage({
         await prisma.page.update({
           where: { id: pageId },
           data: {
-            status: "Skipped",
+            status: "crawled",
             content: null,
             lastCrawled: new Date(),
             details: { ...currentDetails, crawlResultStatus: "Skipped", skipReason: "domain-crawl-cancelled" },
@@ -1780,30 +1791,30 @@ export async function runPageCrawler(
   } = {},
 ) {
   // Persist the shared lifecycle stages for both queued and manually requested crawls.
-  let activeStage: PageFlowStage = "discovered-page"
+  let activeStage: PageFlowStage = "discovered"
   const reportPageFlowStage = async (stage: PageFlowStage) => {
     activeStage = stage
     await setPageFlowStage(pageId, stage)
-    if (stage !== "reported-errors") await options.onActivity?.(pageFlowActivity[stage])
+    if (stage !== "crawled") await options.onActivity?.(pageFlowActivity[stage])
   }
 
   const runTrackedPageFlow = async (crawl: () => Promise<unknown>): Promise<boolean> => {
     try {
-      await reportPageFlowStage("discovered-page")
-      await reportPageFlowStage("crawling-page")
+      await reportPageFlowStage("discovered")
+      await reportPageFlowStage("crawling")
       await withRequestTimeout(crawl(), "Page crawl")
       const page = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
       const resultStatus = page ? getPageResultStatus(page.status, page.details) : "Error"
       if (resultStatus === "Error" || resultStatus === "Skipped" || resultStatus === "Redirect") {
-        await prisma.page.update({ where: { id: pageId }, data: { status: resultStatus === "Error" ? "Error" : "Skipped" } })
+        await prisma.page.update({ where: { id: pageId }, data: { status: "crawled" } })
         await options.onActivity?.("Skipping")
         return false
       }
 
       await getPageIssues(pageId)
-      await reportPageFlowStage("reported-errors")
+      await reportPageFlowStage("crawled")
       if (resultStatus === "Indexed" && options.generateInsights !== false) {
-        activeStage = "analyzing-page"
+        activeStage = "analyzing"
         await completePageCrawlEnrichment(pageId, options.onActivity)
       }
       return resultStatus === "Indexed"
@@ -1819,7 +1830,7 @@ export async function runPageCrawler(
       await prisma.page.update({
         where: { id: pageId },
         data: {
-          status: "Error",
+          status: currentPage?.status === "analyzing" ? "analyzing" : "crawled",
           details: {
             ...currentDetails,
             failedFlowStage: currentPage?.status || activeStage,
@@ -1828,9 +1839,9 @@ export async function runPageCrawler(
           },
         },
       })
-      const failureStage = currentPage?.status === "analyzing-page" || activeStage === "analyzing-page"
+      const failureStage = currentPage?.status === "analyzing" || activeStage === "analyzing"
         ? "Generating Insights (failed)"
-        : currentPage?.status === "saved-content" || activeStage === "saved-content"
+        : currentPage?.status === "crawled" || activeStage === "crawled"
           ? "Saving Content (failed)"
           : "Skipping"
       await options.onActivity?.(failureStage)
@@ -1841,7 +1852,9 @@ export async function runPageCrawler(
   const crawlCurrentPage = () => crawlPage(pageId, {
     updateDomainProgress: options.updateDomainProgress,
     abortIfDomainInactive: options.leaseAlreadyClaimed,
-    onContentSave: () => reportPageFlowStage("saved-content"),
+    onContentSave: async () => {
+      await options.onActivity?.("Saving Content")
+    },
   })
 
   if (options.leaseAlreadyClaimed) {
@@ -2006,12 +2019,12 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
 
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true },
+    select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, data: true, details: true },
   })
   await prisma.domain.update({
     where: { id: siteId },
     data: {
-      status: page?.status === "Error" ? "Error" : "Active",
+      status: "crawled",
       lastCrawled: new Date(),
       details: {
         ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
@@ -2037,7 +2050,7 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
       select: { status: true, details: true, crawlLeaseUntil: true },
     })
     if (!domain) throw new Error("Domain not found.")
-    if (domain.status === "Crawling" || (domain.crawlLeaseUntil && domain.crawlLeaseUntil > new Date())) {
+    if (domain.status === "crawling" || (domain.crawlLeaseUntil && domain.crawlLeaseUntil > new Date())) {
       throw new Error("This domain is already being crawled.")
     }
 
@@ -2047,18 +2060,18 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
           domainId: siteId,
           OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: new Date() } }],
         },
-        data: { status: "Pending", crawlWorkerId: null, crawlLeaseUntil: null },
+        data: { status: "discovered", crawlWorkerId: null, crawlLeaseUntil: null },
       })
       await transaction.page.updateMany({
         where: { domainId: siteId, crawlLeaseUntil: { gt: new Date() } },
-        data: { status: "Pending" },
+        data: { status: "discovered" },
       })
     }
 
     await transaction.domain.update({
       where: { id: siteId },
       data: {
-        status: "Requested",
+        status: "discovered",
         crawlWorkerId: null,
         crawlLeaseUntil: null,
         details: {
@@ -2147,7 +2160,7 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
     await prisma.domain.update({
       where: { id: siteId },
       data: {
-        status: "Crawling",
+        status: "crawling",
       },
     })
   } catch (error: any) {
@@ -2155,7 +2168,7 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
     await prisma.domain.update({
       where: { id: siteId },
       data: {
-        status: "Error",
+        status: "discovered",
         details: {
           currentActivity: `Crawl failed: ${error.message}`,
         },
@@ -2168,12 +2181,12 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
 export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean> {
   const now = new Date()
   const [pendingPages, activePageLeases, domain] = await Promise.all([
-    prisma.page.count({ where: { domainId: siteId, status: "Pending" } }),
+    prisma.page.count({ where: { domainId: siteId, status: "discovered" } }),
     prisma.page.count({ where: { domainId: siteId, crawlLeaseUntil: { gt: now } } }),
     prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } }),
   ])
 
-  if (!domain || domain.status !== "Crawling" || pendingPages > 0 || activePageLeases > 0) return false
+  if (!domain || domain.status !== "crawling" || pendingPages > 0 || activePageLeases > 0) return false
   const details = readDetails(domain.details)
   const crawlStartedAt = details.crawlStartedAt ? new Date(details.crawlStartedAt) : null
   const pagesCrawled = crawlStartedAt && !Number.isNaN(crawlStartedAt.getTime())
@@ -2181,9 +2194,9 @@ export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean
     : 0
 
   const result = await prisma.domain.updateMany({
-    where: { id: siteId, status: "Crawling" },
+    where: { id: siteId, status: "crawling" },
     data: {
-      status: "Active",
+      status: "crawled",
       lastCrawled: now,
       details: {
         ...details,
@@ -2275,7 +2288,7 @@ export async function getNeupbotDashboardStats() {
         lastSeenAt: { gte: heartbeatCutoff },
       },
     }),
-    prisma.domain.count({ where: { status: "Error" } }),
+    prisma.domain.count({ where: { status: "discovered" } }),
   ])
   return { totalSites, totalPages, activeCrawls, crawlErrors }
 }
@@ -2284,7 +2297,7 @@ export async function cancelDomainCrawl(siteId: string) {
   await prisma.domain.update({
     where: { id: siteId },
     data: {
-      status: "Active",
+      status: "crawled",
       details: {
         ...readDetails((await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } }))?.details),
         currentActivity: "Crawl cancelled by user.",
@@ -2837,7 +2850,7 @@ export async function getCrawlIssues(): Promise<CrawlIssue[]> {
     where: {
       OR: [
         { statusCode: { gte: 300 } },
-        { status: { in: ["Error", "Redirect", "Skipped"] } },
+        { details: { path: ["crawlResultStatus"], equals: "Error" } },
         { details: { path: ["crawlResultStatus"], equals: "Skipped" } },
         { details: { path: ["crawlResultStatus"], equals: "Redirect" } },
       ],

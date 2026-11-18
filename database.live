@@ -15,8 +15,9 @@ Fields:
 > lastCrawled: timestamp, nullable;
 > crawlWorkerId: string, nullable;
 > crawlLeaseUntil: timestamp, nullable;
-> status: enum(Requested, Pending, Active, Paused, Error, Crawling, Crawled, Cancelled, Stopped);
+> status: enum(discovered, crawling, crawled, analyzing, analyzed, indexed);
 > addedOn: timestamp, default: now;
+> analyzedOn: timestamp, nullable;
 > details: json, nullable;
 > categories: string, nullable, varchar(256);
 
@@ -54,9 +55,12 @@ Fields:
 > details: json, nullable;
 > content: text, nullable;
 > category: string, nullable, varchar(256);
-> status: string;
+> status: enum(discovered, crawling, crawled, analyzing, analyzed, indexed);
 > statusCode: int, nullable;
 > addedOn: timestamp, default: now;
+> discoveredOn: timestamp, default: now;
+> analyzedOn: timestamp, nullable;
+> crawledOn: timestamp, nullable;
 > lastCrawled: timestamp, nullable;
 > crawlWorkerId: string, nullable;
 > crawlLeaseUntil: timestamp, nullable;

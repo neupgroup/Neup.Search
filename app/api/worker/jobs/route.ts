@@ -22,15 +22,15 @@ async function readWorkerId(request: NextRequest): Promise<string | null> {
 async function claimDomain(workerId: string) {
   const now = new Date()
   const domain = await prisma.domain.findFirst({
-    where: { status: "Requested", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    where: { status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
     orderBy: { addedOn: "asc" },
     select: { id: true, domain: true },
   })
   if (!domain) return null
 
   const updated = await prisma.domain.updateMany({
-    where: { id: domain.id, status: "Requested", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-    data: { crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
+    where: { id: domain.id, status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    data: { status: "crawling", crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
   })
   return updated.count === 1 ? domain : null
 }
@@ -39,15 +39,15 @@ async function claimDomain(workerId: string) {
 async function claimPage(workerId: string) {
   const now = new Date()
   const page = await prisma.page.findFirst({
-    where: { status: "Pending", domain: { is: { status: "Crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    where: { status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
     orderBy: [{ domainId: "asc" }, { addedOn: "asc" }],
     select: { id: true, domainId: true, url: true },
   })
   if (!page) return null
 
   const updated = await prisma.page.updateMany({
-    where: { id: page.id, status: "Pending", domain: { is: { status: "Crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-    data: { crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
+    where: { id: page.id, status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    data: { status: "crawling", crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
   })
   return updated.count === 1 ? page : null
 }

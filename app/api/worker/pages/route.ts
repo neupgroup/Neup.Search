@@ -38,11 +38,9 @@ export async function POST(request: NextRequest) {
 
   const statusCode = typeof input.statusCode === "number" ? input.statusCode : 0
   const isHtml = input.isHtml === true
-  const nextStatus = isHtml && statusCode >= 200 && statusCode < 400
-    ? "reported-errors"
-    : statusCode >= 400
-      ? "Error"
-      : "Skipped"
+  const nextStatus = "crawled" as const
+  const crawlResultStatus = isHtml && statusCode >= 200 && statusCode < 400 ? "Indexed" : statusCode >= 400 ? "Error" : "Skipped"
+  const crawledOn = new Date()
   const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
     ? page.details as Record<string, unknown>
     : {}
@@ -63,11 +61,13 @@ export async function POST(request: NextRequest) {
       data: [...previousData as Prisma.InputJsonValue[], crawlData as Prisma.InputJsonValue],
       status: nextStatus,
       statusCode,
-      lastCrawled: new Date(),
+      lastCrawled: crawledOn,
+      crawledOn,
       details: {
         ...details,
         finalUrl: input.finalUrl,
-        currentActivity: nextStatus === "reported-errors" ? "Crawl saved; waiting for analysis." : "Page skipped after crawl.",
+        crawlResultStatus,
+        currentActivity: crawlResultStatus === "Indexed" ? "Crawl saved; waiting for analysis." : "Page skipped after crawl.",
         crawlFlowUpdatedAt: new Date().toISOString(),
       },
     },
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
   for (const url of internalUrls) {
     const targetPage = await prisma.page.findFirst({ where: { domainId: page.domainId, url }, select: { id: true } })
     const targetPageId = targetPage?.id ?? await prisma.page.create({
-      data: { domainId: page.domainId, url, type: "text/html", status: "Pending", details: {} },
+      data: { domainId: page.domainId, url, type: "text/html", status: "discovered", discoveredOn: new Date(), details: {} },
       select: { id: true },
     }).then((created) => created.id)
     const existingLink = await prisma.link.findFirst({ where: { sourcePageId: page.id, linkTo: url, sourceType: "anchor" }, select: { id: true } })

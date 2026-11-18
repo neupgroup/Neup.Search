@@ -32,18 +32,16 @@ function SubmitButton({ children, variant = "default", ...props }: { children: R
 type LiveCrawlStatusState = NonNullable<Awaited<ReturnType<typeof getSiteCrawlStatus>>>
 
 function getStatusVariant(status: string) {
-    if (status === "Active" || status === "Crawled") return "default"
-    if (status === "Crawling") return "default"
-    if (status === "Requested" || status === "Pending") return "outline"
-    if (status === "Paused" || status === "Cancelled" || status === "Stopped") return "secondary"
-    return "destructive"
+    if (["crawled", "analyzed", "indexed", "crawling", "analyzing"].includes(status)) return "default"
+    if (status === "discovered") return "outline"
+    return "secondary"
 }
 
 export function LiveCrawlStatus({ siteId, initialStatus }: { siteId: string, initialStatus: LiveCrawlStatusState }) {
     const [status, setStatus] = useState(initialStatus)
 
     useEffect(() => {
-        if (status.status !== "Crawling") return
+        if (status.status !== "crawling") return
 
         let active = true
         let timeout: number | undefined
@@ -96,19 +94,19 @@ export function LiveCrawlStatus({ siteId, initialStatus }: { siteId: string, ini
                     <p>{new Date(status.createdAt).toLocaleDateString()}</p>
                 </div>
             </div>
-            {(status.status === "Crawling" || (status.currentlyCrawling && status.currentlyCrawling !== "Crawl complete.")) && (
+            {(status.status === "crawling" || (status.currentlyCrawling && status.currentlyCrawling !== "Crawl complete.")) && (
                 <div className="mt-4 text-sm">
                     <p className="font-semibold">Current Activity</p>
                     <p className="text-muted-foreground break-all">{status.currentlyCrawling}</p>
                 </div>
             )}
-            {status.status === "Crawling" && status.currentCrawlUrl && (
+            {status.status === "crawling" && status.currentCrawlUrl && (
                 <div className="mt-4 text-sm">
                     <p className="font-semibold">Crawling Page</p>
                     <p className="text-muted-foreground break-all">{status.currentCrawlUrl}</p>
                 </div>
             )}
-            {status.status === "Error" && status.currentlyCrawling && (
+            {status.status === "discovered" && status.currentlyCrawling?.toLowerCase().includes("failed") && (
                 <div className="mt-4 text-sm text-destructive">
                     <p className="font-semibold">Error Details</p>
                     <p>{status.currentlyCrawling}</p>
@@ -123,8 +121,8 @@ export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, sit
         <form action={crawlSite}>
             <input type="hidden" name="siteId" value={siteId} />
             <input type="hidden" name="siteUrl" value={siteUrl} />
-            <SubmitButton disabled={status === "Crawling"}>
-                {status === "Crawling" ? "Crawling..." : "Force Scrape"}
+            <SubmitButton disabled={status === "crawling"}>
+                {status === "crawling" ? "Crawling..." : "Force Scrape"}
             </SubmitButton>
         </form>
     )
@@ -134,8 +132,8 @@ export function ResumeCrawlButton({ siteId, status }: { siteId: string, status: 
     return (
         <form action={resumePendingCrawl}>
             <input type="hidden" name="siteId" value={siteId} />
-            <SubmitButton variant="outline" disabled={status === "Crawling"}>
-                {status === "Crawling" ? "Crawling..." : "Resume Crawling"}
+            <SubmitButton variant="outline" disabled={status === "crawling"}>
+                {status === "crawling" ? "Crawling..." : "Resume Crawling"}
             </SubmitButton>
         </form>
     )

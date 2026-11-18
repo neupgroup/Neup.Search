@@ -77,7 +77,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
   }
   activePage = { pageId: page.id, siteId: page.siteId, url: page.url }
   activity = `Crawling ${page.url}.`
-  await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "crawling-page", activity }, signal)
+  await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "crawling", activity }, signal)
   const heartbeat = setInterval(() => {
     void updateWorkerStatus("Working").catch((error) => console.error(`[crawler-worker:${workerId}] Heartbeat failed.`, error))
   }, HEARTBEAT_INTERVAL_MS)
@@ -117,7 +117,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
   } catch (error) {
     activity = error instanceof Error ? `Crawl failed: ${error.message}` : "Crawl failed."
-    await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "Error", activity }, signal)
+    await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "crawled", activity }, signal)
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
     throw error
   } finally {
@@ -189,7 +189,7 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
     activity = error instanceof Error ? `Insight failed: ${error.message}` : "Insight generation failed."
     await callWorkerApi("api/worker/crawling-status", {
       pageId: page.id,
-      status: "Error",
+      status: "analyzing",
       activity,
     }, signal)
     throw error

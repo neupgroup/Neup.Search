@@ -20,9 +20,8 @@ export async function POST(request: NextRequest) {
       type: "text/html",
       content: { not: null },
       OR: [
-        { status: "Indexed", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-        { status: "reported-errors" },
-        { status: "analyzing-page", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "analyzing", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
       ],
     },
     orderBy: { lastCrawled: "asc" },
@@ -40,16 +39,18 @@ export async function POST(request: NextRequest) {
   const claim = await prisma.page.updateMany({
     where: {
       id: page.id,
-      status: { in: ["Indexed", "reported-errors", "analyzing-page"] },
+      status: { in: ["crawled", "analyzing"] },
       OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }],
     },
     data: {
-      status: "analyzing-page",
+      status: "analyzing",
       crawlWorkerId: workerId,
       crawlLeaseUntil: new Date(now.getTime() + ANALYSIS_LEASE_MS),
     },
   })
   if (claim.count !== 1) return workerApiSuccess({ job: null })
+
+  await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["crawled", "analyzed", "indexed"] } }, data: { status: "analyzing" } })
 
   await prisma.crawlerWorker.upsert({
     where: { id: workerId },
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest) {
   let siteProfile: Record<string, unknown> | null = null
   if (!domainDetails.summary && !domainDetails.siteProfileGeneratedAt) {
     const homepageCandidates = await prisma.page.findMany({
-      where: { domainId: page.domainId, type: "text/html", content: { not: null }, status: { in: ["reported-errors", "analyzing-page", "completed-flow"] } },
+      where: { domainId: page.domainId, type: "text/html", content: { not: null }, status: { in: ["crawled", "analyzing", "analyzed", "indexed"] } },
       select: { url: true, title: true, content: true, data: true },
       orderBy: { addedOn: "asc" },
       take: 20,
