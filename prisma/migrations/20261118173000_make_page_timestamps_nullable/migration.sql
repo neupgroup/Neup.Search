@@ -1,0 +1,3 @@
+ALTER TABLE "page"
+ALTER COLUMN "discoveredOn" DROP NOT NULL,
+ALTER COLUMN "discoveredOn" DROP DEFAULT;

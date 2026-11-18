@@ -109,7 +109,7 @@ model Page {
   status          WorkflowStatus
   statusCode      Int?
   addedOn         DateTime  @default(now())
-  discoveredOn    DateTime  @default(now())
+  discoveredOn    DateTime?
   analyzedOn      DateTime?
   crawledOn       DateTime?
   lastCrawled     DateTime?
