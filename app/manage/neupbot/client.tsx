@@ -16,7 +16,8 @@ const progressActivityStages = ["Starting", "Crawling Page", "Saving Content", "
 
 // Compare the live worker snapshot so unchanged heartbeats do not redraw the panel.
 function haveWorkersChanged(previous: WorkerActivity[], next: WorkerActivity[]): boolean {
-  return JSON.stringify(previous) !== JSON.stringify(next)
+  const omitHeartbeat = (workers: WorkerActivity[]) => workers.map(({ lastSeenAt: _lastSeenAt, ...worker }) => worker)
+  return JSON.stringify(omitHeartbeat(previous)) !== JSON.stringify(omitHeartbeat(next))
 }
 
 type CrawlProgress = { label: string; percent: number }

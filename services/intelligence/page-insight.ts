@@ -1,6 +1,7 @@
 import { createNiaResponse } from "@neup/logica/intelligence/responses"
 import { getCategorizationContext, getGenericPageCategories } from "@/services/intelligence/categorization-context"
 import { getSummarizationContext } from "@/services/intelligence/summarization-context"
+import { withRequestTimeout } from "@/services/intelligence/request-timeout"
 
 export type GeneratePageInsightInput = {
   pageUrl: string
@@ -17,7 +18,7 @@ export type PageInsight = {
 // Generate a page summary and site-aware category in one JSON intelligence request.
 export async function generatePageInsight(input: GeneratePageInsightInput): Promise<PageInsight> {
   const categoryOptions = getCategorizationContext(input.siteCategory)
-  const response = await createNiaResponse({
+  const response = await withRequestTimeout(createNiaResponse({
     model: "auto",
     input: [
       {
@@ -41,7 +42,7 @@ export async function generatePageInsight(input: GeneratePageInsightInput): Prom
         text: [`Page URL: ${input.pageUrl}`, `Page title: ${input.pageTitle}`, `Page content:\n${getSummarizationContext(input.pageContent)}`].join("\n\n"),
       },
     ],
-  })
+  }), "Page insight request")
   const responseText = response.data.output.map((item) => item.value).join("\n").trim().replace(/^```(?:json)?\s*|\s*```$/g, "").trim()
   const parsed = JSON.parse(responseText) as { summary?: unknown; category?: unknown; genericCategory?: unknown }
   const summary = typeof parsed.summary === "string" ? parsed.summary.trim().split(/\s+/).slice(0, 50).join(" ") : ""

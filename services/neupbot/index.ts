@@ -12,6 +12,7 @@ import { upsertDomainRecord } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
 import { generatePageInsight } from "@/services/intelligence/page-insight"
 import { getBasics } from "@/services/intelligence/site-profile"
+import { RequestTimeoutError, intelligenceRequestTimeoutMs, withRequestTimeout } from "@/services/intelligence/request-timeout"
 
 export const neupbotUserAgent = "NeupBot/1.0 (+https://neupgroup.com/neupbot; crawler.neupbot@neupgroup.com)"
 
@@ -895,13 +896,14 @@ async function completePageCrawlEnrichment(
         let siteUrl = homepagePage?.url || `https://${page.domain.domain}/`
 
         if (!homepagePage) {
-          const response = await fetch(siteUrl, {
+          const response = await withRequestTimeout(fetch(siteUrl, {
             headers: { "User-Agent": neupbotUserAgent },
             cache: "no-store",
-          })
+            signal: AbortSignal.timeout(intelligenceRequestTimeoutMs),
+          }), "Homepage fetch for site profile")
           const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
           if (response.ok && (contentType === "text/html" || contentType === "application/xhtml+xml")) {
-            renderedContent = await response.text()
+            renderedContent = await withRequestTimeout(response.text(), "Homepage response body")
             const $ = cheerio.load(renderedContent)
             homepageName = $("title").text().trim()
             homepageContent = $("body").text().replace(/\s+/g, " ").trim()
@@ -945,9 +947,18 @@ async function completePageCrawlEnrichment(
     await onActivity?.(pageFlowActivity["analyzing-page"])
   }
 
+  if (profileError instanceof RequestTimeoutError) {
+    await onActivity?.(`${profileError.message} Ignoring; keeping the current stage.`)
+    return
+  }
+
   try {
     await saveAutomaticPageAnalysis(pageId, page.content, onActivity)
   } catch (error) {
+    if (error instanceof RequestTimeoutError) {
+      await onActivity?.(`${error.message} Ignoring and continuing.`)
+      return
+    }
     await onActivity?.("Page insight generation failed")
     await logError({ error, pageId }, "completePageCrawlEnrichment_pageInsight")
     throw error
@@ -1550,10 +1561,11 @@ async function crawlStoredPage({
   }
 
   try {
-    let response = await fetch(pageUrl, {
+    let response = await withRequestTimeout(fetch(pageUrl, {
       headers: { "User-Agent": neupbotUserAgent },
       redirect: "manual",
-    })
+      signal: AbortSignal.timeout(intelligenceRequestTimeoutMs),
+    }), "Page crawl")
     crawledUrls.add(normalizedUrl)
 
     let fetchedPageUrl = pageUrl
@@ -1564,10 +1576,11 @@ async function crawlStoredPage({
         const targetUrl = new URL(redirectLocation, fetchedPageUrl)
         if (targetUrl.hostname.toLowerCase() !== rootHostname.toLowerCase()) break
         fetchedPageUrl = targetUrl.toString()
-        response = await fetch(fetchedPageUrl, {
+        response = await withRequestTimeout(fetch(fetchedPageUrl, {
           headers: { "User-Agent": neupbotUserAgent },
           redirect: "manual",
-        })
+          signal: AbortSignal.timeout(intelligenceRequestTimeoutMs),
+        }), "Page crawl redirect")
         contentType = response.headers.get("content-type")
         redirectLocation = response.headers.get("location")
         if (response.status < 300 || response.status >= 400 || !redirectLocation) break
@@ -1645,7 +1658,7 @@ async function crawlStoredPage({
       return false
     }
 
-    const html = await response.text()
+    const html = await withRequestTimeout(response.text(), "Page response body")
     const assessment = assessJavaScriptRequirement(html)
     let pageHtml = html
     let pageHeaders = Object.fromEntries(response.headers.entries())
@@ -1658,10 +1671,11 @@ async function crawlStoredPage({
 
     if (shouldRenderWithJavaScript) {
       try {
-        const renderedPage = await crawlPageToHtml(resolvedPageUrl, {
+        const renderedPage = await withRequestTimeout(crawlPageToHtml(resolvedPageUrl, {
           javascriptEnabled: true,
           userAgent: neupbotUserAgent,
-        })
+          timeoutMs: intelligenceRequestTimeoutMs,
+        }), "Rendered page crawl")
         pageHtml = renderedPage.html
         pageHeaders = renderedPage.headers
         pageDocument = cheerio.load(renderedPage.html)
@@ -1669,6 +1683,7 @@ async function crawlStoredPage({
         pageStatusCode = renderedPage.statusCode ?? response.status
         javascriptRendered = true
       } catch (renderError) {
+        if (renderError instanceof RequestTimeoutError) throw renderError
         await logError({ error: renderError, pageUrl: resolvedPageUrl, assessment }, "crawlSite_jsRenderFallback")
       }
     }
@@ -1732,6 +1747,11 @@ async function crawlStoredPage({
     await saveDiscoveredAssets(siteId, resolvedPageUrl, extractPageAssets(pageDocument), sitemapReferencesByUrl, rootHostname, stats, pageId)
     return true
   } catch (fetchError) {
+    if (fetchError instanceof RequestTimeoutError || (fetchError instanceof Error && fetchError.name === "TimeoutError")) {
+      throw fetchError instanceof RequestTimeoutError
+        ? fetchError
+        : new RequestTimeoutError("Page crawl")
+    }
     await logError({ error: fetchError, currentUrl: pageUrl }, "crawlSite_fetch")
     if (savingContent) throw fetchError
     await saveCrawledPage(pageId, {
@@ -1755,6 +1775,7 @@ export async function runPageCrawler(
   options: {
     updateDomainProgress?: boolean
     leaseAlreadyClaimed?: boolean
+    generateInsights?: boolean
     onActivity?: (activity: string) => Promise<void>
   } = {},
 ) {
@@ -1770,7 +1791,7 @@ export async function runPageCrawler(
     try {
       await reportPageFlowStage("discovered-page")
       await reportPageFlowStage("crawling-page")
-      await crawl()
+      await withRequestTimeout(crawl(), "Page crawl")
       const page = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
       const resultStatus = page ? getPageResultStatus(page.status, page.details) : "Error"
       if (resultStatus === "Error" || resultStatus === "Skipped" || resultStatus === "Redirect") {
@@ -1781,12 +1802,16 @@ export async function runPageCrawler(
 
       await getPageIssues(pageId)
       await reportPageFlowStage("reported-errors")
-      if (resultStatus === "Indexed") {
+      if (resultStatus === "Indexed" && options.generateInsights !== false) {
         activeStage = "analyzing-page"
         await completePageCrawlEnrichment(pageId, options.onActivity)
       }
       return resultStatus === "Indexed"
     } catch (error) {
+      if (error instanceof RequestTimeoutError) {
+        await options.onActivity?.(`${error.message} Ignoring; keeping the current stage.`)
+        return false
+      }
       const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
       const currentDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
         ? currentPage.details as Record<string, unknown>
@@ -2141,37 +2166,35 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
 
 // Mark a site complete only when no queued page or active page lease remains.
 export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean> {
-  return prisma.$transaction(async (transaction) => {
-    const now = new Date()
-    const [pendingPages, activePageLeases, domain] = await Promise.all([
-      transaction.page.count({ where: { domainId: siteId, status: "Pending" } }),
-      transaction.page.count({ where: { domainId: siteId, crawlLeaseUntil: { gt: now } } }),
-      transaction.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } }),
-    ])
+  const now = new Date()
+  const [pendingPages, activePageLeases, domain] = await Promise.all([
+    prisma.page.count({ where: { domainId: siteId, status: "Pending" } }),
+    prisma.page.count({ where: { domainId: siteId, crawlLeaseUntil: { gt: now } } }),
+    prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } }),
+  ])
 
-    if (!domain || domain.status !== "Crawling" || pendingPages > 0 || activePageLeases > 0) return false
-    const details = readDetails(domain.details)
-    const crawlStartedAt = details.crawlStartedAt ? new Date(details.crawlStartedAt) : null
-    const pagesCrawled = crawlStartedAt && !Number.isNaN(crawlStartedAt.getTime())
-      ? await transaction.page.count({ where: { domainId: siteId, lastCrawled: { gte: crawlStartedAt } } })
-      : 0
+  if (!domain || domain.status !== "Crawling" || pendingPages > 0 || activePageLeases > 0) return false
+  const details = readDetails(domain.details)
+  const crawlStartedAt = details.crawlStartedAt ? new Date(details.crawlStartedAt) : null
+  const pagesCrawled = crawlStartedAt && !Number.isNaN(crawlStartedAt.getTime())
+    ? await prisma.page.count({ where: { domainId: siteId, lastCrawled: { gte: crawlStartedAt } } })
+    : 0
 
-    const result = await transaction.domain.updateMany({
-      where: { id: siteId, status: "Crawling" },
-      data: {
-        status: "Active",
-        lastCrawled: now,
-        details: {
-          ...details,
-          pagesCrawled,
-          currentActivity: "Crawl complete.",
-          currentCrawlUrl: "",
-        },
+  const result = await prisma.domain.updateMany({
+    where: { id: siteId, status: "Crawling" },
+    data: {
+      status: "Active",
+      lastCrawled: now,
+      details: {
+        ...details,
+        pagesCrawled,
+        currentActivity: "Crawl complete.",
+        currentCrawlUrl: "",
       },
-    })
+    },
+  })
 
-    return result.count === 1
-  }, { isolationLevel: "RepeatableRead" })
+  return result.count === 1
 }
 
 // Return workers whose heartbeat shows that their process is still alive.

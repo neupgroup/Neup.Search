@@ -1,284 +1,249 @@
-import { randomUUID } from "node:crypto"
-import type { CrawlerWorkerStatus } from "@prisma/client"
-import { prisma } from "@/lib/prisma"
-import {
-  completeDomainCrawlIfIdle,
-  prepareCrawler,
-  runPageCrawler,
-} from "@/services/neupbot"
+import { worker, type WorkerInstance } from "@neup/worker"
+import { generatePageInsight } from "@/services/intelligence/page-insight"
+import { generateSiteBasics } from "@/services/intelligence/site-profile-generation"
+import { load } from "cheerio"
 
-const workerId = process.argv[2] || `neup-search-worker-${process.pid}-${randomUUID()}`
+type WorkerType = "crawler" | "analysis"
+type WorkerStatus = "Starting" | "Idle" | "Working" | "Stopped" | "Error"
+
+const workerId = process.argv[2] || `neup-search-worker-${process.pid}`
+const workerType = process.argv[3] === "analysis" ? "analysis" : "crawler"
 const POLL_INTERVAL_MS = 2_000
-const LEASE_DURATION_MS = 5 * 60_000
-const HEARTBEAT_INTERVAL_MS = 60_000
-const WORKER_HEARTBEAT_INTERVAL_MS = 10_000
+const HEARTBEAT_INTERVAL_MS = 10_000
+const apiBaseUrl = process.env.NEUP_WORKER_API_URL
+const apiSecret = process.env.NEUP_WORKER_SECRET
+const appBasePath = process.env.NEXT_PUBLIC_APP_BASEPATH ?? ""
+let workerInstance: WorkerInstance | undefined
+let activity = "Starting worker."
+let activePage: { pageId: string; siteId: string; url: string } | undefined
 
-type WorkerState = {
-  status: CrawlerWorkerStatus
-  activity: string
-  siteId: string | null
-  siteUrl: string | null
-  currentUrl: string | null
+// Build an app API URL using the configured application base path.
+function getWorkerApiUrl(path: string): string {
+  if (!apiBaseUrl) throw new Error("NEUP_WORKER_API_URL must be configured for the standalone worker.")
+  const base = new URL(apiBaseUrl)
+  const basePath = appBasePath.replace(/^\/+|\/+$/g, "")
+  const apiPath = path.replace(/^\/+/, "")
+  base.pathname = `${base.pathname.replace(/\/+$/, "")}${basePath ? `/${basePath}` : ""}/${apiPath}`
+  return base.toString()
 }
 
-let workerState: WorkerState = {
-  status: "Starting",
-  activity: "Starting worker.",
-  siteId: null,
-  siteUrl: null,
-  currentUrl: null,
-}
-let workerHeartbeat: ReturnType<typeof setInterval> | undefined
-
-// Persist the worker's current task so the live monitor can show idle and active processes.
-async function updateWorkerState(nextState: Partial<WorkerState> = {}): Promise<void> {
-  workerState = { ...workerState, ...nextState }
-  const lastSeenAt = new Date()
-  try {
-    await prisma.crawlerWorker.upsert({
-      where: { id: workerId },
-      create: { id: workerId, ...workerState, lastSeenAt },
-      update: { ...workerState, lastSeenAt },
-    })
-  } catch (error) {
-    console.error(`[crawler-worker:${workerId}] Could not update worker status.`, error)
+// Send an authenticated request to the application worker API.
+async function callWorkerApi(path: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  if (!apiSecret) throw new Error("NEUP_WORKER_SECRET must be configured for the standalone worker.")
+  const response = await fetch(getWorkerApiUrl(path), {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiSecret}`, "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  })
+  const responseBody: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    const error = responseBody && typeof responseBody === "object" && "error" in responseBody ? responseBody.error : null
+    const description = error && typeof error === "object" && "description" in error && typeof error.description === "string"
+      ? error.description
+      : `Worker API request failed with HTTP ${response.status}.`
+    throw new Error(description)
   }
+  return responseBody
 }
 
-// Append a completed or active stage to the current page job's visible progress trail.
-async function appendWorkerStage(stage: string): Promise<void> {
-  const stages = workerState.activity.split(" → ")
-  if (stages.at(-1) === stage) return
-  await updateWorkerState({ activity: [...stages, stage].join(" → ") })
+// Update this worker's status and current page through the API.
+async function updateWorkerStatus(status: WorkerStatus, signal?: AbortSignal): Promise<void> {
+  await callWorkerApi("api/worker/status", {
+    workerId,
+    status,
+    activity,
+    siteId: activePage?.siteId ?? null,
+    currentUrl: activePage?.url ?? null,
+    pageId: activePage?.pageId ?? null,
+  }, signal)
 }
 
-// Allow the process manager to stop a worker cleanly; its lease expires if it was mid-crawl.
-function stopWorker(): void {
-  clearInterval(workerHeartbeat)
-  void updateWorkerState({ status: "Stopped", activity: "Worker stopped.", siteId: null, siteUrl: null, currentUrl: null })
-    .finally(() => prisma.$disconnect().finally(() => process.exit(0)))
-}
-
-// Wait between queue checks without keeping a separate timer alive.
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
-}
-
-// Atomically claim a queued site while a worker prepares its initial URL and sitemap discoveries.
-async function claimNextDomain() {
-  const now = new Date()
-  const candidate = await prisma.domain.findFirst({
-    where: {
-      status: "Requested",
-      OR: [
-        { crawlLeaseUntil: null },
-        { crawlLeaseUntil: { lte: now } },
-      ],
-    },
-    orderBy: { addedOn: "asc" },
-    select: { id: true, domain: true },
+// Wait between requests and allow shutdown to interrupt the delay.
+function waitForNextJob(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, POLL_INTERVAL_MS)
+    signal.addEventListener("abort", () => {
+      clearTimeout(timeout)
+      resolve()
+    }, { once: true })
   })
-
-  if (!candidate) return null
-
-  const claim = await prisma.domain.updateMany({
-    where: {
-      id: candidate.id,
-      status: "Requested",
-      OR: [
-        { crawlLeaseUntil: null },
-        { crawlLeaseUntil: { lte: now } },
-      ],
-    },
-    data: {
-      crawlWorkerId: workerId,
-      crawlLeaseUntil: new Date(now.getTime() + LEASE_DURATION_MS),
-    },
-  })
-
-  return claim.count === 1 ? candidate : null
 }
 
-// Claim one pending page from any site whose discovery phase is complete.
-async function claimNextPage() {
-  const now = new Date()
-  const candidate = await prisma.page.findFirst({
-    where: {
-      status: "Pending",
-      domain: { is: { status: "Crawling" } },
-      OR: [
-        { crawlLeaseUntil: null },
-        { crawlLeaseUntil: { lte: now } },
-      ],
-    },
-    orderBy: [{ domainId: "asc" }, { addedOn: "asc" }],
-    select: { id: true, domainId: true, url: true },
-  })
-
-  if (!candidate) return null
-
-  const claim = await prisma.page.updateMany({
-    where: {
-      id: candidate.id,
-      status: "Pending",
-      domain: { is: { status: "Crawling" } },
-      OR: [
-        { crawlLeaseUntil: null },
-        { crawlLeaseUntil: { lte: now } },
-      ],
-    },
-    data: {
-      crawlWorkerId: workerId,
-      crawlLeaseUntil: new Date(now.getTime() + LEASE_DURATION_MS),
-    },
-  })
-
-  return claim.count === 1 ? candidate : null
-}
-
-// Renew a lease while its site discovery or page crawl is running.
-function startLeaseHeartbeat(
-  table: "domain" | "page",
-  recordId: string,
-): ReturnType<typeof setInterval> {
-  const renewLease = table === "domain"
-    ? () => prisma.domain.updateMany({
-      where: { id: recordId, crawlWorkerId: workerId },
-      data: { crawlLeaseUntil: new Date(Date.now() + LEASE_DURATION_MS) },
-    })
-    : () => prisma.page.updateMany({
-      where: { id: recordId, crawlWorkerId: workerId },
-      data: { crawlLeaseUntil: new Date(Date.now() + LEASE_DURATION_MS) },
-    })
-
-  return setInterval(() => {
-    void renewLease().catch((error) => {
-      console.error(`[crawler-worker:${workerId}] Could not renew ${table} lease for ${recordId}.`, error)
-    })
+// Fetch and parse a claimed page without accessing the database.
+async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSignal): Promise<void> {
+  if (typeof page.id !== "string" || typeof page.siteId !== "string" || typeof page.url !== "string") {
+    throw new Error("The crawl job did not include a valid page context.")
+  }
+  activePage = { pageId: page.id, siteId: page.siteId, url: page.url }
+  activity = `Crawling ${page.url}.`
+  await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "crawling-page", activity }, signal)
+  const heartbeat = setInterval(() => {
+    void updateWorkerStatus("Working").catch((error) => console.error(`[crawler-worker:${workerId}] Heartbeat failed.`, error))
   }, HEARTBEAT_INTERVAL_MS)
-}
 
-// Prepare a domain's seed and sitemap queue, then release its setup lease for page workers.
-async function processDomain(domain: { id: string; domain: string }): Promise<void> {
-  await updateWorkerState({ status: "Working", activity: `Preparing ${domain.domain}.`, siteId: domain.id, siteUrl: `https://${domain.domain}`, currentUrl: null })
-  const heartbeat = startLeaseHeartbeat("domain", domain.id)
   try {
-    await prepareCrawler(domain.id, `https://${domain.domain}`)
-  } finally {
-    clearInterval(heartbeat)
-    await prisma.domain.updateMany({
-      where: { id: domain.id, crawlWorkerId: workerId },
-      data: { crawlWorkerId: null, crawlLeaseUntil: null },
+    const response = await fetch(page.url, {
+      headers: { "User-Agent": "NeupSearchBot/1.0 (+https://neupgroup.com)" },
+      redirect: "follow",
+      signal,
     })
-    await updateWorkerState({ status: "Idle", activity: "Waiting for work.", siteId: null, siteUrl: null, currentUrl: null })
-  }
-}
-
-// Crawl one claimed page and release it so another worker can safely process the next page.
-async function processPage(page: { id: string; domainId: string; url: string }): Promise<void> {
-  const domain = await prisma.domain.findUnique({ where: { id: page.domainId }, select: { domain: true } })
-  await updateWorkerState({ status: "Working", activity: "Starting", siteId: page.domainId, siteUrl: domain ? `https://${domain.domain}` : null, currentUrl: page.url })
-  await sleep(300)
-  const heartbeat = startLeaseHeartbeat("page", page.id)
-  try {
-    await runPageCrawler(page.id, {
-      updateDomainProgress: false,
-      leaseAlreadyClaimed: true,
-      onActivity: appendWorkerStage,
-    })
-    if (workerState.activity.split(" → ").at(-1) === "Skipping") {
-      await sleep(300)
-      await appendWorkerStage("Exiting")
-    }
+    const finalUrl = response.url || page.url
+    const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? ""
+    const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml"
+    const responseText = await response.text()
+    const $ = load(isHtml ? responseText : "")
+    $("script, style, noscript, template, svg").remove()
+    const links = isHtml
+      ? $("a[href]").map((_, element) => ({
+        url: $(element).attr("href") || "",
+        text: $(element).text().replace(/\s+/g, " ").trim().slice(0, 500),
+        rel: $(element).attr("rel") || undefined,
+      })).get()
+      : []
+    activity = `Saving crawl data for ${page.url}.`
+    await callWorkerApi("api/worker/pages", {
+      workerId,
+      pageId: page.id,
+      finalUrl,
+      statusCode: response.status,
+      isHtml,
+      title: isHtml ? $("title").first().text().trim() : "",
+      description: isHtml ? $("meta[name='description']").attr("content") || "" : "",
+      content: isHtml ? $("body").text().replace(/\s+/g, " ").trim().slice(0, 100_000) : responseText.slice(0, 20_000),
+      html: isHtml ? responseText.slice(0, 300_000) : "",
+      links,
+    }, signal)
+    await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
   } catch (error) {
-    console.error(`[crawler-worker:${workerId}] Page crawl failed for ${page.url}.`, error)
-    const currentStage = workerState.activity.split(" → ").at(-1) || ""
-    if (!currentStage.endsWith("(failed)") && currentStage !== "Skipping") {
-      const failureStage = currentStage === "Generating Insights"
-        ? "Generating Insights (failed)"
-        : currentStage === "Saving Content"
-          ? "Saving Content (failed)"
-          : "Skipping"
-      await appendWorkerStage(failureStage)
-    }
-    await sleep(300)
-    await appendWorkerStage("Exiting")
-    await prisma.page.updateMany({
-      where: {
-        id: page.id,
-        crawlWorkerId: workerId,
-        status: { in: ["Pending", "discovered-page", "crawling-page", "saved-content", "reported-errors", "analyzing-page"] },
-      },
-      data: {
-        status: "Error",
-        lastCrawled: new Date(),
-        details: {
-          ...(await prisma.page.findUnique({ where: { id: page.id }, select: { details: true } }))?.details as Record<string, unknown>,
-          crawlError: error instanceof Error ? error.message : String(error),
-        },
-      },
-    })
+    activity = error instanceof Error ? `Crawl failed: ${error.message}` : "Crawl failed."
+    await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "Error", activity }, signal)
+    await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
+    throw error
   } finally {
     clearInterval(heartbeat)
-    await prisma.page.updateMany({
-      where: { id: page.id, crawlWorkerId: workerId },
-      data: { crawlWorkerId: null, crawlLeaseUntil: null },
-    })
+    activePage = undefined
   }
-
-  await completeDomainCrawlIfIdle(page.domainId)
-  await updateWorkerState({ status: "Idle", siteId: null, siteUrl: null, currentUrl: null })
 }
 
-// Finish sites whose last page completed just before a worker stopped or lost its connection.
-async function finalizeIdleDomains(): Promise<void> {
-  const domains = await prisma.domain.findMany({
-    where: { status: "Crawling" },
-    select: { id: true },
-    take: 100,
-    orderBy: { addedOn: "asc" },
-  })
+// Poll and execute one crawl job, then submit the extracted data through the save API.
+async function processCrawlerJob(signal: AbortSignal): Promise<boolean> {
+  const response = await callWorkerApi("api/worker/jobs", { workerId }, signal)
+  const result = response && typeof response === "object" && "result" in response ? response.result : null
+  const job = result && typeof result === "object" ? result as Record<string, unknown> : null
+  if (!job || job.job === null) return false
 
-  await Promise.all(domains.map(({ id }) => completeDomainCrawlIfIdle(id)))
+  if (job.job === "page" && job.page && typeof job.page === "object") {
+    await crawlClaimedPage(job.page as Record<string, unknown>, signal)
+  }
+  return true
 }
 
-// Continuously prepare sites and claim individual pages, allowing workers to share one site's queue.
-async function runWorker(): Promise<void> {
-  await updateWorkerState({ status: "Idle", activity: "Waiting for work." })
-  workerHeartbeat = setInterval(() => void updateWorkerState(), WORKER_HEARTBEAT_INTERVAL_MS)
-  console.info(`[crawler-worker:${workerId}] Worker is active.`)
-  while (true) {
-    try {
-      const domain = await claimNextDomain()
-      if (domain) {
-        console.info(`[crawler-worker:${workerId}] Preparing ${domain.domain}.`)
-        await processDomain(domain)
-        continue
-      }
+// Request page context, generate its insight, then save and mark it complete through APIs.
+async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
+  const response = await callWorkerApi("api/worker/analysis/jobs", { workerId }, signal)
+  const result = response && typeof response === "object" && "result" in response ? response.result : null
+  const job = result && typeof result === "object" ? result as Record<string, unknown> : null
+  const page = job?.page && typeof job.page === "object" ? job.page as Record<string, unknown> : null
+  if (!page || typeof page.id !== "string" || typeof page.url !== "string" || typeof page.content !== "string") return false
 
-      const page = await claimNextPage()
-      if (page) {
-        console.info(`[crawler-worker:${workerId}] Crawling ${page.url}.`)
-        await processPage(page)
-        continue
+  activePage = { pageId: page.id, siteId: typeof page.siteId === "string" ? page.siteId : "", url: page.url }
+  activity = `Generating insight for ${page.url}.`
+  const heartbeat = setInterval(() => {
+    void updateWorkerStatus("Working").catch((error) => console.error(`[analysis-worker:${workerId}] Heartbeat failed.`, error))
+  }, HEARTBEAT_INTERVAL_MS)
+  try {
+    let siteCategory = typeof page.siteCategory === "string" ? page.siteCategory : null
+    const siteProfile = job?.siteProfile && typeof job.siteProfile === "object"
+      ? job.siteProfile as Record<string, unknown>
+      : null
+    if (siteProfile && typeof siteProfile.siteId === "string" && typeof siteProfile.siteUrl === "string") {
+      try {
+        const basics = await generateSiteBasics({
+          siteUrl: siteProfile.siteUrl,
+          homepageName: typeof siteProfile.homepageName === "string" ? siteProfile.homepageName : "",
+          homepageContent: typeof siteProfile.homepageContent === "string" ? siteProfile.homepageContent : "",
+          renderedContent: typeof siteProfile.renderedContent === "string" ? siteProfile.renderedContent : "",
+        })
+        await callWorkerApi("api/worker/site-insights", { siteId: siteProfile.siteId, ...basics }, signal)
+        siteCategory = basics.category
+      } catch (error) {
+        console.error(`[analysis-worker:${workerId}] Site profile generation failed.`, error)
       }
-
-      await finalizeIdleDomains()
-    } catch (error) {
-      console.error(`[crawler-worker:${workerId}] Queue processing failed.`, error)
-      await updateWorkerState({
-        status: "Error",
-        activity: error instanceof Error ? `Retrying after error: ${error.message}` : "Retrying after a queue error.",
-        siteId: null,
-        siteUrl: null,
-        currentUrl: null,
-      })
     }
 
-    await sleep(POLL_INTERVAL_MS)
+    const insight = await generatePageInsight({
+      pageUrl: page.url,
+      pageTitle: typeof page.title === "string" ? page.title : "",
+      pageContent: page.content,
+      siteCategory,
+    })
+    await callWorkerApi("api/worker/insights", {
+      pageId: page.id,
+      workerId,
+      summary: insight.summary,
+      category: insight.category,
+    }, signal)
+    return true
+  } catch (error) {
+    activity = error instanceof Error ? `Insight failed: ${error.message}` : "Insight generation failed."
+    await callWorkerApi("api/worker/crawling-status", {
+      pageId: page.id,
+      status: "Error",
+      activity,
+    }, signal)
+    throw error
+  } finally {
+    clearInterval(heartbeat)
+    activePage = undefined
   }
 }
 
-process.on("SIGINT", stopWorker)
-process.on("SIGTERM", stopWorker)
-void runWorker()
+// Run the selected independent worker pool against the application APIs.
+async function runWorker(signal: AbortSignal): Promise<void> {
+  if (!apiBaseUrl || !apiSecret) throw new Error("Configure NEUP_WORKER_API_URL and NEUP_WORKER_SECRET before starting workers.")
+  activity = `Waiting for ${workerType} work.`
+  await updateWorkerStatus("Idle", signal)
+  console.info(`[${workerType}-worker:${workerId}] Requesting work from the application API.`)
+
+  while (!signal.aborted) {
+    try {
+      activity = workerType === "crawler" ? "Requesting a crawl job." : "Requesting an analysis job."
+      const worked = workerType === "crawler"
+        ? await processCrawlerJob(signal)
+        : await processAnalysisJob(signal)
+      activePage = undefined
+      activity = worked ? "Job complete; waiting for work." : `Waiting for ${workerType} work.`
+      await updateWorkerStatus("Idle", signal)
+    } catch (error) {
+      if (signal.aborted) break
+      activity = error instanceof Error ? `API job failed: ${error.message}` : "API job failed."
+      console.error(`[${workerType}-worker:${workerId}] ${activity}`)
+      try {
+        await updateWorkerStatus("Error", signal)
+      } catch (statusError) {
+        console.error(`[${workerType}-worker:${workerId}] Status update failed.`, statusError)
+      }
+    }
+    await waitForNextJob(signal)
+  }
+}
+
+// Request a clean shutdown through the shared worker lifecycle API.
+function stopWorker(): void {
+  workerInstance?.stop(`${workerType} worker received a shutdown signal.`)
+}
+
+process.once("SIGINT", stopWorker)
+process.once("SIGTERM", stopWorker)
+workerInstance = worker.new({ id: workerId, run: ({ signal }) => runWorker(signal) })
+void workerInstance.done
+  .catch((error: unknown) => console.error(`[${workerType}-worker:${workerId}] Worker stopped after an error.`, error))
+  .finally(async () => {
+    activity = "Worker stopped."
+    try {
+      await updateWorkerStatus("Stopped")
+    } catch (error) {
+      console.error(`[${workerType}-worker:${workerId}] Shutdown status update failed.`, error)
+    }
+  })

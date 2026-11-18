@@ -1,59 +1,51 @@
 import "dotenv/config"
-import { spawn, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { worker, type WorkerInstance } from "@neup/worker"
 
-const DEFAULT_PROCESS_COUNT = 2
-const MAX_PROCESS_COUNT = 4
+const DEFAULT_WORKER_COUNT = 1
+const MAX_WORKERS_PER_TYPE = 32
 const WORKER_SCRIPT = fileURLToPath(new URL("./worker.ts", import.meta.url))
-const workers = new Map<number, ChildProcess>()
+const workers = new Map<string, WorkerInstance>()
 let isStopping = false
 
-// Read the configured worker count and cap it to protect PostgreSQL from process fan-out.
-function getWorkerProcessCount(): number {
-  const configuredValue = process.env["env.process.NEUP_SEARCH_PROCESSES_COUNT"]
-    ?? process.env.NEUP_SEARCH_PROCESSES_COUNT
-
-  if (configuredValue === undefined) return DEFAULT_PROCESS_COUNT
-  if (!/^[1-9]\d*$/.test(configuredValue)) return DEFAULT_PROCESS_COUNT
-
-  const processCount = Number(configuredValue)
-  return Number.isSafeInteger(processCount)
-    ? Math.min(processCount, MAX_PROCESS_COUNT)
-    : DEFAULT_PROCESS_COUNT
+// Read a configured worker count and constrain it to a safe positive integer.
+function getWorkerCount(environmentKey: string): number {
+  const configuredValue = process.env[environmentKey]
+  if (configuredValue === undefined) return DEFAULT_WORKER_COUNT
+  if (!/^[1-9]\d*$/.test(configuredValue)) return DEFAULT_WORKER_COUNT
+  const count = Number(configuredValue)
+  return Number.isSafeInteger(count) ? Math.min(count, MAX_WORKERS_PER_TYPE) : DEFAULT_WORKER_COUNT
 }
 
-// Start one independently supervised crawler worker process.
-function startWorker(workerNumber: number): ChildProcess {
-  const workerId = `neup-search-${process.pid}-${workerNumber}`
-  const watchArgs = process.env.NODE_ENV === "development" ? ["--watch"] : []
-  const child = spawn(process.execPath, [...watchArgs, "--import", "tsx", WORKER_SCRIPT, workerId], {
-    stdio: "inherit",
-    env: process.env,
+// Start and supervise one crawler or analysis worker process.
+function startWorker(type: "crawler" | "analysis", workerNumber: number): WorkerInstance {
+  const workerId = `neup-search-${type}-${process.pid}-${workerNumber}`
+  const instance = worker.new({
+    id: workerId,
+    script: WORKER_SCRIPT,
+    args: [type],
+    watch: process.env.NODE_ENV === "development",
   })
+  workers.set(workerId, instance)
 
-  child.on("error", (error) => {
-    console.error(`[crawler-runner] Worker ${workerNumber} failed to start.`, error)
-  })
-
-  child.on("exit", (code, signal) => {
-    workers.delete(workerNumber)
+  const handleExit = (error?: unknown) => {
+    workers.delete(workerId)
     if (isStopping) return
-
-    console.warn(`[crawler-runner] Worker ${workerNumber} exited (code=${code ?? "none"}, signal=${signal ?? "none"}); restarting.`)
-    setTimeout(() => startWorker(workerNumber), 1_000)
-  })
-
-  workers.set(workerNumber, child)
-  return child
+    console.warn(`[worker-runner] ${type} worker ${workerNumber} exited and will restart.`, error ?? "Process stopped unexpectedly.")
+    setTimeout(() => startWorker(type, workerNumber), 1_000)
+  }
+  void instance.done.then(() => handleExit(), (error: unknown) => handleExit(error))
+  return instance
 }
 
-// Stop child workers when the runner receives a normal service shutdown signal.
+// Stop all worker processes after the runner receives a shutdown signal.
 function stopRunner(): void {
   isStopping = true
-  for (const child of workers.values()) child.kill("SIGTERM")
-
+  for (const instance of workers.values()) instance.stop("Worker runner shutting down.")
   const shutdownTimeout = setTimeout(() => {
-    for (const child of workers.values()) child.kill("SIGKILL")
+    for (const instance of workers.values()) {
+      if (typeof instance.process !== "number") instance.process.kill("SIGKILL")
+    }
   }, 10_000)
   shutdownTimeout.unref()
 
@@ -68,11 +60,13 @@ function stopRunner(): void {
   waitForWorkers()
 }
 
-// Keep the configured number of independent crawler processes alive until shutdown.
+// Start the configured crawler and insight worker pools.
 function startRunner(): void {
-  const processCount = getWorkerProcessCount()
-  console.info(`[crawler-runner] Starting ${processCount} crawler worker processes.`)
-  for (let workerNumber = 1; workerNumber <= processCount; workerNumber++) startWorker(workerNumber)
+  const crawlerCount = getWorkerCount("NEUP_WORKER_CRAWLER_WORKERS")
+  const analysisCount = getWorkerCount("NEUP_WORKER_ANALYSIS_WORKERS")
+  console.info(`[worker-runner] Starting ${crawlerCount} crawler and ${analysisCount} analysis worker processes.`)
+  for (let workerNumber = 1; workerNumber <= crawlerCount; workerNumber++) startWorker("crawler", workerNumber)
+  for (let workerNumber = 1; workerNumber <= analysisCount; workerNumber++) startWorker("analysis", workerNumber)
 }
 
 process.on("SIGINT", stopRunner)
