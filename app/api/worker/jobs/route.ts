@@ -23,14 +23,14 @@ async function readWorkerId(request: NextRequest): Promise<string | null> {
 async function claimDomain(workerId: string) {
   const now = new Date()
   const domain = await prisma.domain.findFirst({
-    where: { status: "toCrawl", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    where: { status: { in: ["requested", "toCrawl"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
     orderBy: { addedOn: "asc" },
     select: { id: true, domain: true },
   })
   if (!domain) return null
 
   const updated = await prisma.domain.updateMany({
-    where: { id: domain.id, status: "toCrawl", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    where: { id: domain.id, status: { in: ["requested", "toCrawl"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
     data: { status: "crawling", crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
   })
   return updated.count === 1 ? domain : null
@@ -42,9 +42,9 @@ async function claimPage() {
   const staleBefore = new Date(now.getTime() - STALE_PAGE_AGE_MS)
   const page = await prisma.page.findFirst({
     where: {
-      domain: { is: { status: "crawling" } },
       OR: [
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },
@@ -57,9 +57,9 @@ async function claimPage() {
   const updated = await prisma.page.updateMany({
     where: {
       id: page.id,
-      domain: { is: { status: "crawling" } },
       OR: [
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },

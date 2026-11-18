@@ -2,7 +2,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
 
-const workflowStatuses = ["discovered", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"] as const
+const workflowStatuses = ["discovered", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"] as const
 
 // Update a page or site crawl status through the authenticated worker API.
 export async function POST(request: NextRequest) {
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       ? page.details as Record<string, unknown>
       : {}
     const updated = await prisma.page.updateMany({
-      where: { id: input.pageId, status: page.status, ...(page.status === "analyzing" ? { analyzedOn: claimedOn } : { crawledOn: claimedOn }) },
+      where: { id: input.pageId, AND: [{ status: page.status }, { status: { notIn: ["discovered", "unlisted", "deleting"] } }], ...(page.status === "analyzing" ? { analyzedOn: claimedOn } : { crawledOn: claimedOn }) },
       data: {
         status: input.status as typeof workflowStatuses[number],
         ...(input.status === "crawled" ? { crawledOn: new Date(), lastCrawled: new Date() } : {}),
