@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     where: {
       type: "text/html",
       content: { not: null },
-      status: { notIn: ["discovered", "paused", "unlisted", "deleting"] },
+      status: { notIn: ["discovered", "unlisted", "deleting"] },
       domain: { is: { status: { not: "paused" } } },
       OR: [
         { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   const claim = await prisma.page.updateMany({
     where: {
       id: page.id,
-      status: { notIn: ["discovered", "paused", "unlisted", "deleting"] },
+      status: { notIn: ["discovered", "unlisted", "deleting"] },
       domain: { is: { status: { not: "paused" } } },
       OR: [
         { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },

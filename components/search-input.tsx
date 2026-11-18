@@ -9,9 +9,10 @@ import { Input } from "@neup/components/ui/input"
 type SearchInputProps = {
   placeholder: string
   queryParam?: string
+  preserveParams?: Record<string, string | undefined>
 } & Omit<ComponentProps<typeof Input>, "type" | "placeholder" | "defaultValue" | "onChange">
 
-export function SearchInput({ placeholder, queryParam = "q", ...props }: SearchInputProps) {
+export function SearchInput({ placeholder, queryParam = "q", preserveParams, ...props }: SearchInputProps) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const { replace } = useRouter();
@@ -22,6 +23,9 @@ export function SearchInput({ placeholder, queryParam = "q", ...props }: SearchI
       params.set(queryParam, term);
     } else {
       params.delete(queryParam);
+    }
+    for (const [key, value] of Object.entries(preserveParams ?? {})) {
+      if (value) params.set(key, value)
     }
     params.delete('startAfter'); // Reset cursor pagination on routes that still use it.
     params.delete('page'); // Reset page-number pagination on new search.

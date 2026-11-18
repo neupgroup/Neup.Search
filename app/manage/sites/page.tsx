@@ -60,13 +60,20 @@ function getSiteStatusConvey(status: string): "success" | "warning" | "informati
 }
 
 // Build a filter link while preserving the search and current page context.
-function buildSitesHref(status: ManagedSiteStatusFilter, search?: string, page = 1): string {
+function buildSitesHref(status: ManagedSiteStatusFilter, search?: string, page = 1, propertyId?: string): string {
   const query = new URLSearchParams()
+  if (propertyId) query.set("property", propertyId)
   if (status !== "all") query.set("status", status)
   if (search) query.set("q", search)
   if (page > 1) query.set("page", String(page))
   const queryString = query.toString()
   return queryString ? `/manage/sites?${queryString}` : "/manage/sites"
+}
+
+// Build the site detail link with the selected site also available as the property query.
+function buildSiteDetailHref(siteId: string): string {
+  const query = new URLSearchParams({ property: siteId })
+  return `/manage/sites/${siteId}?${query.toString()}`
 }
 
 // Render the sortable-by-date sites table and status filters.
@@ -82,6 +89,7 @@ export default async function ManageSitesPage({
     ? requestedStatus as ManagedSiteStatusFilter
     : "all"
   const pagination = await getManagedSitesPage({ search, status, page: readPageNumber(params.page), pageSize: 20 })
+  const propertyId = readQueryValue(params.property) || pagination.sites[0]?.id
 
   return (
     <div className="space-y-6">
@@ -97,7 +105,7 @@ export default async function ManageSitesPage({
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         {siteStatusFilters.filter((filter) => !["all", "other"].includes(filter.value)).map((filter) => (
-          <Link key={filter.value} href={buildSitesHref(filter.value, search)}>
+          <Link key={filter.value} href={buildSitesHref(filter.value, search, 1, propertyId)}>
             <Card className={`h-full transition-colors hover:border-primary ${status === filter.value ? "border-primary bg-primary/5" : ""}`}>
               <CardContent className="flex items-center justify-between p-4">
                 <span className="text-sm font-medium">{filter.label}</span>
@@ -116,7 +124,7 @@ export default async function ManageSitesPage({
           </div>
           <div className="relative w-full sm:max-w-sm">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Suspense fallback={null}><SearchInput placeholder="Search sites..." /></Suspense>
+            <Suspense fallback={null}><SearchInput placeholder="Search sites..." preserveParams={{ property: propertyId }} /></Suspense>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -124,7 +132,7 @@ export default async function ManageSitesPage({
             {siteStatusFilters.map((filter) => (
               <Link
                 key={filter.value}
-                href={buildSitesHref(filter.value, search)}
+                href={buildSitesHref(filter.value, search, 1, propertyId)}
                 className={`rounded-full border px-3 py-1.5 text-sm transition-colors hover:bg-muted ${status === filter.value ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}
               >
                 {filter.label} <span className="ml-1 tabular-nums">{pagination.filters[filter.value]}</span>
@@ -148,7 +156,7 @@ export default async function ManageSitesPage({
               ) : pagination.sites.map((site) => (
                 <TableRow key={site.id}>
                   <TableCell>
-                    <Link href={`/manage/sites/${site.id}`} className="group flex min-w-56 items-center gap-3">
+                    <Link href={buildSiteDetailHref(site.id)} className="group flex min-w-56 items-center gap-3">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Globe className="h-5 w-5" /></span>
                       <span className="min-w-0">
                         <span className="block truncate font-semibold group-hover:underline">{site.name || site.url}</span>
@@ -164,7 +172,7 @@ export default async function ManageSitesPage({
                       <form action={resumePausedSiteCrawl} className="flex items-center justify-end gap-2">
                         <input type="hidden" name="siteId" value={site.id} />
                         <Button type="submit" size="sm" variant="outlined">Resume</Button>
-                        <Link href={`/manage/sites/${site.id}`} aria-label={`Open ${site.name || site.url}`}><ArrowRight className="h-4 w-4 text-muted-foreground" /></Link>
+                        <Link href={buildSiteDetailHref(site.id)} aria-label={`Open ${site.name || site.url}`}><ArrowRight className="h-4 w-4 text-muted-foreground" /></Link>
                       </form>
                     ) : (
                       <div className="flex items-center justify-end gap-2">
@@ -174,7 +182,7 @@ export default async function ManageSitesPage({
                             <Button type="submit" size="sm" variant="outlined">Pause</Button>
                           </form>
                         )}
-                        <Link href={`/manage/sites/${site.id}`} aria-label={`Open ${site.name || site.url}`}><ArrowRight className="h-4 w-4 text-muted-foreground" /></Link>
+                        <Link href={buildSiteDetailHref(site.id)} aria-label={`Open ${site.name || site.url}`}><ArrowRight className="h-4 w-4 text-muted-foreground" /></Link>
                       </div>
                     )}
                   </TableCell>
@@ -186,10 +194,10 @@ export default async function ManageSitesPage({
           <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
             <span>{pagination.totalCount.toLocaleString()} sites · Page {pagination.page} of {pagination.totalPages}</span>
             <div className="flex gap-2">
-              <Link href={buildSitesHref(status, search, Math.max(1, pagination.page - 1))} aria-disabled={pagination.page <= 1}>
+              <Link href={buildSitesHref(status, search, Math.max(1, pagination.page - 1), propertyId)} aria-disabled={pagination.page <= 1}>
                 <Button variant="outline" size="sm" disabled={pagination.page <= 1}>Previous</Button>
               </Link>
-              <Link href={buildSitesHref(status, search, Math.min(pagination.totalPages, pagination.page + 1))} aria-disabled={pagination.page >= pagination.totalPages}>
+              <Link href={buildSitesHref(status, search, Math.min(pagination.totalPages, pagination.page + 1), propertyId)} aria-disabled={pagination.page >= pagination.totalPages}>
                 <Button variant="outline" size="sm" disabled={pagination.page >= pagination.totalPages}>Next</Button>
               </Link>
             </div>

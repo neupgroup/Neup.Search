@@ -23,6 +23,20 @@ enum WorkflowStatus {
   deleting
 }
 
+enum PageWorkflowStatus {
+  discovered
+  requesting
+  requested
+  toCrawl
+  crawling
+  crawled
+  analyzing
+  analyzed
+  indexed
+  unlisted
+  deleting
+}
+
 enum CrawlerWorkerStatus {
   Starting
   Idle
@@ -44,22 +58,22 @@ model Account {
 }
 
 model Domain {
-  id              String       @id
-  domain          String       @unique
+  id              String         @id
+  domain          String         @unique
   name            String
   lastCrawled     DateTime?
   crawlWorkerId   String?
   crawlLeaseUntil DateTime?
   status          WorkflowStatus
-  addedOn         DateTime     @default(now())
+  addedOn         DateTime       @default(now())
   analyzedOn      DateTime?
   details         Json?
-  categories      String?      @db.VarChar(256)
+  categories      String?        @db.VarChar(256)
 
   pages          Page[]
   crawlerWorkers CrawlerWorker[]
-  resourcesFrom  Resource[]       @relation("FromDomainResources")
-  resourcesTo    Resource[]       @relation("ToDomainResources")
+  resourcesFrom  Resource[]      @relation("FromDomainResources")
+  resourcesTo    Resource[]      @relation("ToDomainResources")
   sitemaps       Sitemap[]
 
   @@index([addedOn])
@@ -102,16 +116,16 @@ model Sitemap {
 }
 
 model Page {
-  id              String    @id @default(cuid())
+  id              String             @id @default(cuid())
   domainId        String
   url             String
   title           String?
   description     String?
   type            String
   details         Json?
-  content         String?   @db.Text
-  category        String?   @db.VarChar(256)
-  status          WorkflowStatus
+  content         String?            @db.Text
+  category        String?            @db.VarChar(256)
+  status          PageWorkflowStatus
   statusCode      Int?
   discoveredOn    DateTime?
   analyzedOn      DateTime?

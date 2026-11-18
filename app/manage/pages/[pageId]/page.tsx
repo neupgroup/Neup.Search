@@ -127,7 +127,7 @@ export default async function PageDetailPage({ params, searchParams }: { params:
             <div className="min-w-0 space-y-1">
               <div className="flex min-w-0 items-center gap-2">
                 <CardTitle className="min-w-0 break-all text-2xl">{page.title}</CardTitle>
-                {!isNonHtmlPage(page) && <CrawlPageButton pageId={page.id} initiallyCrawling={page.isCrawling} isPaused={page.status === "paused"} />}
+                {!isNonHtmlPage(page) && <CrawlPageButton pageId={page.id} initiallyCrawling={page.isCrawling} isPaused={page.domainStatus === "paused"} />}
               </div>
               <p className="text-sm">
                 <span className="text-muted-foreground">{page.category || "Uncategorized"} · </span>

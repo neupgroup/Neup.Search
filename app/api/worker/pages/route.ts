@@ -6,9 +6,9 @@ import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/
 type SubmittedLink = { url: string; text?: string; rel?: string }
 
 // Choose a new page's state from its target site's current crawl state.
-async function getInitialPageStatus(domainId: string): Promise<"paused" | "toCrawl" | "discovered"> {
+async function getInitialPageStatus(domainId: string): Promise<"toCrawl" | "discovered"> {
   const domain = await prisma.domain.findUnique({ where: { id: domainId }, select: { status: true } })
-  if (domain?.status === "paused") return "paused"
+  if (domain?.status === "paused") return "discovered"
   if (domain && ["requesting", "requested"].includes(domain.status)) return "toCrawl"
   return "discovered"
 }
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     ? page.details as Record<string, unknown>
     : {}
   const savedPage = await prisma.page.updateMany({
-    where: { id: page.id, status: "crawling", crawledOn: claimedOn },
+    where: { id: page.id, status: "crawling", crawledOn: claimedOn, domain: { is: { status: { not: "paused" } } } },
     data: {
       title: typeof input.title === "string" ? input.title : null,
       description: typeof input.description === "string" ? input.description : null,

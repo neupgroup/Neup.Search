@@ -116,7 +116,7 @@ export async function resumePendingCrawl(formData: FormData) {
   revalidatePath("/manage/pages")
 }
 
-// Pause a site's pages and prevent its crawl and analysis jobs from running.
+// Pause the site and prevent its crawl and analysis jobs from running.
 export async function pauseSiteCrawl(formData: FormData) {
   const siteId = formData.get("siteId") as string
   if (!siteId) throw new Error("siteId is required.")
@@ -127,7 +127,7 @@ export async function pauseSiteCrawl(formData: FormData) {
   revalidatePath("/manage/pages")
 }
 
-// Restore a paused site's page states and return it to the crawl queue.
+// Resume the site and queue any pages discovered while it was paused.
 export async function resumePausedSiteCrawl(formData: FormData) {
   const siteId = formData.get("siteId") as string
   if (!siteId) throw new Error("siteId is required.")

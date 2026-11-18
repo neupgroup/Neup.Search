@@ -388,10 +388,11 @@ export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
         url: true,
         title: true,
         status: true,
+        domain: { select: { status: true } },
       },
     })
     const sourcePageByUrl = new Map(sourcePages.map((page) => [page.url, page]))
-    const pausedSourceUrls = new Set(sourcePages.filter((page) => page.status === "paused").map((page) => page.url))
+    const pausedSourceUrls = new Set(sourcePages.filter((page) => page.domain.status === "paused").map((page) => page.url))
 
     return links.filter((link) => !pausedSourceUrls.has(link.linkFrom)).map((link) => ({
       id: link.id,

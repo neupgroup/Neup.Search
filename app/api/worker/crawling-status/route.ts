@@ -2,7 +2,8 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
 
-const workflowStatuses = ["discovered", "requesting", "requested", "paused", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"] as const
+const pageWorkflowStatuses = ["discovered", "requesting", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"] as const
+const siteWorkflowStatuses = [...pageWorkflowStatuses, "paused"] as const
 
 // Update a page or site crawl status through the authenticated worker API.
 export async function POST(request: NextRequest) {
@@ -16,7 +17,7 @@ export async function POST(request: NextRequest) {
   const activity = typeof input.activity === "string" ? input.activity : undefined
 
   if (typeof input.pageId === "string" && input.pageId.trim()) {
-    if (!workflowStatuses.includes(input.status as typeof workflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported page workflow status.")
+    if (!pageWorkflowStatuses.includes(input.status as typeof pageWorkflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported page workflow status.")
     if (typeof input.claimedOn !== "string" || Number.isNaN(new Date(input.claimedOn).getTime())) return workerApiError("invalid_claim", "A valid claimedOn timestamp is required for page updates.")
     const claimedOn = new Date(input.claimedOn)
     const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, status: true, crawledOn: true, analyzedOn: true } })
@@ -27,9 +28,9 @@ export async function POST(request: NextRequest) {
       ? page.details as Record<string, unknown>
       : {}
     const updated = await prisma.page.updateMany({
-      where: { id: input.pageId, AND: [{ status: page.status }, { status: { notIn: ["discovered", "unlisted", "deleting"] } }], ...(page.status === "analyzing" ? { analyzedOn: claimedOn } : { crawledOn: claimedOn }) },
+      where: { id: input.pageId, AND: [{ status: page.status }, { status: { notIn: ["discovered", "unlisted", "deleting"] } }], domain: { is: { status: { not: "paused" } } }, ...(page.status === "analyzing" ? { analyzedOn: claimedOn } : { crawledOn: claimedOn }) },
       data: {
-        status: input.status as typeof workflowStatuses[number],
+        status: input.status as typeof pageWorkflowStatuses[number],
         ...(input.status === "crawled" ? { crawledOn: new Date(), lastCrawled: new Date() } : {}),
         ...(input.status === "analyzed" ? { analyzedOn: new Date() } : {}),
         details: { ...details, ...(activity ? { currentActivity: activity } : {}), crawlFlowUpdatedAt: new Date().toISOString() },
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (typeof input.siteId === "string" && input.siteId.trim()) {
-    if (!workflowStatuses.includes(input.status as typeof workflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported site workflow status.")
+    if (!siteWorkflowStatuses.includes(input.status as typeof siteWorkflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported site workflow status.")
     const domain = await prisma.domain.findUnique({ where: { id: input.siteId }, select: { details: true } })
     if (!domain) return workerApiError("site_not_found", "Site not found.", 404)
     const details = domain.details && typeof domain.details === "object" && !Array.isArray(domain.details)
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
     await prisma.domain.update({
       where: { id: input.siteId },
       data: {
-        status: input.status as typeof workflowStatuses[number],
+        status: input.status as typeof siteWorkflowStatuses[number],
         ...(input.status === "analyzed" ? { analyzedOn: new Date() } : {}),
         details: { ...details, ...(activity ? { currentActivity: activity } : {}) },
       },

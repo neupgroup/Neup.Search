@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
 
   const analyzedOn = new Date()
   const savedPage = await prisma.page.updateMany({
-    where: { id: input.pageId, status: "analyzing", analyzedOn: claimedOn },
+    where: { id: input.pageId, status: "analyzing", analyzedOn: claimedOn, domain: { is: { status: { not: "paused" } } } },
     data: {
       category,
       details: { ...details, summary: input.summary, summaryAddedOn: addedOn, crawlFlowUpdatedAt: addedOn },

@@ -57,7 +57,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
   }
   try {
     const pages = await prisma.page.findMany({
-      where: { status: { not: "paused" } },
+      where: { domain: { is: { status: { not: "paused" } } } },
       take: 1000,
       orderBy: { discoveredOn: "desc" },
       select: {

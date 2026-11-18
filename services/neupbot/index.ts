@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio"
 import { randomUUID } from "node:crypto"
-import type { Prisma, WorkflowStatus } from "@prisma/client"
+import type { Prisma } from "@prisma/client"
 import { assist } from "@neup/logica/assist"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
@@ -69,7 +69,6 @@ export type ManagedPage = {
 
 // Read the HTTP crawl result separately from the page's current workflow status.
 function getPageResultStatus(status: string, details: unknown): ManagedPage["status"] {
-  if (status === "paused") return "paused"
   if (details && typeof details === "object" && !Array.isArray(details) && "crawlResultStatus" in details) {
     const crawlResultStatus = details.crawlResultStatus
     if (crawlResultStatus === "Indexed" || crawlResultStatus === "Error" || crawlResultStatus === "Pending" || crawlResultStatus === "Skipped" || crawlResultStatus === "Redirect") {
@@ -470,7 +469,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
   }
 
   const site = await prisma.domain.findUnique({ where: { id: input.siteId }, select: { status: true } })
-  const initialPageStatus = site?.status === "paused" ? "paused" : site && ["requesting", "requested"].includes(site.status) ? "toCrawl" : "discovered"
+  const initialPageStatus = site && ["requesting", "requested"].includes(site.status) ? "toCrawl" : "discovered"
   const created = await prisma.page.create({
     data: {
       domainId: input.siteId,
@@ -498,7 +497,7 @@ async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<v
     : {}
   const { crawlFlowStatus: _legacyFlowStatus, ...details } = currentDetails
   const update = await prisma.page.updateMany({
-    where: { id: pageId, status: { not: "paused" } },
+    where: { id: pageId, domain: { is: { status: { not: "paused" } } } },
     data: {
       status: stage,
       ...(stage === "discovered" ? { discoveredOn: new Date() } : {}),
@@ -508,7 +507,7 @@ async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<v
       details: { ...details, crawlFlowUpdatedAt: new Date().toISOString() },
     },
   })
-  if (update.count !== 1) throw new Error("The page has been paused.")
+  if (update.count !== 1) throw new Error("The page workflow could not be updated.")
 }
 
 type DiscoveredLinkInput = {
@@ -2371,7 +2370,7 @@ export async function cancelDomainCrawl(siteId: string) {
   })
 }
 
-// Pause a site and its pages so crawler and analysis workers skip the entire site.
+// Pause a site so crawler and analysis workers skip its pages without changing page workflow states.
 export async function pauseDomainCrawl(siteId: string): Promise<void> {
   const domain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } })
   if (!domain) throw new Error("Domain not found.")
@@ -2386,35 +2385,9 @@ export async function pauseDomainCrawl(siteId: string): Promise<void> {
       details: { ...readDetails(domain.details), currentActivity: "Paused by user." },
     },
   })
-
-  while (true) {
-    const pausedCount = await prisma.$transaction(async (transaction) => {
-      const pages = await transaction.page.findMany({
-        where: { domainId: siteId, status: { notIn: ["paused", "unlisted", "deleting"] } },
-        orderBy: { discoveredOn: "asc" },
-        take: 100,
-        select: { id: true, status: true, details: true },
-      })
-      for (const page of pages) {
-        const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
-          ? page.details as Record<string, unknown>
-          : {}
-        await transaction.page.updateMany({
-          where: { id: page.id, status: page.status },
-          data: {
-            status: "paused",
-            crawlLeaseUntil: null,
-            details: { ...details, pausedFromStatus: page.status } as Prisma.InputJsonObject,
-          },
-        })
-      }
-      return pages.length
-    })
-    if (pausedCount === 0) break
-  }
 }
 
-// Restore a paused site's page states and queue the site for workers again.
+// Resume the site and queue any pages discovered while it was paused.
 export async function resumePausedDomainCrawl(siteId: string): Promise<void> {
   const domain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } })
   if (!domain) throw new Error("Domain not found.")
@@ -2424,33 +2397,6 @@ export async function resumePausedDomainCrawl(siteId: string): Promise<void> {
     where: { id: siteId, status: "paused" },
     data: { status: "requesting", details: { ...readDetails(domain.details), currentActivity: "Resuming crawl..." } },
   })
-
-  while (true) {
-    const restoredCount = await prisma.$transaction(async (transaction) => {
-      const pages = await transaction.page.findMany({
-        where: { domainId: siteId, status: "paused" },
-        orderBy: { discoveredOn: "asc" },
-        take: 100,
-        select: { id: true, details: true },
-      })
-      for (const page of pages) {
-        const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
-          ? page.details as Record<string, unknown>
-          : {}
-        const previousStatus = details.pausedFromStatus
-        const restoredStatus: WorkflowStatus = typeof previousStatus === "string" && ["toCrawl", "crawled", "analyzed", "indexed"].includes(previousStatus)
-          ? previousStatus as WorkflowStatus
-          : "toCrawl"
-        const { pausedFromStatus: _pausedFromStatus, ...restoredDetails } = details
-        await transaction.page.updateMany({
-          where: { id: page.id, status: "paused" },
-          data: { status: restoredStatus, crawlLeaseUntil: null, details: restoredDetails as Prisma.InputJsonObject },
-        })
-      }
-      return pages.length
-    })
-    if (restoredCount === 0) break
-  }
 
   await promoteDiscoveredPagesToCrawl(siteId)
 }
@@ -2628,9 +2574,9 @@ export async function getManagedLinks(input?: {
     const pages = await prisma.page.findMany({
       where: input?.propertyId
         ? input.type === "incoming"
-          ? { NOT: { domainId: input.propertyId }, status: { not: "paused" } }
-          : { domainId: input.propertyId, status: { not: "paused" } }
-        : { status: { not: "paused" } },
+          ? { NOT: { domainId: input.propertyId }, domain: { is: { status: { not: "paused" } } } }
+          : { domainId: input.propertyId, domain: { is: { status: { not: "paused" } } } }
+        : { domain: { is: { status: { not: "paused" } } } },
       orderBy: [
         { lastCrawled: "desc" },
         { discoveredOn: "desc" },
