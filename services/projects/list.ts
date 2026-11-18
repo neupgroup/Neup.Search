@@ -3,7 +3,7 @@ import type { WorkflowStatus } from "@prisma/client"
 import { mapDomainToSite, enrichManagedDomainBranding } from "@/services/projects/view"
 import type { ManagedDomain, PaginatedDomains, PaginatedPropertyOptions } from "@/services/neupbot"
 
-const domainStatuses: WorkflowStatus[] = ["discovered", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"]
+const domainStatuses: WorkflowStatus[] = ["discovered", "requesting", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"]
 
 // Search domain status labels alongside domain names and hostnames.
 function getDomainSearchWhere(search?: string) {

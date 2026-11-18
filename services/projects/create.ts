@@ -26,30 +26,21 @@ export async function upsertDomainRecord(input: { url: string; name: string; sta
 
 // Create or find a project record and mark it ready for crawling.
 export async function createDomainForCrawl(input: { url: string; description?: string }) {
-  const { domain, siteUrl } = await upsertDomainRecord({ url: input.url, name: getPropertyAddress(input.url), status: "requested", details: { description: input.description || "", currentActivity: "Queued for crawl.", pagesCrawled: 0 } })
+  const { domain, siteUrl } = await upsertDomainRecord({ url: input.url, name: getPropertyAddress(input.url), status: "requesting", details: { description: input.description || "", currentActivity: "Queued for crawl.", pagesCrawled: 0 } })
 
-  await prisma.$transaction(async (transaction) => {
+  const shouldPromoteDiscoveredPages = await prisma.$transaction(async (transaction) => {
     const currentDomain = await transaction.domain.findUnique({
       where: { id: domain.id },
       select: { status: true, crawlLeaseUntil: true, details: true },
     })
     if (!currentDomain) throw new Error("Domain not found after creation.")
     if (["unlisted", "deleting"].includes(currentDomain.status)) throw new Error("This site is not listed for crawling.")
-    if (currentDomain.status === "crawling" || (currentDomain.crawlLeaseUntil && currentDomain.crawlLeaseUntil > new Date())) return
+    if (currentDomain.status === "crawling" || (currentDomain.crawlLeaseUntil && currentDomain.crawlLeaseUntil > new Date())) return false
 
-    const now = new Date()
-    await transaction.page.updateMany({
-      where: { domainId: domain.id, status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-      data: { status: "toCrawl", crawlLeaseUntil: null },
-    })
-    await transaction.page.updateMany({
-      where: { domainId: domain.id, status: "discovered", crawlLeaseUntil: { gt: now } },
-      data: { status: "discovered" },
-    })
     await transaction.domain.update({
       where: { id: domain.id },
       data: {
-        status: "requested",
+        status: "requesting",
         crawlWorkerId: null,
         crawlLeaseUntil: null,
         details: {
@@ -59,7 +50,37 @@ export async function createDomainForCrawl(input: { url: string; description?: s
         },
       },
     })
+    return true
   })
 
+  if (shouldPromoteDiscoveredPages) await promoteDiscoveredPagesToCrawl(domain.id)
+
   return { domain, siteUrl }
+}
+
+// Promote discovered pages in batches, committing each batch independently.
+export async function promoteDiscoveredPagesToCrawl(siteId: string): Promise<void> {
+  while (true) {
+    const promoted = await prisma.$transaction(async (transaction) => {
+      const pages = await transaction.page.findMany({
+        where: { domainId: siteId, status: "discovered" },
+        orderBy: { discoveredOn: "asc" },
+        take: 100,
+        select: { id: true },
+      })
+      if (pages.length === 0) return 0
+
+      const update = await transaction.page.updateMany({
+        where: { domainId: siteId, status: "discovered", id: { in: pages.map((page) => page.id) } },
+        data: { status: "toCrawl" },
+      })
+      return update.count
+    })
+    if (promoted === 0) break
+  }
+
+  const remaining = await prisma.page.count({ where: { domainId: siteId, status: "discovered" } })
+  if (remaining === 0) {
+    await prisma.domain.updateMany({ where: { id: siteId, status: "requesting" }, data: { status: "requested" } })
+  }
 }

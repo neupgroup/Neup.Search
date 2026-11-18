@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
 
   const page = await prisma.page.findUnique({
     where: { id: input.pageId },
-    select: { id: true, domainId: true, url: true, details: true, domain: { select: { domain: true, details: true } } },
+    select: { id: true, domainId: true, url: true, details: true, domain: { select: { domain: true, details: true, status: true } } },
   })
   if (!page) return workerApiError("page_not_found", "Page not found.", 404)
   if (page.domain.domain.toLowerCase() !== new URL(page.url).hostname.toLowerCase()) return workerApiError("page_domain_mismatch", "The page does not belong to its claimed site.", 409)
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
       : await prisma.page.findFirst({ where: { domainId: targetDomainId, url: targetUrl }, select: { id: true } })
     if ((targetDomainId === page.domainId && item.type === "link") || item.type !== "link") {
       targetPage ??= await prisma.page.create({
-        data: { domainId: targetDomainId, url: targetUrl, type: item.type === "link" ? "text/html" : item.type, status: "discovered", discoveredOn: new Date(), details: {} },
+        data: { domainId: targetDomainId, url: targetUrl, type: item.type === "link" ? "text/html" : item.type, status: targetDomainId === page.domainId && ["requesting", "requested"].includes(page.domain.status) ? "toCrawl" : "discovered", discoveredOn: new Date(), details: {} },
         select: { id: true },
       })
     }

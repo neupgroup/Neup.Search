@@ -44,7 +44,6 @@ async function claimPage() {
     where: {
       OR: [
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-        { status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },
@@ -59,7 +58,6 @@ async function claimPage() {
       id: page.id,
       OR: [
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-        { status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },

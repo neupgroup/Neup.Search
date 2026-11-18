@@ -10,6 +10,7 @@ datasource db {
 
 enum WorkflowStatus {
   discovered
+  requesting
   requested
   toCrawl
   crawling

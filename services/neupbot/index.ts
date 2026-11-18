@@ -8,7 +8,7 @@ import { crawlPageToHtml } from "@/services/crawl/html"
 import { extractMarkdownFromHtml } from "@/services/crawl/markdown"
 import { readDetails, mapDomainToSite } from "@/services/projects/view"
 import { updateDomainDetails } from "@/services/projects/update"
-import { upsertDomainRecord } from "@/services/projects/create"
+import { upsertDomainRecord, promoteDiscoveredPagesToCrawl } from "@/services/projects/create"
 import { ensureHttpSiteUrl, getDomainName, getPropertyAddress, normalizeSiteUrl } from "@/services/projects/domain"
 import { generatePageInsight } from "@/services/intelligence/page-insight"
 import { getBasics } from "@/services/intelligence/site-profile"
@@ -37,7 +37,7 @@ export type ManagedDomain = {
   id: string
   url: string
   description: string
-  status: "discovered" | "requested" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" | "unlisted" | "deleting"
+  status: "discovered" | "requesting" | "requested" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" | "unlisted" | "deleting"
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number
@@ -468,6 +468,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
     return existingPage.id
   }
 
+  const site = await prisma.domain.findUnique({ where: { id: input.siteId }, select: { status: true } })
   const created = await prisma.page.create({
     data: {
       domainId: input.siteId,
@@ -477,7 +478,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
       type: input.fileType || content?.fileType || "unknown",
       details,
       content: null,
-      status: "discovered",
+      status: site && ["requesting", "requested"].includes(site.status) ? "toCrawl" : "discovered",
       discoveredOn: new Date(),
       statusCode: null,
     },
@@ -1827,11 +1828,8 @@ export async function runPageCrawler(
   // Persist the shared lifecycle stages for both queued and manually requested crawls.
   let claimedOn = options.claimedOn
   let activeStage: PageFlowStage = "discovered"
-  const page = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, domain: { select: { status: true } } } })
+  const page = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true } })
   if (!page) throw new Error("Page not found.")
-  if (page.status === "discovered" && page.domain.status === "requested") {
-    await prisma.page.updateMany({ where: { id: pageId, status: "discovered", domain: { status: "requested" } }, data: { status: "toCrawl" } })
-  }
   const reportPageFlowStage = async (stage: PageFlowStage) => {
     activeStage = stage
     await setPageFlowStage(pageId, stage)
@@ -2040,7 +2038,7 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
   })
   if (!domain) throw new Error("Domain not found.")
   if (["unlisted", "deleting"].includes(domain.status)) throw new Error("This site is not listed for crawling.")
-  await prisma.domain.updateMany({ where: { id: siteId, status: "discovered" }, data: { status: "requested" } })
+  await prisma.domain.updateMany({ where: { id: siteId, status: "discovered" }, data: { status: "requesting" } })
 
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
   let pagesCrawled = 0
@@ -2128,7 +2126,7 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
     await transaction.domain.update({
       where: { id: siteId },
       data: {
-        status: "requested",
+        status: "requesting",
         crawlWorkerId: null,
         crawlLeaseUntil: null,
         details: {
@@ -2139,6 +2137,8 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
       },
     })
   })
+
+  await promoteDiscoveredPagesToCrawl(siteId)
 }
 
 // Requeue pending pages for workers instead of crawling them inside the request process.
@@ -2163,13 +2163,10 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
     if (!initialDomain) throw new Error("Domain not found.")
     if (["unlisted", "deleting"].includes(initialDomain.status)) throw new Error("This site is not listed for crawling.")
     const isFirstCrawl = initialDomain.lastCrawled === null
-    await prisma.page.updateMany({
-      where: { domainId: siteId, status: "discovered" },
-      data: { status: "toCrawl", crawlLeaseUntil: null },
-    })
     await prisma.domain.update({
       where: { id: siteId },
       data: {
+        status: "requesting",
         details: {
           ...readDetails(initialDomain.details),
           currentActivity: "Fetching robots.txt...",
@@ -2219,6 +2216,7 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
       internalResourcesFound: stats.internalResourcesFound,
       externalResourcesFound: stats.externalResourcesFound,
     })
+    await promoteDiscoveredPagesToCrawl(siteId)
     await prisma.domain.update({
       where: { id: siteId },
       data: {
