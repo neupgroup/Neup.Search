@@ -1,18 +1,32 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { useFormStatus } from "react-dom"
 import Link from "next/link"
-import { Activity, Check } from "lucide-react"
+import { Activity, Check, Pause } from "lucide-react"
 import { Badge } from "@neup/components/ui/badge"
 import { Card, CardContent } from "@neup/components/ui/card"
-import { getLiveNeupbotWorkers } from "./actions"
+import { Button } from "@neup/components/ui/button"
+import { getLiveNeupbotWorkers, getPauseAllCrawlsStatus, pauseAllCrawls } from "./actions"
 
 type WorkerActivity = Awaited<ReturnType<typeof getLiveNeupbotWorkers>>[number]
 
 const refreshIntervalMs = 5_000
 const minimumProgressStateMs = 300
 const completionHoldMs = 500
-const progressActivityStages = ["Starting", "Crawling Page", "Saving Content", "Saving Content (failed)", "Generating Insights", "Generating Insights (failed)", "Skipping", "Exiting", "Completing", "Completed flow", "Completed"]
+const progressActivityStages = ["Starting", "Crawling Page", "Crawling Page (failed)", "Saving Content", "Saving Content (failed)", "Analyzing Page", "Analyzing Page (failed)", "Generating Insights", "Generating Insights (failed)", "Skipping", "Exiting", "Completing", "Completed flow", "Completed"]
+
+// Render a pending-aware submit button for the global pause action.
+function PauseAllCrawlsSubmitButton() {
+  const { pending } = useFormStatus()
+
+  return (
+    <Button type="submit" variant="destructive" disabled={pending}>
+      <Pause className="mr-2 h-4 w-4" />
+      {pending ? "Pausing all crawls..." : "Pause all crawls"}
+    </Button>
+  )
+}
 
 // Compare the live worker snapshot so unchanged heartbeats do not redraw the panel.
 function haveWorkersChanged(previous: WorkerActivity[], next: WorkerActivity[]): boolean {
@@ -20,25 +34,26 @@ function haveWorkersChanged(previous: WorkerActivity[], next: WorkerActivity[]):
   return JSON.stringify(omitHeartbeat(previous)) !== JSON.stringify(omitHeartbeat(next))
 }
 
-type CrawlProgress = { label: string; percent: number }
+type WorkerProgress = { label: string; percent: number }
 
-// Map the worker's persisted activity trail to the crawl progress milestones.
-function getCrawlProgress(worker: WorkerActivity): CrawlProgress {
+// Map the worker's persisted activity trail to its crawl or analysis progress milestone.
+function getWorkerProgress(worker: WorkerActivity): WorkerProgress | null {
   const currentActivity = worker.activity.split(" → ").at(-1) || worker.activity
   if (currentActivity === "Starting") return { label: "Starting", percent: 0 }
   if (currentActivity === "Completing" || currentActivity === "Completed flow" || currentActivity === "Completed") return { label: "Completing", percent: 100 }
   if (currentActivity === "Skipping") return { label: "Skipping", percent: 90 }
   if (currentActivity === "Exiting") return { label: "Exiting", percent: 100 }
-  if (currentActivity === "Generating Insights") return { label: "Generating Insights", percent: 80 }
-  if (currentActivity === "Generating Insights (failed)") return { label: "Generating Insights (failed)", percent: 80 }
-  if (currentActivity === "Saving Content") return { label: "Saving Content", percent: 55 }
+  if (currentActivity === "Analyzing Page" || currentActivity === "Generating Insights" || currentActivity.startsWith("Generating insight for ")) return { label: "Analyzing Page", percent: 80 }
+  if (currentActivity.startsWith("Analyzing Page (failed)") || currentActivity.startsWith("Generating Insights (failed)") || currentActivity.startsWith("Insight failed:") || currentActivity === "Insight generation failed.") return { label: "Analyzing Page (failed)", percent: 80 }
+  if (currentActivity === "Saving Content" || currentActivity.startsWith("Saving crawl data for ")) return { label: "Saving Content", percent: 55 }
   if (currentActivity === "Saving Content (failed)") return { label: "Saving Content (failed)", percent: 55 }
-  if (currentActivity === "Crawling Page") return { label: "Crawling Page", percent: 30 }
-  return { label: "Crawling Page", percent: 30 }
+  if (currentActivity.startsWith("Crawling Page (failed)") || currentActivity.startsWith("Crawl failed:")) return { label: "Crawling Page (failed)", percent: 30 }
+  if (currentActivity === "Crawling Page" || currentActivity.startsWith("Crawling ")) return { label: "Crawling Page", percent: 30 }
+  return null
 }
 
 // Render a circular progress ring and the current crawl milestone.
-function CrawlProgressIndicator({ progress }: { progress: CrawlProgress }) {
+function WorkerProgressIndicator({ progress }: { progress: WorkerProgress }) {
   const radius = 16
   const circumference = 2 * Math.PI * radius
   const [showCheckmark, setShowCheckmark] = useState(progress.label === "Completing")
@@ -188,14 +203,15 @@ function NeupbotWorkerCard({ worker }: { worker: WorkerActivity }) {
   }, [])
 
   const terminalStage = displayWorker.activity.split(" → ").at(-1) || ""
-  const showProgress = Boolean(displayWorker.currentUrl) && (displayWorker.status === "Working" || progressActivityStages.includes(terminalStage))
+  const progress = getWorkerProgress(displayWorker)
+  const showProgress = Boolean(displayWorker.currentUrl) && progress !== null && (displayWorker.status === "Working" || progressActivityStages.includes(terminalStage))
 
   return (
     <Card>
       <CardContent className="flex min-h-14 items-center justify-between gap-4 px-3 py-2">
         {showProgress && (
           <>
-            <CrawlProgressIndicator progress={getCrawlProgress(displayWorker)} />
+            <WorkerProgressIndicator progress={progress} />
             {displayWorker.currentUrl && (
               <Link
                 href={displayWorker.pageId && displayWorker.siteId
@@ -226,11 +242,22 @@ function NeupbotWorkerCard({ worker }: { worker: WorkerActivity }) {
 
 export function NeupbotLivePanel({
   initialWorkers,
+  initialPausePendingSites,
 }: {
   initialWorkers: WorkerActivity[]
+  initialPausePendingSites: number | null
 }) {
   const [workers, setWorkers] = useState(initialWorkers)
-  const activeCrawls = workers.filter((worker) => worker.status === "Working" && worker.siteId && worker.currentUrl)
+  const [pausePendingSites, setPausePendingSites] = useState(initialPausePendingSites)
+  const activeJobs = workers.filter((worker) => worker.status === "Working" && worker.siteId && worker.currentUrl)
+  const activeAnalyses = activeJobs.filter((worker) => getWorkerProgress(worker)?.label.startsWith("Analyzing Page"))
+  const activeCrawls = activeJobs.length - activeAnalyses.length
+
+  // Pause all currently eligible sites and keep the control visible if any remain.
+  const submitPauseAllCrawls = async (_formData: FormData) => {
+    const result = await pauseAllCrawls()
+    setPausePendingSites(result.remainingSites)
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -241,9 +268,13 @@ export function NeupbotLivePanel({
       isRefreshing = true
 
       try {
-        const nextWorkers = await getLiveNeupbotWorkers()
+        const [nextWorkers, pauseStatus] = await Promise.all([
+          getLiveNeupbotWorkers(),
+          getPauseAllCrawlsStatus(),
+        ])
         if (isMounted) {
           setWorkers((currentWorkers) => haveWorkersChanged(currentWorkers, nextWorkers) ? nextWorkers : currentWorkers)
+          setPausePendingSites(pauseStatus.remainingSites)
         }
       } finally {
         isRefreshing = false
@@ -264,9 +295,16 @@ export function NeupbotLivePanel({
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Activity className="h-4 w-4" />
-          <span>{workers.length.toLocaleString()} live workers · {activeCrawls.length.toLocaleString()} active crawls</span>
+          <span>{workers.length.toLocaleString()} live workers · {activeCrawls.toLocaleString()} active crawls · {activeAnalyses.length.toLocaleString()} active analyses</span>
         </div>
-        <Badge variant="outline">Updates when worker activity changes</Badge>
+        <div className="flex items-center gap-3">
+          <Badge variant="outline">Updates when worker activity changes</Badge>
+          {pausePendingSites !== 0 && (
+            <form action={submitPauseAllCrawls}>
+              <PauseAllCrawlsSubmitButton />
+            </form>
+          )}
+        </div>
       </div>
 
       <section className="space-y-3">

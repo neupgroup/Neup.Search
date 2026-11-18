@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@neup/components/ui/table"
 import { notFound, redirect } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
-import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, DeleteSiteButton, ResumeCrawlButton, LiveCrawlStatus, PauseSiteButton, ResumePausedSiteButton } from "./client"
+import { CancelCrawlButton, UpdateSummaryButton, DeleteSiteButton, ResumeCrawlButton, LiveCrawlStatus, PauseSiteButton, ResumePausedSiteButton } from "./client"
 
 function readPositiveInteger(value: string | string[] | undefined, fallback: number) {
   const rawValue = Array.isArray(value) ? value[0] : value
@@ -71,7 +71,6 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           </div>
           <div className="flex flex-col gap-2 items-end shrink-0">
              <div className="flex gap-2">
-                <RecrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
                 {site.status !== "paused" && <ResumeCrawlButton siteId={site.id} status={site.status} />}
                 {site.status === "paused" ? <ResumePausedSiteButton siteId={site.id} /> : !["unlisted", "deleting"].includes(site.status) ? <PauseSiteButton siteId={site.id} /> : null}
                 {site.status === "crawling" && (
@@ -80,7 +79,6 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
              </div>
              <div className="flex gap-2">
                 <UpdateSummaryButton siteId={site.id} siteUrl={site.url} />
-                <DeletePagesButton siteId={site.id} siteName={site.name || site.url} />
                 <DeleteSiteButton siteId={site.id} siteName={site.name || site.url} />
              </div>
           </div>

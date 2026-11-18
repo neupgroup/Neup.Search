@@ -4,10 +4,8 @@ import { prisma } from "@/lib/prisma"
 import { logError } from "@/lib/logica-logging"
 import { revalidatePath } from "next/cache"
 import type { Prisma } from "@prisma/client"
-import * as cheerio from "cheerio"
 import { findSitemapReferencesForUrl, neupbotUserAgent, runPageCrawler, type SitemapReference } from "@/services/neupbot"
 import { crawlPageToHtml } from "@/services/crawl/html"
-import { makeHtmlLinksAbsolute } from "@/services/crawl/links"
 
 export type Page = {
   id: string
@@ -27,35 +25,29 @@ export type Page = {
   isCrawling: boolean
 }
 
-export type Backlink = {
+export type PageSitemapReference = SitemapReference
+
+export type PageDiscoverySource = {
   id: string
-  sourceUrl: string
-  sourceTitle: string
-  sourcePageId?: string
-  sourceType?: string | null
-  anchorText?: string | null
-  altText?: string | null
-  titleText?: string | null
+  url: string
+  title: string
+  site: string
+  kind: string
 }
 
-export type PageSitemapReference = SitemapReference
+export type PageDiscoveryStatus = {
+  kind: string
+  discoverySource: string | null
+  discoveredFrom: string | null
+  insideSite: PageDiscoverySource[]
+  outsideSite: PageDiscoverySource[]
+  insideSiteCount: number
+  outsideSiteCount: number
+}
 
 export type LiveCrawlerDataState = {
   data?: {
-    url: string
-    status: number
-    statusText: string
-    contentType: string | null
-    fetchedAt: string
     html: string
-    javascriptHtml: string
-    renderedContent: string
-    truncated: boolean
-    headers: Array<{ key: string; value: string }>
-    imagesMedia: Array<{ url: string; type: string; alt?: string }>
-    binaries: Array<{ url: string; label: string }>
-    internalLinks: Array<{ url: string; text: string }>
-    externalLinks: Array<{ url: string; text: string }>
   }
   error?: string
 }
@@ -361,55 +353,6 @@ export async function getPageById(pageId: string): Promise<Page | null> {
   }
 }
 
-export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
-  if (!pageUrl) return []
-
-  try {
-    const links = await prisma.resource.findMany({
-      where: { linkTo: pageUrl, type: "link" },
-      orderBy: { firstCrawlOn: "desc" },
-      select: {
-        id: true,
-        linkFrom: true,
-        sourceType: true,
-        anchorText: true,
-        altText: true,
-        titleText: true,
-      },
-    })
-
-    if (links.length === 0) return []
-
-    const sourceUrls = [...new Set(links.map((link) => link.linkFrom))]
-    const sourcePages = await prisma.page.findMany({
-      where: { url: { in: sourceUrls } },
-      select: {
-        id: true,
-        url: true,
-        title: true,
-        status: true,
-        domain: { select: { status: true } },
-      },
-    })
-    const sourcePageByUrl = new Map(sourcePages.map((page) => [page.url, page]))
-    const pausedSourceUrls = new Set(sourcePages.filter((page) => page.domain.status === "paused").map((page) => page.url))
-
-    return links.filter((link) => !pausedSourceUrls.has(link.linkFrom)).map((link) => ({
-      id: link.id,
-      sourceUrl: link.linkFrom,
-      sourceTitle: sourcePageByUrl.get(link.linkFrom)?.title || link.linkFrom,
-      sourcePageId: sourcePageByUrl.get(link.linkFrom)?.id,
-      sourceType: link.sourceType,
-      anchorText: link.anchorText,
-      altText: link.altText,
-      titleText: link.titleText,
-    }))
-  } catch (error) {
-    await logError({ error, pageUrl }, "getBacklinks")
-    return []
-  }
-}
-
 export async function getPageSitemapReferences(page: Page): Promise<PageSitemapReference[]> {
   const references = new Map<string, PageSitemapReference>()
 
@@ -420,66 +363,69 @@ export async function getPageSitemapReferences(page: Page): Promise<PageSitemapR
   return [...references.values()]
 }
 
-// Extract absolute media, binary, and navigation URLs from the HTML snapshot.
-function extractLiveCrawlerResources(html: string, pageUrl: string) {
-  const $ = cheerio.load(html)
-  const pageOrigin = new URL(pageUrl).origin
-  const imagesMedia: Array<{ url: string; type: string; alt?: string }> = []
-  const binaries: Array<{ url: string; label: string }> = []
-  const internalLinks: Array<{ url: string; text: string }> = []
-  const externalLinks: Array<{ url: string; text: string }> = []
-  const mediaSeen = new Set<string>()
-  const binarySeen = new Set<string>()
-  const binaryExtensions = /\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|tar|gz|exe|dmg|apk|woff2?|ttf|eot)(?:$)/i
+// Read the recorded page links that explain how a page was discovered.
+export async function getPageDiscoveryStatus(pageId: string): Promise<PageDiscoveryStatus | null> {
+  try {
+    const page = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: { id: true, url: true, domainId: true, type: true, details: true },
+    })
+    if (!page) return null
 
-  $("img, video[src], video[poster], audio[src], source[src]").each((_, element) => {
-    const node = $(element)
-    const source = node.attr("src")
-      || node.attr("data-src")
-      || node.attr("data-lazy-src")
-      || node.attr("data-original")
-      || node.attr("poster")
-      || node.attr("srcset")?.split(",")[0]?.trim().split(/\s+/)[0]
-    if (!source) return
-    try {
-      const url = new URL(source, pageUrl).toString()
-      if (mediaSeen.has(url)) return
-      mediaSeen.add(url)
-      imagesMedia.push({
-        url,
-        type: element.tagName.toLowerCase(),
-        alt: node.attr("alt") || undefined,
-      })
-    } catch {
-      // Ignore malformed resource URLs.
+    const incomingWhere: Prisma.ResourceWhereInput = {
+      OR: [{ linkTo: page.url }, { targetPageId: page.id }],
     }
-  })
+    const [insideSiteCount, outsideSiteCount, incomingLinks] = await Promise.all([
+      prisma.resource.count({ where: { ...incomingWhere, fromDomain: page.domainId } }),
+      prisma.resource.count({ where: { ...incomingWhere, fromDomain: { not: page.domainId } } }),
+      prisma.resource.findMany({
+        where: incomingWhere,
+        orderBy: { firstCrawlOn: "desc" },
+        take: 100,
+        select: {
+          id: true,
+          linkFrom: true,
+          type: true,
+          fromDomain: true,
+          sourcePageId: true,
+          sourceType: true,
+          from: { select: { domain: true } },
+        },
+      }),
+    ])
 
-  $("a[href]").each((_, element) => {
-    const node = $(element)
-    const rawHref = node.attr("href")
-    if (!rawHref) return
-    try {
-      const target = new URL(rawHref, pageUrl)
-      if (target.protocol !== "http:" && target.protocol !== "https:") return
-      const url = target.toString()
-      const text = node.text().replace(/\s+/g, " ").trim() || node.attr("aria-label") || ""
-      if (target.origin === pageOrigin) internalLinks.push({ url, text })
-      else externalLinks.push({ url, text })
+    const sourcePageIds = [...new Set(incomingLinks.flatMap((link) => link.sourcePageId ? [link.sourcePageId] : []))]
+    const sourcePages = sourcePageIds.length > 0
+      ? await prisma.page.findMany({ where: { id: { in: sourcePageIds } }, select: { id: true, title: true } })
+      : []
+    const sourceTitleById = new Map(sourcePages.map((sourcePage) => [sourcePage.id, sourcePage.title || "Untitled page"]))
+    const mapSource = (link: typeof incomingLinks[number]): PageDiscoverySource => ({
+      id: link.id,
+      url: link.linkFrom,
+      title: link.sourcePageId ? sourceTitleById.get(link.sourcePageId) || link.linkFrom : link.linkFrom,
+      site: link.from.domain,
+      kind: link.sourceType || link.type,
+    })
+    const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
+      ? page.details as Record<string, unknown>
+      : {}
 
-      if ((node.attr("download") !== undefined || binaryExtensions.test(target.pathname)) && !binarySeen.has(url)) {
-        binarySeen.add(url)
-        binaries.push({ url, label: text || target.pathname.split("/").pop() || url })
-      }
-    } catch {
-      // Ignore malformed navigation URLs.
+    return {
+      kind: typeof details.kind === "string" ? details.kind : page.type || "unknown",
+      discoverySource: typeof details.discoverySource === "string" ? details.discoverySource : null,
+      discoveredFrom: typeof details.discoveredFrom === "string" ? details.discoveredFrom : null,
+      insideSite: incomingLinks.filter((link) => link.fromDomain === page.domainId).map(mapSource),
+      outsideSite: incomingLinks.filter((link) => link.fromDomain !== page.domainId).map(mapSource),
+      insideSiteCount,
+      outsideSiteCount,
     }
-  })
-
-  return { imagesMedia, binaries, internalLinks, externalLinks }
+  } catch (error) {
+    await logError({ error, pageId }, "getPageDiscoveryStatus")
+    return null
+  }
 }
 
-// Fetch raw and JavaScript rendered HTML, stopping on response headers for non-HTML resources.
+// Fetch and return only the JavaScript-rendered HTML without changing page or site status.
 export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, formData: FormData): Promise<LiveCrawlerDataState> {
   const pageUrl = String(formData.get("url") || "")
 
@@ -488,67 +434,15 @@ export async function viewCrawlerDataAction(_prevState: LiveCrawlerDataState, fo
   }
 
   try {
-    const response = await fetch(pageUrl, {
-      headers: { "User-Agent": neupbotUserAgent },
-      redirect: "manual",
-      cache: "no-store",
+    const rendered = await crawlPageToHtml(pageUrl, {
+      javascriptEnabled: true,
+      userAgent: neupbotUserAgent,
     })
-    const maxLength = 500_000
-    const contentType = response.headers.get("content-type")
-    const normalizedContentType = contentType?.split(";")[0].trim().toLowerCase()
-    const headers = Array.from(response.headers.entries()).map(([key, value]) => ({ key, value }))
-    const baseData = {
-      url: response.url || pageUrl,
-      status: response.status,
-      statusText: response.statusText,
-      contentType,
-      fetchedAt: new Date().toISOString(),
-      headers,
-    }
-
-    if (normalizedContentType !== "text/html" && normalizedContentType !== "application/xhtml+xml") {
-      return {
-        data: {
-          ...baseData,
-          html: "",
-          javascriptHtml: "",
-          renderedContent: "",
-          truncated: false,
-          imagesMedia: [],
-          binaries: [],
-          internalLinks: [],
-          externalLinks: [],
-        },
-      }
-    }
-
-    const rawHtml = await response.text()
-    const html = makeHtmlLinksAbsolute(rawHtml, baseData.url)
-    let javascriptHtml = ""
-    try {
-      const rendered = await crawlPageToHtml(baseData.url, {
-        javascriptEnabled: true,
-        userAgent: neupbotUserAgent,
-      })
-      const renderedType = (rendered.headers["content-type"] || "").split(";")[0].trim().toLowerCase()
-      if (renderedType === "text/html" || renderedType === "application/xhtml+xml") {
-        javascriptHtml = makeHtmlLinksAbsolute(rendered.html, rendered.url || baseData.url)
-      }
-    } catch (renderError) {
-      await logError({ error: renderError, pageUrl }, "viewCrawlerDataAction_javascriptRender")
-    }
-    const displayHtml = javascriptHtml || html
-    const $rendered = cheerio.load(displayHtml)
-    const resources = extractLiveCrawlerResources(displayHtml, baseData.url)
+    if (!rendered.html) return { error: "No HTML was returned by the JavaScript-enabled crawler." }
 
     return {
       data: {
-        ...baseData,
-        html: html.slice(0, maxLength),
-        javascriptHtml: javascriptHtml.slice(0, maxLength),
-        renderedContent: $rendered("body").html() || "",
-        truncated: html.length > maxLength || javascriptHtml.length > maxLength,
-        ...resources,
+        html: rendered.html,
       },
     }
   } catch (error) {

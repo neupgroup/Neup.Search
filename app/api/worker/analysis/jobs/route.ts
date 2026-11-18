@@ -63,8 +63,8 @@ export async function POST(request: NextRequest) {
 
   await prisma.crawlerWorker.upsert({
     where: { id: workerId },
-    create: { id: workerId, status: "Working", activity: `Generating insight for ${page.url}`, siteId: page.domainId, siteUrl: null, currentUrl: page.url, lastSeenAt: new Date() },
-    update: { status: "Working", activity: `Generating insight for ${page.url}`, siteId: page.domainId, siteUrl: null, currentUrl: page.url, lastSeenAt: new Date() },
+    create: { id: workerId, status: "Working", activity: "Analyzing Page", siteId: page.domainId, siteUrl: null, currentUrl: page.url, lastSeenAt: new Date() },
+    update: { status: "Working", activity: "Analyzing Page", siteId: page.domainId, siteUrl: null, currentUrl: page.url, lastSeenAt: new Date() },
   })
 
   const domainDetails = page.domain.details && typeof page.domain.details === "object" && !Array.isArray(page.domain.details)

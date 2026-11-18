@@ -10,12 +10,22 @@ const workerId = process.argv[2] || `neup-search-worker-${process.pid}`
 const workerType = process.argv[3] === "analysis" ? "analysis" : "crawler"
 const POLL_INTERVAL_MS = 2_000
 const HEARTBEAT_INTERVAL_MS = 10_000
+const WORK_TIME_GAP_MS = readWorkTimeGapMs()
 const apiBaseUrl = process.env.NEUP_WORKER_API_URL
 const apiSecret = process.env.NEUP_WORKER_SECRET
 const appBasePath = process.env.NEXT_PUBLIC_APP_BASEPATH ?? ""
 let workerInstance: WorkerInstance | undefined
 let activity = "Starting worker."
 let activePage: { pageId: string; siteId: string; url: string; claimedOn: string; workflowStatus: "crawling" | "analyzing" } | undefined
+
+// Read the configured idle gap between completed worker tasks in milliseconds.
+function readWorkTimeGapMs(): number {
+  const configuredGap = process.env.NEUP_WORKER_WORK_TIME_GAP?.trim()
+  if (!configuredGap) return 0
+
+  const parsedGap = Number(configuredGap)
+  return Number.isFinite(parsedGap) ? Math.max(0, Math.floor(parsedGap)) : 0
+}
 
 // Build an app API URL using the configured application base path.
 function getWorkerApiUrl(path: string): string {
@@ -61,10 +71,10 @@ async function updateWorkerStatus(status: WorkerStatus, signal?: AbortSignal): P
   }, signal)
 }
 
-// Wait between requests and allow shutdown to interrupt the delay.
-function waitForNextJob(signal: AbortSignal): Promise<void> {
+// Wait before requesting more work and allow shutdown to interrupt the delay.
+function waitForNextJob(signal: AbortSignal, delayMs: number): Promise<void> {
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, POLL_INTERVAL_MS)
+    const timeout = setTimeout(resolve, delayMs)
     signal.addEventListener("abort", () => {
       clearTimeout(timeout)
       resolve()
@@ -78,7 +88,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     throw new Error("The crawl job did not include a valid page context.")
   }
   activePage = { pageId: page.id, siteId: page.siteId, url: page.url, claimedOn: page.claimedOn, workflowStatus: "crawling" }
-  activity = `Crawling ${page.url}.`
+  activity = "Crawling Page"
   await callWorkerApi("api/worker/crawling-status", { pageId: page.id, claimedOn: page.claimedOn, status: "crawling", activity }, signal)
   const heartbeat = setInterval(() => {
     void updateWorkerStatus("Working").catch((error) => console.error(`[crawler-worker:${workerId}] Heartbeat failed.`, error))
@@ -112,7 +122,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     const videos = isHtml
       ? $("video[src], video source[src]").map((_, element) => ({ url: $(element).attr("src") || "" })).get()
       : []
-    activity = `Saving crawl data for ${page.url}.`
+    activity = "Saving Content"
     await callWorkerApi("api/worker/pages", {
       workerId,
       pageId: page.id,
@@ -129,7 +139,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     }, signal)
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
   } catch (error) {
-    activity = error instanceof Error ? `Crawl failed: ${error.message}` : "Crawl failed."
+    activity = error instanceof Error ? `Crawling Page (failed): ${error.message}` : "Crawling Page (failed)"
     await callWorkerApi("api/worker/crawling-status", { pageId: page.id, claimedOn: page.claimedOn, status: "crawled", activity }, signal)
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
     throw error
@@ -161,7 +171,7 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
   if (!page || typeof page.id !== "string" || typeof page.url !== "string" || typeof page.content !== "string" || typeof page.claimedOn !== "string") return false
 
   activePage = { pageId: page.id, siteId: typeof page.siteId === "string" ? page.siteId : "", url: page.url, claimedOn: page.claimedOn, workflowStatus: "analyzing" }
-  activity = `Generating insight for ${page.url}.`
+  activity = "Analyzing Page"
   const heartbeat = setInterval(() => {
     void updateWorkerStatus("Working").catch((error) => console.error(`[analysis-worker:${workerId}] Heartbeat failed.`, error))
   }, HEARTBEAT_INTERVAL_MS)
@@ -200,7 +210,7 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
     }, signal)
     return true
   } catch (error) {
-    activity = error instanceof Error ? `Insight failed: ${error.message}` : "Insight generation failed."
+    activity = error instanceof Error ? `Analyzing Page (failed): ${error.message}` : "Analyzing Page (failed)"
     await callWorkerApi("api/worker/crawling-status", {
       pageId: page.id,
       claimedOn: page.claimedOn,
@@ -222,13 +232,16 @@ async function runWorker(signal: AbortSignal): Promise<void> {
   console.info(`[${workerType}-worker:${workerId}] Requesting work from the application API.`)
 
   while (!signal.aborted) {
+    let completedTask = false
     try {
       activity = workerType === "crawler" ? "Requesting a crawl job." : "Requesting an analysis job."
-      const worked = workerType === "crawler"
+      completedTask = workerType === "crawler"
         ? await processCrawlerJob(signal)
         : await processAnalysisJob(signal)
       activePage = undefined
-      activity = worked ? "Job complete; waiting for work." : `Waiting for ${workerType} work.`
+      activity = completedTask
+        ? workerType === "crawler" ? "Crawl complete; waiting for crawl work." : "Analysis complete; waiting for analysis work."
+        : `Waiting for ${workerType} work.`
       await updateWorkerStatus("Idle", signal)
     } catch (error) {
       if (signal.aborted) break
@@ -240,7 +253,7 @@ async function runWorker(signal: AbortSignal): Promise<void> {
         console.error(`[${workerType}-worker:${workerId}] Status update failed.`, statusError)
       }
     }
-    await waitForNextJob(signal)
+    await waitForNextJob(signal, completedTask ? WORK_TIME_GAP_MS : POLL_INTERVAL_MS)
   }
 }
 

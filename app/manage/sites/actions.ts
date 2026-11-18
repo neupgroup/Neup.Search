@@ -10,11 +10,9 @@ import {
   pauseDomainCrawl,
   resumePausedDomainCrawl,
   deleteManagedDomain,
-  deleteDomainPages,
   getNeupbotDashboardStats,
   getPagesForDomain,
   resumePendingCrawler,
-  queueDomainCrawl,
   type ManagedDomain,
 } from "@/services/neupbot"
 import { createDomainForCrawl } from "@/services/projects/create"
@@ -96,14 +94,6 @@ export async function summarizeSiteAction(formData: FormData) {
   }
 }
 
-export async function crawlSite(formData: FormData) {
-  const siteId = formData.get("siteId") as string
-
-  await queueDomainCrawl(siteId, true)
-  revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/pages")
-}
-
 export async function resumePendingCrawl(formData: FormData) {
   const siteId = formData.get("siteId") as string
 
@@ -183,20 +173,6 @@ export async function cancelCrawl(formData: FormData) {
     revalidatePath(`/manage/sites/${siteId}`)
   } catch (error) {
     await logError(error, "cancelCrawl")
-  }
-}
-
-export async function deletePagesForSite(formData: FormData) {
-  const siteId = formData.get("siteId") as string
-  if (!siteId) throw new Error("siteId is required.")
-
-  try {
-    await deleteDomainPages(siteId)
-    revalidatePath(`/manage/sites/${siteId}`)
-    revalidatePath("/manage/pages")
-  } catch (error) {
-    await logError({ error, siteId }, "deletePagesForSite")
-    throw new Error("Could not delete pages for site.")
   }
 }
 

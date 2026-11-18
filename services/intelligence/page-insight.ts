@@ -54,6 +54,8 @@ export async function generatePageInsight(input: GeneratePageInsightInput): Prom
     category = typeof parsed.genericCategory === "string" && genericOptions.includes(parsed.genericCategory)
       ? `generic.${parsed.genericCategory}`
       : null
+  } else if (typeof parsed.category === "string" && getGenericPageCategories().includes(parsed.category)) {
+    category = `generic.${parsed.category}`
   }
   if (parsed.category === "not-any") category = null
   if (!category && parsed.category !== "not-any") {

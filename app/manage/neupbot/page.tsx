@@ -1,11 +1,14 @@
 import { Bot } from "lucide-react"
-import { getLiveNeupbotWorkers } from "./actions"
+import { getLiveNeupbotWorkers, getPauseAllCrawlsStatus } from "./actions"
 import { NeupbotLivePanel } from "./client"
 
 export const dynamic = "force-dynamic"
 
 export default async function ManageNeupbotPage() {
-  const workers = await getLiveNeupbotWorkers()
+  const [workers, pauseStatus] = await Promise.all([
+    getLiveNeupbotWorkers(),
+    getPauseAllCrawlsStatus(),
+  ])
 
   return (
     <div className="space-y-4">
@@ -19,7 +22,7 @@ export default async function ManageNeupbotPage() {
         </p>
       </div>
 
-      <NeupbotLivePanel initialWorkers={workers} />
+      <NeupbotLivePanel initialWorkers={workers} initialPausePendingSites={pauseStatus.remainingSites} />
     </div>
   )
 }

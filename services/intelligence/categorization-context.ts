@@ -24,10 +24,17 @@ function getSitePageCategories(siteCategory: string | null): string[] {
   return collectPageCategoryLeaves(value)
 }
 
+// Collect all site-specific page category leaves from the taxonomy JSON.
+function getAllSitePageCategories(): string[] {
+  return Object.entries(categoryTree as CategoryTree)
+    .filter(([root]) => root !== "generic")
+    .flatMap(([, branch]) => collectPageCategoryLeaves(branch))
+}
+
 // Prepare the allowed categories for a single page insight request.
 export function getCategorizationContext(siteCategory: string | null): string[] {
   const siteCategories = getSitePageCategories(siteCategory)
-  return [...new Set([...siteCategories, "generic"])]
+  return [...new Set([...siteCategories, ...getAllSitePageCategories(), "generic"])]
 }
 
 // Return the generic page categories used to resolve a generic page classification.

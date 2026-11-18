@@ -1,94 +1,11 @@
-
-
-import { notFound } from "next/navigation"
-import { getPageById, getBacklinks, getPageSitemapReferences } from "../actions"
-import { Card, CardContent, CardHeader, CardTitle } from "@neup/components/ui/card"
-import { Badge } from "@neup/components/ui/badge"
 import Link from "next/link"
-import { AlertTriangle } from "lucide-react"
+import { notFound } from "next/navigation"
+import { ArrowLeft, BadgeCheck, CalendarDays, ExternalLink, Globe2, ListTree, Map, Network } from "lucide-react"
+import { Badge } from "@neup/components/ui/badge"
+import { Card, CardContent } from "@neup/components/ui/card"
+import { getPageById, getPageDiscoveryStatus, getPageSitemapReferences } from "../actions"
 import { CrawlerDataPanel } from "./crawler-data-panel"
 import { CrawlPageButton } from "./crawl-page-button"
-import { getPageIssues, type PageIssue } from "@/services/neupbot"
-
-function getIssueKindLabel(kind: PageIssue["kind"]) {
-  if (kind === "link") return "Link"
-  if (kind === "file") return "File"
-  if (kind === "image-alt") return "Image alt"
-  if (kind === "image-caption") return "Image caption"
-  if (kind === "video-alt") return "Video label"
-  return "Iframe"
-}
-
-function PageIssuesPanel({ issues }: { issues: PageIssue[] }) {
-  const errorCount = issues.filter((issue) => issue.severity === "error").length
-  const warningCount = issues.length - errorCount
-
-  return (
-    <section className="space-y-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-destructive" />
-            <h2 className="text-xl font-semibold leading-none tracking-tight">Page Issues</h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Broken links, missing files, media accessibility gaps, and iframe errors found on this page.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge variant={errorCount > 0 ? "destructive" : "secondary"}>{errorCount} errors</Badge>
-          <Badge variant="outline">{warningCount} warnings</Badge>
-        </div>
-      </div>
-
-      {issues.length === 0 ? (
-        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-          No link, file, image, video, or iframe issues found for this page.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {issues.map((issue) => (
-            <Card key={issue.id} className="transition-colors hover:bg-muted/50">
-              <CardContent className="p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={issue.severity === "error" ? "destructive" : "secondary"}>
-                        {getIssueKindLabel(issue.kind)}
-                      </Badge>
-                      {issue.statusCode && <Badge variant="outline">{issue.statusCode}</Badge>}
-                      <span className="font-medium">{issue.title}</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground">{issue.message}</p>
-                    {issue.url && (
-                      <Link
-                        href={issue.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block break-all text-sm text-muted-foreground hover:text-primary"
-                      >
-                        {issue.url}
-                      </Link>
-                    )}
-                  </div>
-                  {issue.status && (
-                    <Badge variant={issue.severity === "error" ? "destructive" : "outline"} className="w-fit shrink-0">
-                      {issue.status}
-                    </Badge>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function getBacklinkDisplayText(link: { anchorText?: string | null; altText?: string | null; titleText?: string | null }) {
-  return link.anchorText || link.altText || link.titleText || null
-}
 
 // Hide manual crawling for records already identified as a non-HTML resource.
 function isNonHtmlPage(page: { type: string; url: string }) {
@@ -101,132 +18,185 @@ function isNonHtmlPage(page: { type: string; url: string }) {
   return /\.(?:pdf|jpe?g|png|gif|webp|svg|avif|ico|bmp|tiff?|mp4|webm|mov|m4v|avi|mpeg|mpg|ogv|mp3|wav|ogg|css|js|mjs|json|xml|zip|woff2?|ttf|eot)(?:$)/i.test(pathname)
 }
 
-export default async function PageDetailPage({ params, searchParams }: { params: Promise<{ pageId: string }>, searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
-  const resolvedParams = await params;
-  const resolvedSearchParams = await searchParams
-  const propertyValue = resolvedSearchParams.property
-  const propertyId = Array.isArray(propertyValue) ? propertyValue[0] : propertyValue
-  const propertyQuery = propertyId ? `?property=${encodeURIComponent(propertyId)}` : ""
-  const page = await getPageById(resolvedParams.pageId)
-  
-  if (!page) {
-    notFound()
-  }
+// Format stored workflow values for compact status badges.
+function formatStatus(status: string) {
+  return status.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase())
+}
 
-  const [backlinks, sitemapReferences, issues] = await Promise.all([
-    getBacklinks(page.url),
+// Render a page detail card with a label, value, and optional detail.
+function PageMetric({ icon: Icon, label, value, detail, compact = false, valueMuted = false }: {
+  icon: typeof CalendarDays
+  label?: string
+  value: string
+  detail?: string
+  compact?: boolean
+  valueMuted?: boolean
+}) {
+  return (
+    <Card className="group border-border/70 bg-card/80 shadow-sm transition-colors hover:bg-muted/30">
+      <CardContent className={`flex items-start justify-between gap-2 ${compact ? "p-2.5" : "min-h-20 p-3"}`}>
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="rounded-lg bg-primary/10 p-2 text-primary transition-transform duration-300 group-hover:rotate-3">
+            <Icon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 space-y-1">
+            {label && <p className="truncate text-sm font-semibold text-muted-foreground" title={label}>{label}</p>}
+            <p className={`truncate text-sm font-semibold ${valueMuted ? "text-muted-foreground" : "text-foreground"}`} title={value}>{value}</p>
+            {detail && <p className={`truncate text-sm font-semibold ${valueMuted ? "text-foreground" : "text-muted-foreground"}`} title={detail}>{detail}</p>}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Match discovery items to the compact card rows used on the projects page.
+function DiscoveryCard({ icon: Icon, title, description, cornerClass }: {
+  icon: typeof Globe2
+  title: string
+  description: string
+  cornerClass: string
+}) {
+  return (
+    <Card className={`w-full border-border/60 transition-colors hover:bg-muted/40 ${cornerClass}`}>
+      <CardContent className="p-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 space-y-1">
+            <div className="font-semibold">{title}</div>
+            <div className="break-all text-sm text-muted-foreground">{description}</div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Show the page overview, crawler inspection, and sitemap references.
+export default async function PageDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ pageId: string }>
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+  const [{ pageId }, query] = await Promise.all([params, searchParams])
+  const propertyValue = query.property
+  const propertyId = Array.isArray(propertyValue) ? propertyValue[0] : propertyValue
+  const backToPagesUrl = propertyId
+    ? `/manage/pages?property=${encodeURIComponent(propertyId)}`
+    : "/manage/pages"
+  const page = await getPageById(pageId)
+
+  if (!page) notFound()
+
+  const [sitemapReferences, discoveryStatus] = await Promise.all([
     getPageSitemapReferences(page),
-    getPageIssues(page.id),
+    getPageDiscoveryStatus(page.id),
   ])
+  const displaySummary = page.summary || page.description || "No summary is available for this page yet."
+  const addedDate = page.createdAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+  const indexedDate = page.lastIndexed
+    ? new Date(page.lastIndexed).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+    : "Not indexed yet"
+  const discoveryCards = [
+    ...(discoveryStatus?.outsideSiteCount
+      ? [{ icon: Globe2, title: "External links", description: `${discoveryStatus.outsideSiteCount} pages from external sites link to this page.` }]
+      : []),
+    ...(discoveryStatus?.insideSiteCount
+      ? [{ icon: Network, title: "Linked via internal pages", description: `${discoveryStatus.insideSiteCount} pages link to this page.` }]
+      : []),
+    {
+      icon: Map,
+      title: "Sitemaps",
+      description: sitemapReferences.length === 0
+        ? "No sitemap references found."
+        : sitemapReferences.map((reference) => reference.sitemapUrl).join(", "),
+    },
+  ]
 
   return (
-    <div className="grid gap-6">
-      <Card>
-        <CardHeader>
-          <div>
-            <div className="min-w-0 space-y-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <CardTitle className="min-w-0 break-all text-2xl">{page.title}</CardTitle>
-                {!isNonHtmlPage(page) && <CrawlPageButton pageId={page.id} initiallyCrawling={page.isCrawling} isPaused={page.domainStatus === "paused"} />}
-              </div>
-              <p className="text-sm">
-                <span className="text-muted-foreground">{page.category || "Uncategorized"} · </span>
-                <Link href={page.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
-                  {page.url}
-                </Link>
-              </p>
-            </div>
+    <div className="space-y-6 pb-6">
+      <Link
+        href={backToPagesUrl}
+        className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to pages
+      </Link>
+
+      <header className="space-y-5">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-3">
+            <h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{page.title || "Untitled page"}</h1>
+            <Link
+              href={page.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex max-w-full items-start gap-2 break-all text-sm text-muted-foreground transition-colors hover:text-primary"
+            >
+              <Globe2 className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{page.url}</span>
+              <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
+            </Link>
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{displaySummary}</p>
           </div>
-        </CardHeader>
-        <CardContent>
-          {page.summary ? (
-            <p className="text-sm text-muted-foreground">{page.summary}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">Insights will appear after the page crawl completes.</p>
-          )}
-        </CardContent>
-      </Card>
 
-      <CrawlerDataPanel url={page.url} />
-
-      <PageIssuesPanel issues={issues} />
-
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold leading-none tracking-tight">Linked From Pages</h2>
-          <p className="text-sm text-muted-foreground">
-            Pages that contain a link to this page.
-          </p>
         </div>
-        <div className="space-y-3">
-              {backlinks.length === 0 && (
-                <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                    No backlinks have been recorded for this page yet.
-                </div>
-              )}
-              {backlinks.map((link) => (
-                <Card key={link.id} className="transition-colors hover:bg-muted/50">
-                  <CardContent className="p-4">
-                    <div className="space-y-2">
-                      {link.sourcePageId ? (
-                        <Link href={`/manage/pages/${link.sourcePageId}${propertyQuery}`} className="font-medium hover:underline">
-                          {link.sourceTitle}
-                        </Link>
-                      ) : (
-                        <div className="font-medium">{link.sourceTitle}</div>
-                      )}
-                      <Link
-                        href={link.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block break-all text-sm text-muted-foreground hover:text-primary"
-                      >
-                        {link.sourceUrl}
-                      </Link>
-                      {(link.sourceType || getBacklinkDisplayText(link)) && (
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          {link.sourceType && <Badge variant="outline">{link.sourceType}</Badge>}
-                          {getBacklinkDisplayText(link) && (
-                            <span className="break-all">{getBacklinkDisplayText(link)}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-        </div>
+      </header>
+
+      <section aria-label="Page metadata" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {!isNonHtmlPage(page) && (
+          <CrawlPageButton pageId={page.id} initiallyCrawling={page.isCrawling} isPaused={page.domainStatus === "paused"} />
+        )}
+        <PageMetric
+          icon={BadgeCheck}
+          value={formatStatus(page.status)}
+          detail={page.category || "Uncategorized"}
+          compact
+          valueMuted
+        />
+        <PageMetric icon={CalendarDays} label="Added" value={addedDate} />
+        <PageMetric icon={ListTree} label="Last indexed" value={indexedDate} />
       </section>
 
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold leading-none tracking-tight">Listed In Sitemaps</h2>
-          <p className="text-sm text-muted-foreground">
-            Sitemaps that include this page URL.
-          </p>
+      <div className="pt-8">
+        <CrawlerDataPanel url={page.url} />
+      </div>
+
+      <div className="pt-8">
+        <section className="space-y-4">
+        <header className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Network className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-xl font-semibold tracking-tight">Discovery status</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">Where Neup Search found this page.</p>
+        </header>
+
+        <div>
+          {discoveryCards.map((card, index) => {
+            const cornerClass = index === 0
+              ? "rounded-t-lg rounded-b-none"
+              : index === discoveryCards.length - 1
+                ? "rounded-b-lg rounded-t-none"
+                : "rounded-none"
+
+            return (
+              <DiscoveryCard
+                key={card.title}
+                icon={card.icon}
+                title={card.title}
+                description={card.description}
+                cornerClass={cornerClass}
+              />
+            )
+          })}
         </div>
-        <div className="space-y-3">
-          {sitemapReferences.length === 0 && (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                This page has not been found in a sitemap yet.
-            </div>
-          )}
-          {sitemapReferences.map((reference) => (
-            <Card key={reference.sitemapUrl} className="transition-colors hover:bg-muted/50">
-              <CardContent className="p-4">
-                <Link
-                  href={reference.sitemapUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block break-all text-sm font-medium hover:text-primary"
-                >
-                  {reference.sitemapUrl}
-                </Link>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
   )
 }

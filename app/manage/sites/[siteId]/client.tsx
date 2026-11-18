@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react"
 import { useFormStatus } from "react-dom"
-import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, resumePendingCrawl, getSiteCrawlStatus, deleteSite, pauseSiteCrawl, resumePausedSiteCrawl } from "@/app/manage/sites/actions"
+import { cancelCrawl, summarizeSiteAction, resumePendingCrawl, getSiteCrawlStatus, deleteSite, pauseSiteCrawl, resumePausedSiteCrawl } from "@/app/manage/sites/actions"
 import { Button } from "@neup/components/ui/button"
 import { Badge } from "@neup/components/ui/badge"
 import { Loader2 } from "lucide-react"
@@ -116,18 +116,6 @@ export function LiveCrawlStatus({ siteId, initialStatus }: { siteId: string, ini
     )
 }
 
-export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, siteUrl: string, status: string }) {
-    return (
-        <form action={crawlSite}>
-            <input type="hidden" name="siteId" value={siteId} />
-            <input type="hidden" name="siteUrl" value={siteUrl} />
-            <SubmitButton disabled={status === "crawling" || status === "paused"}>
-                {status === "crawling" ? "Crawling..." : "Force Scrape"}
-            </SubmitButton>
-        </form>
-    )
-}
-
 export function ResumeCrawlButton({ siteId, status }: { siteId: string, status: string }) {
     return (
         <form action={resumePendingCrawl}>
@@ -154,7 +142,7 @@ export function ResumePausedSiteButton({ siteId }: { siteId: string }) {
     return (
         <form action={resumePausedSiteCrawl}>
             <input type="hidden" name="siteId" value={siteId} />
-            <SubmitButton variant="outline">Resume Site</SubmitButton>
+            <SubmitButton variant="outline">Resume Crawl</SubmitButton>
         </form>
     )
 }
@@ -179,35 +167,6 @@ export function UpdateSummaryButton({ siteId, siteUrl }: { siteId: string, siteU
                 Update Summary
             </SubmitButton>
         </form>
-    )
-}
-
-export function DeletePagesButton({ siteId, siteName }: { siteId: string, siteName: string }) {
-    return (
-         <AlertDialog>
-            <AlertDialogTrigger asChild>
-                <Button variant="destructive" className="bg-red-700 hover:bg-red-800">Delete All Pages</Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-                <form action={deletePagesForSite}>
-                    <input type="hidden" name="siteId" value={siteId} />
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This action cannot be undone. This will permanently delete all indexed pages for <strong>{siteName}</strong> from your database.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction asChild>
-                            <SubmitButton variant="destructive">
-                                Continue
-                            </SubmitButton>
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </form>
-            </AlertDialogContent>
-        </AlertDialog>
     )
 }
 
