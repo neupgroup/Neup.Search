@@ -2,7 +2,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
 
-const workflowStatuses = ["discovered", "crawling", "crawled", "analyzing", "analyzed", "indexed"] as const
+const workflowStatuses = ["discovered", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"] as const
 
 // Update a page or site crawl status through the authenticated worker API.
 export async function POST(request: NextRequest) {

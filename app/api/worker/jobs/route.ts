@@ -23,14 +23,14 @@ async function readWorkerId(request: NextRequest): Promise<string | null> {
 async function claimDomain(workerId: string) {
   const now = new Date()
   const domain = await prisma.domain.findFirst({
-    where: { status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    where: { status: "toCrawl", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
     orderBy: { addedOn: "asc" },
     select: { id: true, domain: true },
   })
   if (!domain) return null
 
   const updated = await prisma.domain.updateMany({
-    where: { id: domain.id, status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+    where: { id: domain.id, status: "toCrawl", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
     data: { status: "crawling", crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
   })
   return updated.count === 1 ? domain : null
@@ -44,7 +44,7 @@ async function claimPage() {
     where: {
       domain: { is: { status: "crawling" } },
       OR: [
-        { status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },
@@ -59,7 +59,7 @@ async function claimPage() {
       id: page.id,
       domain: { is: { status: "crawling" } },
       OR: [
-        { status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },

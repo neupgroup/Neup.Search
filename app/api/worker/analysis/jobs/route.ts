@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
     where: {
       type: "text/html",
       content: { not: null },
+      domain: { is: { status: { notIn: ["discovered", "unlisted", "deleting"] } } },
       OR: [
         { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "analyzing", OR: [{ analyzedOn: null }, { analyzedOn: { lte: staleBefore } }] },
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest) {
   const claim = await prisma.page.updateMany({
     where: {
       id: page.id,
+      domain: { is: { status: { notIn: ["discovered", "unlisted", "deleting"] } } },
       OR: [
         { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "analyzing", OR: [{ analyzedOn: null }, { analyzedOn: { lte: staleBefore } }] },
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
   })
   if (claim.count !== 1) return workerApiSuccess({ job: null })
 
-  await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["crawled", "analyzed", "indexed"] } }, data: { status: "analyzing" } })
+  await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["crawling", "crawled", "analyzing", "analyzed", "indexed"] } }, data: { status: "analyzing" } })
 
   await prisma.crawlerWorker.upsert({
     where: { id: workerId },

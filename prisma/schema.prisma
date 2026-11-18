@@ -10,11 +10,14 @@ datasource db {
 
 enum WorkflowStatus {
   discovered
+  toCrawl
   crawling
   crawled
   analyzing
   analyzed
   indexed
+  unlisted
+  deleting
 }
 
 enum CrawlerWorkerStatus {

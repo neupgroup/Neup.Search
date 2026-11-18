@@ -37,7 +37,7 @@ export type ManagedDomain = {
   id: string
   url: string
   description: string
-  status: "discovered" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed"
+  status: "discovered" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" | "unlisted" | "deleting"
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number
@@ -1827,6 +1827,7 @@ export async function runPageCrawler(
   // Persist the shared lifecycle stages for both queued and manually requested crawls.
   let claimedOn = options.claimedOn
   let activeStage: PageFlowStage = "discovered"
+  const pageEligibility = { status: { notIn: ["discovered", "unlisted", "deleting"] as const } }
   const reportPageFlowStage = async (stage: PageFlowStage) => {
     activeStage = stage
     await setPageFlowStage(pageId, stage)
@@ -1911,8 +1912,9 @@ export async function runPageCrawler(
   const claim = await prisma.page.updateMany({
     where: {
       id: pageId,
+      ...pageEligibility,
       OR: [
-        { status: { in: ["discovered", "crawled", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
     },
@@ -1936,7 +1938,7 @@ export async function runPageCrawler(
     clearInterval(heartbeat)
     const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, crawledOn: true, domainId: true } })
     if (currentPage?.status === "crawling" && currentPage.crawledOn?.getTime() === claimedOn.getTime()) {
-      await prisma.page.updateMany({ where: { id: pageId, status: "crawling", crawledOn: claimedOn }, data: { status: "discovered", crawlLeaseUntil: null } })
+      await prisma.page.updateMany({ where: { id: pageId, status: "crawling", crawledOn: claimedOn }, data: { status: "toCrawl", crawlLeaseUntil: null } })
     } else if (currentPage && ["crawled", "analyzed", "indexed"].includes(currentPage.status)) {
       await prisma.page.updateMany({ where: { id: pageId, status: currentPage.status, crawledOn: currentPage.crawledOn }, data: { crawlLeaseUntil: null } })
     }
@@ -2100,6 +2102,7 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
       select: { status: true, details: true, crawlLeaseUntil: true },
     })
     if (!domain) throw new Error("Domain not found.")
+    if (["discovered", "unlisted", "deleting"].includes(domain.status)) throw new Error("This site is not listed for crawling.")
     if (domain.status === "crawling" || (domain.crawlLeaseUntil && domain.crawlLeaseUntil > new Date())) {
       throw new Error("This domain is already being crawled.")
     }
@@ -2108,17 +2111,17 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
       await transaction.page.updateMany({
         where: {
           domainId: siteId,
-          status: { in: ["crawled", "analyzed", "indexed"] },
+          status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] },
           OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: new Date() } }],
         },
-        data: { status: "discovered", crawlLeaseUntil: null },
+        data: { status: "toCrawl", crawlLeaseUntil: null },
       })
     }
 
     await transaction.domain.update({
       where: { id: siteId },
       data: {
-        status: "discovered",
+        status: "toCrawl",
         crawlWorkerId: null,
         crawlLeaseUntil: null,
         details: {
@@ -2148,10 +2151,15 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
   try {
     const initialDomain = await prisma.domain.findUnique({
       where: { id: siteId },
-      select: { lastCrawled: true, details: true },
+      select: { lastCrawled: true, details: true, status: true },
     })
     if (!initialDomain) throw new Error("Domain not found.")
+    if (["discovered", "unlisted", "deleting"].includes(initialDomain.status)) throw new Error("This site is not listed for crawling.")
     const isFirstCrawl = initialDomain.lastCrawled === null
+    await prisma.page.updateMany({
+      where: { domainId: siteId, status: { in: ["discovered", "crawled", "analyzing", "analyzed", "indexed"] }, domain: { status: { notIn: ["discovered", "unlisted", "deleting"] } } },
+      data: { status: "toCrawl", crawlLeaseUntil: null },
+    })
     await prisma.domain.update({
       where: { id: siteId },
       data: {
@@ -2215,7 +2223,7 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
     await prisma.domain.update({
       where: { id: siteId },
       data: {
-        status: "discovered",
+        status: "toCrawl",
         details: {
           currentActivity: `Crawl failed: ${error.message}`,
         },
@@ -2228,7 +2236,7 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
 export async function completeDomainCrawlIfIdle(siteId: string): Promise<boolean> {
   const now = new Date()
   const [pendingPages, activePageLeases, domain] = await Promise.all([
-    prisma.page.count({ where: { domainId: siteId, status: "discovered" } }),
+    prisma.page.count({ where: { domainId: siteId, status: "toCrawl" } }),
     prisma.page.count({ where: { domainId: siteId, crawlLeaseUntil: { gt: now } } }),
     prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } }),
   ])
@@ -2335,7 +2343,7 @@ export async function getNeupbotDashboardStats() {
         lastSeenAt: { gte: heartbeatCutoff },
       },
     }),
-    prisma.domain.count({ where: { status: "discovered" } }),
+    prisma.domain.count({ where: { status: "toCrawl" } }),
   ])
   return { totalSites, totalPages, activeCrawls, crawlErrors }
 }
