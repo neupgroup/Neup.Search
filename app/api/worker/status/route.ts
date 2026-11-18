@@ -25,11 +25,18 @@ export async function POST(request: NextRequest) {
   const siteId = typeof input.siteId === "string" ? input.siteId : null
   const siteUrl = typeof input.siteUrl === "string" ? input.siteUrl : null
   const currentUrl = typeof input.currentUrl === "string" ? input.currentUrl : null
-  if (typeof input.pageId === "string" && input.status === "Working") {
-    await prisma.page.updateMany({
-      where: { id: input.pageId, crawlWorkerId: input.workerId },
-      data: { crawlLeaseUntil: new Date(Date.now() + 5 * 60_000) },
-    })
+  if (typeof input.pageId === "string" && input.status === "Working" && typeof input.claimedOn === "string" && (input.pageWorkflowStatus === "crawling" || input.pageWorkflowStatus === "analyzing")) {
+    const claimedOn = new Date(input.claimedOn)
+    if (!Number.isNaN(claimedOn.getTime())) {
+      await prisma.page.updateMany({
+        where: {
+          id: input.pageId,
+          status: input.pageWorkflowStatus,
+          ...(input.pageWorkflowStatus === "crawling" ? { crawledOn: claimedOn } : { analyzedOn: claimedOn }),
+        },
+        data: { crawlLeaseUntil: new Date(Date.now() + 5 * 60_000) },
+      })
+    }
   }
   await prisma.crawlerWorker.upsert({
     where: { id: input.workerId },

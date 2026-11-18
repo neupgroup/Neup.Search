@@ -5,6 +5,7 @@ import { prepareCrawler } from "@/services/neupbot"
 
 const WORK_LEASE_MS = 5 * 60_000
 const LEASE_HEARTBEAT_MS = 10_000
+const STALE_PAGE_AGE_MS = 60 * 60_000
 
 // Keep the active worker visible while the API server processes a long crawl.
 async function refreshWorkerHeartbeat(workerId: string): Promise<void> {
@@ -36,20 +37,35 @@ async function claimDomain(workerId: string) {
 }
 
 // Atomically claim one pending page from a site that is ready to crawl.
-async function claimPage(workerId: string) {
+async function claimPage() {
   const now = new Date()
+  const staleBefore = new Date(now.getTime() - STALE_PAGE_AGE_MS)
   const page = await prisma.page.findFirst({
-    where: { status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-    orderBy: [{ domainId: "asc" }, { addedOn: "asc" }],
+    where: {
+      domain: { is: { status: "crawling" } },
+      OR: [
+        { status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
+      ],
+    },
+    orderBy: [{ domainId: "asc" }, { discoveredOn: "asc" }],
     select: { id: true, domainId: true, url: true },
   })
   if (!page) return null
 
+  const claimedOn = now
   const updated = await prisma.page.updateMany({
-    where: { id: page.id, status: "discovered", domain: { is: { status: "crawling" } }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-    data: { status: "crawling", crawlWorkerId: workerId, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
+    where: {
+      id: page.id,
+      domain: { is: { status: "crawling" } },
+      OR: [
+        { status: "discovered", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
+      ],
+    },
+    data: { status: "crawling", crawledOn: claimedOn, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
   })
-  return updated.count === 1 ? page : null
+  return updated.count === 1 ? { ...page, claimedOn: claimedOn.toISOString() } : null
 }
 
 // Claim a domain setup task or a page for an independent crawler process.
@@ -83,7 +99,7 @@ export async function POST(request: NextRequest) {
       return workerApiSuccess({ job: "domain", id: domain.id, completed: true })
     }
 
-    const page = await claimPage(workerId)
+    const page = await claimPage()
     if (!page) return workerApiSuccess({ job: null })
 
     await prisma.crawlerWorker.upsert({
@@ -98,7 +114,7 @@ export async function POST(request: NextRequest) {
     if (!pageWithDomain) return workerApiError("page_not_found", "Claimed page no longer exists.", 404)
     return workerApiSuccess({
       job: "page",
-      page: { id: page.id, siteId: page.domainId, url: page.url, domain: pageWithDomain.domain.domain },
+      page: { id: page.id, siteId: page.domainId, url: page.url, domain: pageWithDomain.domain.domain, claimedOn: page.claimedOn },
     })
   } catch (error) {
     console.error("[worker-api] Job processing failed.", error)

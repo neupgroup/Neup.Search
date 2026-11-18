@@ -15,7 +15,7 @@ const apiSecret = process.env.NEUP_WORKER_SECRET
 const appBasePath = process.env.NEXT_PUBLIC_APP_BASEPATH ?? ""
 let workerInstance: WorkerInstance | undefined
 let activity = "Starting worker."
-let activePage: { pageId: string; siteId: string; url: string } | undefined
+let activePage: { pageId: string; siteId: string; url: string; claimedOn: string; workflowStatus: "crawling" | "analyzing" } | undefined
 
 // Build an app API URL using the configured application base path.
 function getWorkerApiUrl(path: string): string {
@@ -56,6 +56,8 @@ async function updateWorkerStatus(status: WorkerStatus, signal?: AbortSignal): P
     siteId: activePage?.siteId ?? null,
     currentUrl: activePage?.url ?? null,
     pageId: activePage?.pageId ?? null,
+    claimedOn: activePage?.claimedOn ?? null,
+    pageWorkflowStatus: activePage?.workflowStatus ?? null,
   }, signal)
 }
 
@@ -72,12 +74,12 @@ function waitForNextJob(signal: AbortSignal): Promise<void> {
 
 // Fetch and parse a claimed page without accessing the database.
 async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSignal): Promise<void> {
-  if (typeof page.id !== "string" || typeof page.siteId !== "string" || typeof page.url !== "string") {
+  if (typeof page.id !== "string" || typeof page.siteId !== "string" || typeof page.url !== "string" || typeof page.claimedOn !== "string") {
     throw new Error("The crawl job did not include a valid page context.")
   }
-  activePage = { pageId: page.id, siteId: page.siteId, url: page.url }
+  activePage = { pageId: page.id, siteId: page.siteId, url: page.url, claimedOn: page.claimedOn, workflowStatus: "crawling" }
   activity = `Crawling ${page.url}.`
-  await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "crawling", activity }, signal)
+  await callWorkerApi("api/worker/crawling-status", { pageId: page.id, claimedOn: page.claimedOn, status: "crawling", activity }, signal)
   const heartbeat = setInterval(() => {
     void updateWorkerStatus("Working").catch((error) => console.error(`[crawler-worker:${workerId}] Heartbeat failed.`, error))
   }, HEARTBEAT_INTERVAL_MS)
@@ -105,6 +107,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     await callWorkerApi("api/worker/pages", {
       workerId,
       pageId: page.id,
+      claimedOn: page.claimedOn,
       finalUrl,
       statusCode: response.status,
       isHtml,
@@ -117,7 +120,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
   } catch (error) {
     activity = error instanceof Error ? `Crawl failed: ${error.message}` : "Crawl failed."
-    await callWorkerApi("api/worker/crawling-status", { pageId: page.id, status: "crawled", activity }, signal)
+    await callWorkerApi("api/worker/crawling-status", { pageId: page.id, claimedOn: page.claimedOn, status: "crawled", activity }, signal)
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
     throw error
   } finally {
@@ -145,9 +148,9 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
   const result = response && typeof response === "object" && "result" in response ? response.result : null
   const job = result && typeof result === "object" ? result as Record<string, unknown> : null
   const page = job?.page && typeof job.page === "object" ? job.page as Record<string, unknown> : null
-  if (!page || typeof page.id !== "string" || typeof page.url !== "string" || typeof page.content !== "string") return false
+  if (!page || typeof page.id !== "string" || typeof page.url !== "string" || typeof page.content !== "string" || typeof page.claimedOn !== "string") return false
 
-  activePage = { pageId: page.id, siteId: typeof page.siteId === "string" ? page.siteId : "", url: page.url }
+  activePage = { pageId: page.id, siteId: typeof page.siteId === "string" ? page.siteId : "", url: page.url, claimedOn: page.claimedOn, workflowStatus: "analyzing" }
   activity = `Generating insight for ${page.url}.`
   const heartbeat = setInterval(() => {
     void updateWorkerStatus("Working").catch((error) => console.error(`[analysis-worker:${workerId}] Heartbeat failed.`, error))
@@ -180,6 +183,7 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
     })
     await callWorkerApi("api/worker/insights", {
       pageId: page.id,
+      claimedOn: page.claimedOn,
       workerId,
       summary: insight.summary,
       category: insight.category,
@@ -189,6 +193,7 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
     activity = error instanceof Error ? `Insight failed: ${error.message}` : "Insight generation failed."
     await callWorkerApi("api/worker/crawling-status", {
       pageId: page.id,
+      claimedOn: page.claimedOn,
       status: "analyzing",
       activity,
     }, signal)

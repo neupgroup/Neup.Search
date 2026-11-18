@@ -17,22 +17,26 @@ export async function POST(request: NextRequest) {
 
   if (typeof input.pageId === "string" && input.pageId.trim()) {
     if (!workflowStatuses.includes(input.status as typeof workflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported page workflow status.")
-    const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true } })
+    if (typeof input.claimedOn !== "string" || Number.isNaN(new Date(input.claimedOn).getTime())) return workerApiError("invalid_claim", "A valid claimedOn timestamp is required for page updates.")
+    const claimedOn = new Date(input.claimedOn)
+    const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, status: true, crawledOn: true, analyzedOn: true } })
     if (!page) return workerApiError("page_not_found", "Page not found.", 404)
+    const claimTimestamp = input.status === "analyzing" || page.status === "analyzing" ? page.analyzedOn : page.crawledOn
+    if (claimTimestamp?.getTime() !== claimedOn.getTime()) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
     const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
       ? page.details as Record<string, unknown>
       : {}
-    await prisma.page.update({
-      where: { id: input.pageId },
+    const updated = await prisma.page.updateMany({
+      where: { id: input.pageId, status: page.status, ...(page.status === "analyzing" ? { analyzedOn: claimedOn } : { crawledOn: claimedOn }) },
       data: {
         status: input.status as typeof workflowStatuses[number],
-        ...(input.status === "discovered" ? { discoveredOn: new Date() } : {}),
         ...(input.status === "crawled" ? { crawledOn: new Date(), lastCrawled: new Date() } : {}),
         ...(input.status === "analyzed" ? { analyzedOn: new Date() } : {}),
         details: { ...details, ...(activity ? { currentActivity: activity } : {}), crawlFlowUpdatedAt: new Date().toISOString() },
-        ...(input.status === "crawled" || input.status === "analyzed" ? { crawlWorkerId: null, crawlLeaseUntil: null } : {}),
+        ...(input.status === "crawled" || input.status === "analyzed" ? { crawlLeaseUntil: null } : {}),
       },
     })
+    if (updated.count !== 1) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
     return workerApiSuccess({ pageId: input.pageId, status: input.status, updated: true })
   }
 

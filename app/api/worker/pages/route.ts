@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
   const input = body as Record<string, unknown>
   if (typeof input.workerId !== "string" || !input.workerId.trim()) return workerApiError("invalid_worker_id", "workerId is required.")
   if (typeof input.pageId !== "string" || !input.pageId.trim()) return workerApiError("invalid_page_id", "pageId is required.")
+  if (typeof input.claimedOn !== "string" || Number.isNaN(new Date(input.claimedOn).getTime())) return workerApiError("invalid_claim", "A valid claimedOn timestamp is required.")
   if (typeof input.finalUrl !== "string" || typeof input.content !== "string" || typeof input.html !== "string") return workerApiError("invalid_page_data", "finalUrl, content, and html are required strings.")
 
   const page = await prisma.page.findUnique({
@@ -41,6 +42,7 @@ export async function POST(request: NextRequest) {
   const nextStatus = "crawled" as const
   const crawlResultStatus = isHtml && statusCode >= 200 && statusCode < 400 ? "Indexed" : statusCode >= 400 ? "Error" : "Skipped"
   const crawledOn = new Date()
+  const claimedOn = new Date(input.claimedOn)
   const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
     ? page.details as Record<string, unknown>
     : {}
@@ -53,7 +55,7 @@ export async function POST(request: NextRequest) {
   }
 
   const savedPage = await prisma.page.updateMany({
-    where: { id: page.id, crawlWorkerId: input.workerId },
+    where: { id: page.id, status: "crawling", crawledOn: claimedOn },
     data: {
       title: typeof input.title === "string" ? input.title : null,
       description: typeof input.description === "string" ? input.description : null,
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
       },
     },
   })
-  if (savedPage.count !== 1) return workerApiError("page_lease_lost", "The page is no longer leased to this worker.", 409)
+  if (savedPage.count !== 1) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
 
   const postedLinks = Array.isArray(input.links) ? input.links.slice(0, 300) as SubmittedLink[] : []
   const internalUrls = [...new Set(postedLinks.flatMap((link) => {
@@ -121,8 +123,8 @@ export async function POST(request: NextRequest) {
     },
   })
   await prisma.page.updateMany({
-    where: { id: page.id, crawlWorkerId: input.workerId },
-    data: { crawlWorkerId: null, crawlLeaseUntil: null },
+    where: { id: page.id, status: "crawled", crawledOn },
+    data: { crawlLeaseUntil: null },
   })
 
   return workerApiSuccess({ pageId: page.id, status: nextStatus, discoveredPages: internalUrls.length })

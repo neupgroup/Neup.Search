@@ -501,6 +501,7 @@ async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<v
       status: stage,
       ...(stage === "discovered" ? { discoveredOn: new Date() } : {}),
       ...(stage === "crawled" ? { crawledOn: new Date(), lastCrawled: new Date() } : {}),
+      ...(stage === "analyzing" ? { analyzedOn: new Date() } : {}),
       ...(stage === "analyzed" ? { analyzedOn: new Date() } : {}),
       details: { ...details, crawlFlowUpdatedAt: new Date().toISOString() },
     },
@@ -719,7 +720,7 @@ async function saveSitemapPages(
   }
 }
 
-async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
+async function saveCrawledPage(pageId: string, pageData: PersistedPageData, claimedOn?: Date) {
   const existingPage = await prisma.page.findUnique({
     where: { id: pageId },
     select: { details: true, data: true },
@@ -731,8 +732,8 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
     return entry !== null && typeof entry === "object" && "kind" in entry && (entry.kind === "summary" || entry.kind === "categorization")
   }) as Prisma.InputJsonValue[] : []
 
-  await prisma.page.update({
-    where: { id: pageId },
+  const saved = await prisma.page.updateMany({
+    where: claimedOn ? { id: pageId, status: "crawling", crawledOn: claimedOn } : { id: pageId, status: "crawling" },
     data: {
       title: pageData.title ?? null,
       description: pageData.description ?? null,
@@ -753,6 +754,7 @@ async function saveCrawledPage(pageId: string, pageData: PersistedPageData) {
       },
     },
   })
+  if (saved.count !== 1) throw new Error("The page crawl claim is no longer current.")
 }
 
 // Check whether a crawled URL is the site's homepage.
@@ -774,10 +776,10 @@ function getRenderedPageContent(data: unknown): string {
 }
 
 // Generate and persist fresh page insights before the worker finishes this page job.
-async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, onActivity?: (activity: string) => Promise<void>): Promise<void> {
+async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, onActivity?: (activity: string) => Promise<void>, claimedOn?: Date): Promise<void> {
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { data: true, url: true, title: true, domainId: true, domain: { select: { categories: true } } },
+    select: { data: true, url: true, title: true, domainId: true, status: true, analyzedOn: true, domain: { select: { categories: true } } },
   })
   if (!page) throw new Error(`Page ${pageId} was not found while generating insights.`)
 
@@ -801,8 +803,12 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
   const currentPageDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
     ? currentPage.details as Record<string, unknown>
     : {}
-  await prisma.page.update({
-    where: { id: pageId },
+  const saved = await prisma.page.updateMany({
+    where: claimedOn
+      ? { id: pageId, status: "analyzing", analyzedOn: claimedOn }
+      : page.status === "analyzing" && page.analyzedOn
+        ? { id: pageId, status: "analyzing", analyzedOn: page.analyzedOn }
+        : { id: pageId, status: "analyzing" },
     data: {
       category: insight.category,
       data: [
@@ -816,8 +822,10 @@ async function saveAutomaticPageAnalysis(pageId: string, pageContent: string, on
       },
       status: "analyzed",
       analyzedOn: new Date(),
+      crawlLeaseUntil: null,
     },
   })
+  if (saved.count !== 1) throw new Error("The page analysis claim is no longer current.")
   await prisma.domain.updateMany({ where: { id: page.domainId }, data: { analyzedOn: new Date() } })
   await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["crawled", "analyzing", "analyzed", "indexed"] } }, data: { status: "analyzed" } })
   await onActivity?.(pageFlowActivity.analyzed)
@@ -838,6 +846,7 @@ async function completePageCrawlEnrichment(
       data: true,
       category: true,
       status: true,
+      analyzedOn: true,
       details: true,
       type: true,
       domainId: true,
@@ -964,7 +973,7 @@ async function completePageCrawlEnrichment(
   }
 
   try {
-    await saveAutomaticPageAnalysis(pageId, page.content, onActivity)
+  await saveAutomaticPageAnalysis(pageId, page.content, onActivity, page.analyzedOn ?? undefined)
   } catch (error) {
     if (error instanceof RequestTimeoutError) {
       await onActivity?.(`${error.message} Ignoring and continuing.`)
@@ -1256,7 +1265,7 @@ export async function getContentItemsByFileTypeSlug(
 
   try {
     const pages = await prisma.page.findMany({
-      orderBy: { addedOn: "desc" },
+      orderBy: { discoveredOn: "desc" },
       take: neededItems * 5,
       select: {
         id: true,
@@ -1536,6 +1545,7 @@ type CrawlStoredPageInput = {
   stats: CrawlResourceStats
   abortIfDomainInactive?: boolean
   onContentSave?: () => Promise<void>
+  claimedOn?: Date
   crawledUrls?: Set<string>
 }
 
@@ -1549,6 +1559,7 @@ async function crawlStoredPage({
   stats,
   abortIfDomainInactive,
   onContentSave,
+  claimedOn,
   crawledUrls = new Set<string>(),
 }: CrawlStoredPageInput) {
   let savingContent = false
@@ -1567,7 +1578,7 @@ async function crawlStoredPage({
       details: {
         skippedOn: new Date().toISOString(),
       },
-    })
+    }, claimedOn)
     return false
   }
 
@@ -1618,7 +1629,7 @@ async function crawlStoredPage({
           contentType,
           redirectLocation: targetUrl,
         },
-      })
+      }, claimedOn)
 
       if (targetUrl && !isIgnoredCrawlUrl(targetUrl)) {
         const targetPageId = await saveDiscoveredPage({
@@ -1665,7 +1676,7 @@ async function crawlStoredPage({
           kind: content?.kind || "asset",
           fileType: content?.fileType || getUrlFileType(pageUrl),
         },
-      })
+      }, claimedOn)
       return false
     }
 
@@ -1706,8 +1717,8 @@ async function crawlStoredPage({
         const currentDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
           ? currentPage.details as Record<string, unknown>
           : {}
-        await prisma.page.update({
-          where: { id: pageId },
+        await prisma.page.updateMany({
+          where: claimedOn ? { id: pageId, status: "crawling", crawledOn: claimedOn } : { id: pageId },
           data: {
             status: "crawled",
             content: null,
@@ -1751,7 +1762,7 @@ async function crawlStoredPage({
           },
         },
       },
-    })
+    }, claimedOn)
     savingContent = false
 
     await saveDiscoveredLinksAndPages(siteId, resolvedPageUrl, extractPageLinks(pageDocument), sitemapReferencesByUrl, rootHostname, stats, pageId)
@@ -1776,7 +1787,7 @@ async function crawlStoredPage({
       details: {
         error: fetchError instanceof Error ? fetchError.message : String(fetchError),
       },
-    })
+    }, claimedOn)
     return false
   }
 }
@@ -1788,9 +1799,11 @@ export async function runPageCrawler(
     leaseAlreadyClaimed?: boolean
     generateInsights?: boolean
     onActivity?: (activity: string) => Promise<void>
+    claimedOn?: Date
   } = {},
 ) {
   // Persist the shared lifecycle stages for both queued and manually requested crawls.
+  let claimedOn = options.claimedOn
   let activeStage: PageFlowStage = "discovered"
   const reportPageFlowStage = async (stage: PageFlowStage) => {
     activeStage = stage
@@ -1806,7 +1819,10 @@ export async function runPageCrawler(
       const page = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
       const resultStatus = page ? getPageResultStatus(page.status, page.details) : "Error"
       if (resultStatus === "Error" || resultStatus === "Skipped" || resultStatus === "Redirect") {
-        await prisma.page.update({ where: { id: pageId }, data: { status: "crawled" } })
+        await prisma.page.updateMany({
+          where: { id: pageId, status: "crawling", crawledOn: claimedOn },
+          data: { status: "crawled", crawledOn: new Date(), lastCrawled: new Date() },
+        })
         await options.onActivity?.("Skipping")
         return false
       }
@@ -1823,12 +1839,15 @@ export async function runPageCrawler(
         await options.onActivity?.(`${error.message} Ignoring; keeping the current stage.`)
         return false
       }
-      const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true } })
+    const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, details: true, analyzedOn: true, crawledOn: true } })
       const currentDetails = currentPage?.details && typeof currentPage.details === "object" && !Array.isArray(currentPage.details)
         ? currentPage.details as Record<string, unknown>
         : {}
-      await prisma.page.update({
-        where: { id: pageId },
+      const failureClaimWhere = currentPage?.status === "analyzing"
+        ? { id: pageId, status: "analyzing" as const, analyzedOn: currentPage.analyzedOn }
+        : { id: pageId, status: "crawling" as const, crawledOn: currentPage?.crawledOn }
+      await prisma.page.updateMany({
+        where: failureClaimWhere,
         data: {
           status: currentPage?.status === "analyzing" ? "analyzing" : "crawled",
           details: {
@@ -1852,32 +1871,39 @@ export async function runPageCrawler(
   const crawlCurrentPage = () => crawlPage(pageId, {
     updateDomainProgress: options.updateDomainProgress,
     abortIfDomainInactive: options.leaseAlreadyClaimed,
+    claimedOn,
     onContentSave: async () => {
       await options.onActivity?.("Saving Content")
     },
   })
 
   if (options.leaseAlreadyClaimed) {
+    if (!claimedOn) throw new Error("The existing page claim timestamp is required.")
     await runTrackedPageFlow(crawlCurrentPage)
     return
   }
 
-  const workerId = `manual-${randomUUID()}`
   const now = new Date()
+  claimedOn = new Date()
+  const staleBefore = new Date(now.getTime() - 60 * 60_000)
   const claim = await prisma.page.updateMany({
     where: {
       id: pageId,
-      OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }],
+      OR: [
+        { status: { in: ["discovered", "crawled", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
+      ],
     },
     data: {
-      crawlWorkerId: workerId,
+      status: "crawling",
+      crawledOn: claimedOn,
       crawlLeaseUntil: new Date(now.getTime() + 15 * 60_000),
     },
   })
   if (claim.count !== 1) throw new Error("This page is already being crawled.")
   const heartbeat = setInterval(() => {
     void prisma.page.updateMany({
-      where: { id: pageId, crawlWorkerId: workerId },
+      where: { id: pageId, status: "crawling", crawledOn: claimedOn },
       data: { crawlLeaseUntil: new Date(Date.now() + 15 * 60_000) },
     }).catch((error) => console.error(`[manual-page-crawl:${pageId}] Could not renew page lease.`, error))
   }, 60_000)
@@ -1886,17 +1912,18 @@ export async function runPageCrawler(
     await runTrackedPageFlow(crawlCurrentPage)
   } finally {
     clearInterval(heartbeat)
-    await prisma.page.updateMany({
-      where: { id: pageId, crawlWorkerId: workerId },
-      data: { crawlWorkerId: null, crawlLeaseUntil: null },
-    })
-    const page = await prisma.page.findUnique({ where: { id: pageId }, select: { domainId: true } })
-    if (page) await completeDomainCrawlIfIdle(page.domainId)
+    const currentPage = await prisma.page.findUnique({ where: { id: pageId }, select: { status: true, crawledOn: true, domainId: true } })
+    if (currentPage?.status === "crawling" && currentPage.crawledOn?.getTime() === claimedOn.getTime()) {
+      await prisma.page.updateMany({ where: { id: pageId, status: "crawling", crawledOn: claimedOn }, data: { status: "discovered", crawlLeaseUntil: null } })
+    } else if (currentPage && ["crawled", "analyzed", "indexed"].includes(currentPage.status)) {
+      await prisma.page.updateMany({ where: { id: pageId, status: currentPage.status, crawledOn: currentPage.crawledOn }, data: { crawlLeaseUntil: null } })
+    }
+    if (currentPage) await completeDomainCrawlIfIdle(currentPage.domainId)
   }
 }
 
 // Fetch and persist one page whose lease has already been claimed.
-async function crawlPage(pageId: string, options: { updateDomainProgress?: boolean; abortIfDomainInactive?: boolean; onContentSave?: () => Promise<void> }) {
+async function crawlPage(pageId: string, options: { updateDomainProgress?: boolean; abortIfDomainInactive?: boolean; onContentSave?: () => Promise<void>; claimedOn?: Date }) {
   if (!pageId) {
     throw new Error("pageId is required.")
   }
@@ -1942,6 +1969,7 @@ async function crawlPage(pageId: string, options: { updateDomainProgress?: boole
     stats,
     abortIfDomainInactive: options.abortIfDomainInactive,
     onContentSave: options.onContentSave,
+    claimedOn: options.claimedOn,
   })
 
   const pageCrawlTime = new Date()
@@ -2058,13 +2086,10 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
       await transaction.page.updateMany({
         where: {
           domainId: siteId,
+          status: { in: ["crawled", "analyzed", "indexed"] },
           OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: new Date() } }],
         },
-        data: { status: "discovered", crawlWorkerId: null, crawlLeaseUntil: null },
-      })
-      await transaction.page.updateMany({
-        where: { domainId: siteId, crawlLeaseUntil: { gt: new Date() } },
-        data: { status: "discovered" },
+        data: { status: "discovered", crawlLeaseUntil: null },
       })
     }
 
@@ -2262,7 +2287,7 @@ export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20)
     status: page.status,
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
-    createdAt: page.addedOn,
+    createdAt: page.discoveredOn ?? new Date(0),
     content: page.content || undefined,
   }))
 
@@ -2505,13 +2530,13 @@ export async function getManagedLinks(input?: {
         : undefined,
       orderBy: [
         { lastCrawled: "desc" },
-        { addedOn: "desc" },
+        { discoveredOn: "desc" },
       ],
       select: {
         id: true,
         title: true,
         url: true,
-        addedOn: true,
+        discoveredOn: true,
         lastCrawled: true,
         data: true,
         domain: {
@@ -2581,7 +2606,7 @@ export async function getManagedLinks(input?: {
           anchorText,
           titleText,
           rel,
-          firstCrawlOn: page.lastCrawled || page.addedOn,
+          firstCrawlOn: page.lastCrawled || page.discoveredOn || new Date(0),
         }
 
         if (matchesManagedLinkSearch(link, input?.search)) {
@@ -2857,7 +2882,7 @@ export async function getCrawlIssues(): Promise<CrawlIssue[]> {
     },
     orderBy: [
       { lastCrawled: "desc" },
-      { addedOn: "desc" },
+      { discoveredOn: "desc" },
     ],
     take: 200,
     include: {
@@ -2882,7 +2907,7 @@ export async function getCrawlIssues(): Promise<CrawlIssue[]> {
       type: isRedirect ? "Redirect" : isError ? "Error" : "Skipped",
       targetUrl: readRedirectTarget(page.data),
       lastCrawled: page.lastCrawled,
-      addedOn: page.addedOn,
+      addedOn: page.discoveredOn ?? new Date(0),
     }
   })
 }

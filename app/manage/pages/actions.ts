@@ -79,7 +79,7 @@ type PageRow = {
   details?: unknown
   statusCode: number | null
   lastCrawled: Date | null
-  addedOn: Date
+  discoveredOn: Date | null
   category?: string | null
   content?: string | null
   data?: unknown
@@ -226,7 +226,7 @@ function mapPage(page: PageRow): Page {
     domainStatus: page.domain.status as Page["domainStatus"],
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
-    createdAt: page.addedOn,
+    createdAt: page.discoveredOn ?? new Date(0),
     summary: readSummary(page.data),
     category: page.category,
     content: page.content || undefined,
@@ -284,7 +284,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20, propert
           ...baseWhere,
           url: { in: searchFilter.candidates, mode: "insensitive" as const },
         },
-        orderBy: { addedOn: "desc" },
+        orderBy: { discoveredOn: "desc" },
         skip: (resolvedPage - 1) * urlSearchLimit,
         take: urlSearchLimit,
         include: { domain: { select: { domain: true, status: true } } },
@@ -314,7 +314,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20, propert
       const resolvedPage = Math.min(currentPage, totalPages)
       const rows = await prisma.page.findMany({
         where: pagesWhere,
-        orderBy: { addedOn: "desc" },
+        orderBy: { discoveredOn: "desc" },
         skip: (resolvedPage - 1) * urlSearchLimit,
         take: urlSearchLimit,
         include: { domain: { select: { domain: true, status: true } } },
@@ -343,7 +343,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20, propert
           ...baseWhere,
           statusCode: searchFilter.statusCode,
         },
-        orderBy: { addedOn: "desc" },
+        orderBy: { discoveredOn: "desc" },
         skip: (resolvedPage - 1) * limit,
         take: limit,
         include: { domain: { select: { domain: true, status: true } } },
@@ -363,7 +363,7 @@ export async function getPages(search?: string, page = 1, pageSize = 20, propert
     const resolvedPage = Math.min(currentPage, totalPages)
     const rows = await prisma.page.findMany({
       where,
-      orderBy: { addedOn: "desc" },
+      orderBy: { discoveredOn: "desc" },
       skip: (resolvedPage - 1) * limit,
       take: limit,
       include: { domain: { select: { domain: true, status: true } } },

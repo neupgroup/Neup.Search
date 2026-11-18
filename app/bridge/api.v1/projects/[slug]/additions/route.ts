@@ -36,9 +36,9 @@ export const GET = withJsonErrors(async (request: NextRequest, context: { params
   const additions = await prisma.page.findMany({
     where: {
       domainId: project.id,
-      addedOn: { gte: from, lte: to ?? new Date() },
+      discoveredOn: { gte: from, lte: to ?? new Date() },
     },
-    orderBy: { addedOn: "asc" },
+    orderBy: { discoveredOn: "asc" },
     select: {
       id: true,
       url: true,
@@ -46,7 +46,7 @@ export const GET = withJsonErrors(async (request: NextRequest, context: { params
       description: true,
       status: true,
       statusCode: true,
-      addedOn: true,
+      discoveredOn: true,
       lastCrawled: true,
     },
   })

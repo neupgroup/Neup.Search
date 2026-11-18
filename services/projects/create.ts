@@ -39,7 +39,7 @@ export async function createDomainForCrawl(input: { url: string; description?: s
     const now = new Date()
     await transaction.page.updateMany({
       where: { domainId: domain.id, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-      data: { status: "discovered", crawlWorkerId: null, crawlLeaseUntil: null },
+      data: { status: "discovered", crawlLeaseUntil: null },
     })
     await transaction.page.updateMany({
       where: { domainId: domain.id, crawlLeaseUntil: { gt: now } },

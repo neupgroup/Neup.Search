@@ -57,12 +57,10 @@ Fields:
 > category: string, nullable, varchar(256);
 > status: enum(discovered, crawling, crawled, analyzing, analyzed, indexed);
 > statusCode: int, nullable;
-> addedOn: timestamp, default: now;
 > discoveredOn: timestamp, nullable;
 > analyzedOn: timestamp, nullable;
 > crawledOn: timestamp, nullable;
 > lastCrawled: timestamp, nullable;
-> crawlWorkerId: string, nullable;
 > crawlLeaseUntil: timestamp, nullable;
 
 Table: Links, Model: Link

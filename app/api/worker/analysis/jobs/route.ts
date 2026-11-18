@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
 
 const ANALYSIS_LEASE_MS = 5 * 60_000
+const STALE_ANALYSIS_AGE_MS = 60 * 60_000
 
 // Request one page insight job and return only the context needed by the analysis worker.
 export async function POST(request: NextRequest) {
@@ -15,16 +16,17 @@ export async function POST(request: NextRequest) {
   }
   const workerId = body.workerId.trim()
   const now = new Date()
+  const staleBefore = new Date(now.getTime() - STALE_ANALYSIS_AGE_MS)
   const page = await prisma.page.findFirst({
     where: {
       type: "text/html",
       content: { not: null },
       OR: [
         { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
-        { status: "analyzing", OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "analyzing", OR: [{ analyzedOn: null }, { analyzedOn: { lte: staleBefore } }] },
       ],
     },
-    orderBy: { lastCrawled: "asc" },
+    orderBy: { discoveredOn: "asc" },
     select: {
       id: true,
       url: true,
@@ -39,12 +41,14 @@ export async function POST(request: NextRequest) {
   const claim = await prisma.page.updateMany({
     where: {
       id: page.id,
-      status: { in: ["crawled", "analyzing"] },
-      OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }],
+      OR: [
+        { status: "crawled", details: { path: ["crawlResultStatus"], equals: "Indexed" }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
+        { status: "analyzing", OR: [{ analyzedOn: null }, { analyzedOn: { lte: staleBefore } }] },
+      ],
     },
     data: {
       status: "analyzing",
-      crawlWorkerId: workerId,
+      analyzedOn: now,
       crawlLeaseUntil: new Date(now.getTime() + ANALYSIS_LEASE_MS),
     },
   })
@@ -66,7 +70,7 @@ export async function POST(request: NextRequest) {
     const homepageCandidates = await prisma.page.findMany({
       where: { domainId: page.domainId, type: "text/html", content: { not: null }, status: { in: ["crawled", "analyzing", "analyzed", "indexed"] } },
       select: { url: true, title: true, content: true, data: true },
-      orderBy: { addedOn: "asc" },
+      orderBy: { discoveredOn: "asc" },
       take: 20,
     })
     const homepage = homepageCandidates.find((candidate) => {
@@ -103,6 +107,7 @@ export async function POST(request: NextRequest) {
       title: page.title || "",
       content: page.content || "",
       siteCategory: page.domain.categories,
+      claimedOn: now.toISOString(),
     },
     siteProfile,
   })

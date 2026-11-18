@@ -58,7 +58,7 @@ async function getSearchResults(searchQuery: string): Promise<SearchResult[]> {
   try {
     const pages = await prisma.page.findMany({
       take: 1000,
-      orderBy: { addedOn: "desc" },
+      orderBy: { discoveredOn: "desc" },
       select: {
         url: true,
         title: true,

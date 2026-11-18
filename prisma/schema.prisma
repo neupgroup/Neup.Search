@@ -108,17 +108,15 @@ model Page {
   category        String?   @db.VarChar(256)
   status          WorkflowStatus
   statusCode      Int?
-  addedOn         DateTime  @default(now())
   discoveredOn    DateTime?
   analyzedOn      DateTime?
   crawledOn       DateTime?
   lastCrawled     DateTime?
-  crawlWorkerId   String?
   crawlLeaseUntil DateTime?
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
-  @@index([addedOn])
+  @@index([discoveredOn])
   @@index([domainId])
   @@index([status])
   @@index([url])
