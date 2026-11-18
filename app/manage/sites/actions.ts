@@ -7,6 +7,8 @@ import type { Page } from "../pages/actions"
 import { logError } from "@/lib/logica-logging"
 import {
   cancelDomainCrawl,
+  pauseDomainCrawl,
+  resumePausedDomainCrawl,
   deleteManagedDomain,
   deleteDomainPages,
   getNeupbotDashboardStats,
@@ -110,6 +112,28 @@ export async function resumePendingCrawl(formData: FormData) {
   }
 
   await resumePendingCrawler(siteId)
+  revalidatePath(`/manage/sites/${siteId}`)
+  revalidatePath("/manage/pages")
+}
+
+// Pause a site's pages and prevent its crawl and analysis jobs from running.
+export async function pauseSiteCrawl(formData: FormData) {
+  const siteId = formData.get("siteId") as string
+  if (!siteId) throw new Error("siteId is required.")
+
+  await pauseDomainCrawl(siteId)
+  revalidatePath("/manage/sites")
+  revalidatePath(`/manage/sites/${siteId}`)
+  revalidatePath("/manage/pages")
+}
+
+// Restore a paused site's page states and return it to the crawl queue.
+export async function resumePausedSiteCrawl(formData: FormData) {
+  const siteId = formData.get("siteId") as string
+  if (!siteId) throw new Error("siteId is required.")
+
+  await resumePausedDomainCrawl(siteId)
+  revalidatePath("/manage/sites")
   revalidatePath(`/manage/sites/${siteId}`)
   revalidatePath("/manage/pages")
 }

@@ -46,6 +46,7 @@ async function claimPage() {
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
+      domain: { is: { status: { not: "paused" } } },
     },
     orderBy: [{ domainId: "asc" }, { discoveredOn: "asc" }],
     select: { id: true, domainId: true, url: true },
@@ -60,6 +61,7 @@ async function claimPage() {
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
       ],
+      domain: { is: { status: { not: "paused" } } },
     },
     data: { status: "crawling", crawledOn: claimedOn, crawlLeaseUntil: new Date(now.getTime() + WORK_LEASE_MS) },
   })

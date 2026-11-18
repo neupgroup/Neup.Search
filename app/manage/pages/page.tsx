@@ -17,6 +17,7 @@ function getStatusDotClass(page: Page) {
         return "bg-orange-500"
     }
     if (page.status === "analyzed" || page.status === "indexed") return "bg-green-500"
+    if (page.status === "paused") return "bg-amber-500"
     if (page.status === "discovered" && page.domainStatus === "crawling") return "bg-slate-400"
     return "bg-blue-500"
 }
@@ -138,6 +139,7 @@ async function PagesList({search, page, pageSize, propertyId}: {search?: string,
                                         <div className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold leading-tight">
                                         {page.title}
                                         </div>
+                                        {page.status === "paused" && <Badge convey="warning">Paused</Badge>}
                                     </div>
                                     <Badge variant="secondary" className="ml-6 w-fit">
                                         Category: {page.category || "Uncategorized"}

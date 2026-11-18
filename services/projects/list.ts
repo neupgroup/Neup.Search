@@ -1,9 +1,74 @@
 import { prisma } from "@/lib/prisma"
+import type { Prisma } from "@prisma/client"
 import type { WorkflowStatus } from "@prisma/client"
 import { mapDomainToSite, enrichManagedDomainBranding } from "@/services/projects/view"
 import type { ManagedDomain, PaginatedDomains, PaginatedPropertyOptions } from "@/services/neupbot"
 
-const domainStatuses: WorkflowStatus[] = ["discovered", "requesting", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"]
+const domainStatuses: WorkflowStatus[] = ["discovered", "requesting", "requested", "paused", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"]
+
+export type ManagedSiteStatusFilter = "all" | "requesting" | "requested" | "paused" | "crawling" | "indexed" | "other"
+
+const managedSiteStatusFilters: Record<Exclude<ManagedSiteStatusFilter, "all" | "other">, WorkflowStatus[]> = {
+  requesting: ["requesting"],
+  requested: ["requested", "toCrawl"],
+  paused: ["paused"],
+  crawling: ["crawling"],
+  indexed: ["indexed", "analyzed", "crawled"],
+}
+
+// Build status and search filters for the managed sites table.
+function getManagedSiteWhere(search: string | undefined, status: ManagedSiteStatusFilter): Prisma.DomainWhereInput {
+  const conditions: Prisma.DomainWhereInput[] = []
+  if (status !== "all") {
+    conditions.push(status === "other"
+      ? { status: { notIn: [...managedSiteStatusFilters.requesting, ...managedSiteStatusFilters.requested, ...managedSiteStatusFilters.paused, ...managedSiteStatusFilters.crawling, ...managedSiteStatusFilters.indexed] } }
+      : { status: { in: managedSiteStatusFilters[status] } })
+  }
+  if (search) {
+    const matchingStatuses = domainStatuses.filter((value) => value.toLowerCase().includes(search.toLowerCase()))
+    conditions.push({
+      OR: [
+        { domain: { contains: search, mode: "insensitive" } },
+        { name: { contains: search, mode: "insensitive" } },
+        ...(matchingStatuses.length > 0 ? [{ status: { in: matchingStatuses } }] : []),
+      ],
+    })
+  }
+  return conditions.length > 0 ? { AND: conditions } : {}
+}
+
+// Load site counts and one added-date-sorted page for the manage sites screen.
+export async function getManagedSitesPage(input: { search?: string; status?: ManagedSiteStatusFilter; page?: number; pageSize?: number }) {
+  const status = input.status ?? "all"
+  const search = input.search?.trim() || undefined
+  const pageSize = Math.min(100, Math.max(10, Math.floor(input.pageSize ?? 20)))
+  const requestedPage = Math.max(1, Math.floor(input.page ?? 1))
+  const where = getManagedSiteWhere(search, status)
+  const [totalCount, statusCounts] = await Promise.all([
+    prisma.domain.count({ where }),
+    prisma.domain.groupBy({ by: ["status"], _count: { _all: true } }),
+  ])
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const page = Math.min(requestedPage, totalPages)
+  const sites = await prisma.domain.findMany({
+    where,
+    orderBy: [{ addedOn: "desc" }, { id: "desc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+    include: { _count: { select: { pages: true } } },
+  })
+  const counts = Object.fromEntries(statusCounts.map((row) => [row.status, row._count._all])) as Partial<Record<WorkflowStatus, number>>
+  const filters = {
+    all: statusCounts.reduce((sum, row) => sum + row._count._all, 0),
+    requesting: counts.requesting ?? 0,
+    requested: (counts.requested ?? 0) + (counts.toCrawl ?? 0),
+    paused: counts.paused ?? 0,
+    crawling: counts.crawling ?? 0,
+    indexed: (counts.indexed ?? 0) + (counts.analyzed ?? 0) + (counts.crawled ?? 0),
+    other: statusCounts.filter((row) => ![...managedSiteStatusFilters.requesting, ...managedSiteStatusFilters.requested, ...managedSiteStatusFilters.paused, ...managedSiteStatusFilters.crawling, ...managedSiteStatusFilters.indexed].includes(row.status)).reduce((sum, row) => sum + row._count._all, 0),
+  }
+  return { sites: sites.map(mapDomainToSite), totalCount, totalPages, page, pageSize, filters }
+}
 
 // Search domain status labels alongside domain names and hostnames.
 function getDomainSearchWhere(search?: string) {

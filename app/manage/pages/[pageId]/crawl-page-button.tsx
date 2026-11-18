@@ -10,7 +10,7 @@ const initialCrawlState: CrawlPageActionState = { success: false }
 const minimumStartingMs = 300
 
 // Display the same stage ring and completion check as the insights button.
-export function CrawlPageButton({ pageId, initiallyCrawling }: { pageId: string; initiallyCrawling: boolean }) {
+export function CrawlPageButton({ pageId, initiallyCrawling, isPaused = false }: { pageId: string; initiallyCrawling: boolean; isPaused?: boolean }) {
   const [state, action, pending] = useActionState(crawlPageAction, initialCrawlState)
   const [progress, setProgress] = useState<PageProgress | null>(null)
   const startedAt = useRef<number | null>(null)
@@ -52,9 +52,9 @@ export function CrawlPageButton({ pageId, initiallyCrawling }: { pageId: string;
         type="submit"
         variant="outline"
         size="icon"
-        disabled={pending || isCrawling}
-        title={isCrawling ? "Page crawl in progress" : pending ? progress?.label || "Starting" : progress?.percent === 100 ? "Complete" : "Crawl Page"}
-        aria-label={isCrawling ? "Page crawl in progress" : pending ? progress?.label || "Starting" : progress?.percent === 100 ? "Complete" : "Crawl Page"}
+        disabled={pending || isCrawling || isPaused}
+        title={isPaused ? "This page is paused" : isCrawling ? "Page crawl in progress" : pending ? progress?.label || "Starting" : progress?.percent === 100 ? "Complete" : "Crawl Page"}
+        aria-label={isPaused ? "This page is paused" : isCrawling ? "Page crawl in progress" : pending ? progress?.label || "Starting" : progress?.percent === 100 ? "Complete" : "Crawl Page"}
       >
         {isCrawling
           ? <LoaderCircle className="h-4 w-4 animate-spin" />

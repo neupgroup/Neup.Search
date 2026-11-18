@@ -5,6 +5,14 @@ import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/
 
 type SubmittedLink = { url: string; text?: string; rel?: string }
 
+// Choose a new page's state from its target site's current crawl state.
+async function getInitialPageStatus(domainId: string): Promise<"paused" | "toCrawl" | "discovered"> {
+  const domain = await prisma.domain.findUnique({ where: { id: domainId }, select: { status: true } })
+  if (domain?.status === "paused") return "paused"
+  if (domain && ["requesting", "requested"].includes(domain.status)) return "toCrawl"
+  return "discovered"
+}
+
 // Convert a posted link URL to a normalized absolute URL on the crawled site.
 function normalizeInternalLink(value: string, pageUrl: string, hostname: string): string | null {
   try {
@@ -95,7 +103,14 @@ export async function POST(request: NextRequest) {
       : await prisma.page.findFirst({ where: { domainId: targetDomainId, url: targetUrl }, select: { id: true } })
     if ((targetDomainId === page.domainId && item.type === "link") || item.type !== "link") {
       targetPage ??= await prisma.page.create({
-        data: { domainId: targetDomainId, url: targetUrl, type: item.type === "link" ? "text/html" : item.type, status: targetDomainId === page.domainId && ["requesting", "requested"].includes(page.domain.status) ? "toCrawl" : "discovered", discoveredOn: new Date(), details: {} },
+        data: {
+          domainId: targetDomainId,
+          url: targetUrl,
+          type: item.type === "link" ? "text/html" : item.type,
+          status: await getInitialPageStatus(targetDomainId),
+          discoveredOn: new Date(),
+          details: {},
+        },
         select: { id: true },
       })
     }

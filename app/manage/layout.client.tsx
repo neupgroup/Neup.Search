@@ -33,6 +33,7 @@ function ManageLayoutContent({ children }: { children: ReactNode }) {
 
   const sidebarLinks: SidebarLink[] = [
     { href: buildManageHref("/manage/projects"), label: "Projects", icon: Globe },
+    { href: buildManageHref("/manage/sites"), label: "Sites", icon: Globe },
     { href: buildManageHref("/manage"), label: "Dashboard", icon: Home },
     { href: buildManageHref("/manage/neupbot"), label: "NeupBot", icon: Bot },
     { href: buildManageHref("/manage/pages"), label: "Indexed Pages", icon: FileText },

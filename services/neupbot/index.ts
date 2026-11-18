@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio"
 import { randomUUID } from "node:crypto"
-import type { Prisma } from "@prisma/client"
+import type { Prisma, WorkflowStatus } from "@prisma/client"
 import { assist } from "@neup/logica/assist"
 import { logError } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
@@ -37,7 +37,7 @@ export type ManagedDomain = {
   id: string
   url: string
   description: string
-  status: "discovered" | "requesting" | "requested" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" | "unlisted" | "deleting"
+  status: "discovered" | "requesting" | "requested" | "paused" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" | "unlisted" | "deleting"
   lastCrawled: string | null
   createdAt: Date
   pagesCrawled?: number
@@ -69,6 +69,7 @@ export type ManagedPage = {
 
 // Read the HTTP crawl result separately from the page's current workflow status.
 function getPageResultStatus(status: string, details: unknown): ManagedPage["status"] {
+  if (status === "paused") return "paused"
   if (details && typeof details === "object" && !Array.isArray(details) && "crawlResultStatus" in details) {
     const crawlResultStatus = details.crawlResultStatus
     if (crawlResultStatus === "Indexed" || crawlResultStatus === "Error" || crawlResultStatus === "Pending" || crawlResultStatus === "Skipped" || crawlResultStatus === "Redirect") {
@@ -469,6 +470,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
   }
 
   const site = await prisma.domain.findUnique({ where: { id: input.siteId }, select: { status: true } })
+  const initialPageStatus = site?.status === "paused" ? "paused" : site && ["requesting", "requested"].includes(site.status) ? "toCrawl" : "discovered"
   const created = await prisma.page.create({
     data: {
       domainId: input.siteId,
@@ -478,7 +480,7 @@ async function saveDiscoveredPage(input: DiscoveredPageInput) {
       type: input.fileType || content?.fileType || "unknown",
       details,
       content: null,
-      status: site && ["requesting", "requested"].includes(site.status) ? "toCrawl" : "discovered",
+      status: initialPageStatus,
       discoveredOn: new Date(),
       statusCode: null,
     },
@@ -495,8 +497,8 @@ async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<v
     ? page.details as Record<string, unknown>
     : {}
   const { crawlFlowStatus: _legacyFlowStatus, ...details } = currentDetails
-  await prisma.page.update({
-    where: { id: pageId },
+  const update = await prisma.page.updateMany({
+    where: { id: pageId, status: { not: "paused" } },
     data: {
       status: stage,
       ...(stage === "discovered" ? { discoveredOn: new Date() } : {}),
@@ -506,6 +508,7 @@ async function setPageFlowStage(pageId: string, stage: PageFlowStage): Promise<v
       details: { ...details, crawlFlowUpdatedAt: new Date().toISOString() },
     },
   })
+  if (update.count !== 1) throw new Error("The page has been paused.")
 }
 
 type DiscoveredLinkInput = {
@@ -1914,6 +1917,7 @@ export async function runPageCrawler(
   const claim = await prisma.page.updateMany({
     where: {
       id: pageId,
+      domain: { is: { status: { not: "paused" } } },
       OR: [
         { status: { in: ["toCrawl", "crawled", "analyzing", "analyzed", "indexed"] }, OR: [{ crawlLeaseUntil: null }, { crawlLeaseUntil: { lte: now } }] },
         { status: "crawling", OR: [{ crawledOn: null }, { crawledOn: { lte: staleBefore } }] },
@@ -2038,6 +2042,7 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
   })
   if (!domain) throw new Error("Domain not found.")
   if (["unlisted", "deleting"].includes(domain.status)) throw new Error("This site is not listed for crawling.")
+  if (domain.status === "paused") throw new Error("This site is paused.")
   await prisma.domain.updateMany({ where: { id: siteId, status: "discovered" }, data: { status: "requesting" } })
 
   const stats: CrawlResourceStats = { internalResourcesFound: 0, externalResourcesFound: 0 }
@@ -2078,8 +2083,8 @@ export async function runSinglePageCrawler(siteId: string, pageUrl: string) {
     where: { id: pageId },
     select: { id: true, url: true, title: true, status: true, statusCode: true, lastCrawled: true, details: true },
   })
-  await prisma.domain.update({
-    where: { id: siteId },
+  await prisma.domain.updateMany({
+    where: { id: siteId, status: { not: "paused" } },
     data: {
       status: "crawled",
       lastCrawled: new Date(),
@@ -2108,6 +2113,7 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
     })
     if (!domain) throw new Error("Domain not found.")
     if (["unlisted", "deleting"].includes(domain.status)) throw new Error("This site is not listed for crawling.")
+    if (domain.status === "paused") throw new Error("This site is paused. Resume it before queuing a crawl.")
     if (domain.status === "crawling" || (domain.crawlLeaseUntil && domain.crawlLeaseUntil > new Date())) {
       throw new Error("This domain is already being crawled.")
     }
@@ -2143,6 +2149,8 @@ export async function queueDomainCrawl(siteId: string, refreshExistingPages = fa
 
 // Requeue pending pages for workers instead of crawling them inside the request process.
 export async function resumePendingCrawler(siteId: string) {
+  const domain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true } })
+  if (domain?.status === "paused") return resumePausedDomainCrawl(siteId)
   await queueDomainCrawl(siteId)
 }
 
@@ -2162,9 +2170,10 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
     })
     if (!initialDomain) throw new Error("Domain not found.")
     if (["unlisted", "deleting"].includes(initialDomain.status)) throw new Error("This site is not listed for crawling.")
+    if (initialDomain.status === "paused") return
     const isFirstCrawl = initialDomain.lastCrawled === null
-    await prisma.domain.update({
-      where: { id: siteId },
+    const started = await prisma.domain.updateMany({
+      where: { id: siteId, status: { not: "paused" } },
       data: {
         status: "requesting",
         details: {
@@ -2178,6 +2187,7 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
         },
       },
     })
+    if (started.count !== 1) return
 
     const robotsTxt = await getRobotsTxt(siteUrl)
     const { sitemaps } = robotsTxt ? parseRobotsTxt(robotsTxt) : { sitemaps: [], disallow: [] }
@@ -2217,16 +2227,11 @@ export async function prepareCrawler(siteId: string, siteUrl: string) {
       externalResourcesFound: stats.externalResourcesFound,
     })
     await promoteDiscoveredPagesToCrawl(siteId)
-    await prisma.domain.update({
-      where: { id: siteId },
-      data: {
-        status: "crawling",
-      },
-    })
+    await prisma.domain.updateMany({ where: { id: siteId, status: { not: "paused" } }, data: { status: "crawling" } })
   } catch (error: any) {
     await logError(error, "crawlSite")
-    await prisma.domain.update({
-      where: { id: siteId },
+    await prisma.domain.updateMany({
+      where: { id: siteId, status: { not: "paused" } },
       data: {
         status: "toCrawl",
         details: {
@@ -2364,6 +2369,90 @@ export async function cancelDomainCrawl(siteId: string) {
       },
     },
   })
+}
+
+// Pause a site and its pages so crawler and analysis workers skip the entire site.
+export async function pauseDomainCrawl(siteId: string): Promise<void> {
+  const domain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } })
+  if (!domain) throw new Error("Domain not found.")
+  if (["unlisted", "deleting"].includes(domain.status)) throw new Error("This site cannot be paused in its current status.")
+
+  await prisma.domain.update({
+    where: { id: siteId },
+    data: {
+      status: "paused",
+      crawlWorkerId: null,
+      crawlLeaseUntil: null,
+      details: { ...readDetails(domain.details), currentActivity: "Paused by user." },
+    },
+  })
+
+  while (true) {
+    const pausedCount = await prisma.$transaction(async (transaction) => {
+      const pages = await transaction.page.findMany({
+        where: { domainId: siteId, status: { notIn: ["paused", "unlisted", "deleting"] } },
+        orderBy: { discoveredOn: "asc" },
+        take: 100,
+        select: { id: true, status: true, details: true },
+      })
+      for (const page of pages) {
+        const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
+          ? page.details as Record<string, unknown>
+          : {}
+        await transaction.page.updateMany({
+          where: { id: page.id, status: page.status },
+          data: {
+            status: "paused",
+            crawlLeaseUntil: null,
+            details: { ...details, pausedFromStatus: page.status } as Prisma.InputJsonObject,
+          },
+        })
+      }
+      return pages.length
+    })
+    if (pausedCount === 0) break
+  }
+}
+
+// Restore a paused site's page states and queue the site for workers again.
+export async function resumePausedDomainCrawl(siteId: string): Promise<void> {
+  const domain = await prisma.domain.findUnique({ where: { id: siteId }, select: { status: true, details: true } })
+  if (!domain) throw new Error("Domain not found.")
+  if (domain.status !== "paused") throw new Error("This site is not paused.")
+
+  await prisma.domain.updateMany({
+    where: { id: siteId, status: "paused" },
+    data: { status: "requesting", details: { ...readDetails(domain.details), currentActivity: "Resuming crawl..." } },
+  })
+
+  while (true) {
+    const restoredCount = await prisma.$transaction(async (transaction) => {
+      const pages = await transaction.page.findMany({
+        where: { domainId: siteId, status: "paused" },
+        orderBy: { discoveredOn: "asc" },
+        take: 100,
+        select: { id: true, details: true },
+      })
+      for (const page of pages) {
+        const details = page.details && typeof page.details === "object" && !Array.isArray(page.details)
+          ? page.details as Record<string, unknown>
+          : {}
+        const previousStatus = details.pausedFromStatus
+        const restoredStatus: WorkflowStatus = typeof previousStatus === "string" && ["toCrawl", "crawled", "analyzed", "indexed"].includes(previousStatus)
+          ? previousStatus as WorkflowStatus
+          : "toCrawl"
+        const { pausedFromStatus: _pausedFromStatus, ...restoredDetails } = details
+        await transaction.page.updateMany({
+          where: { id: page.id, status: "paused" },
+          data: { status: restoredStatus, crawlLeaseUntil: null, details: restoredDetails as Prisma.InputJsonObject },
+        })
+      }
+      return pages.length
+    })
+    if (restoredCount === 0) break
+  }
+
+  await promoteDiscoveredPagesToCrawl(siteId)
 }
 
 export async function deleteDomainPages(siteId: string) {
@@ -2539,9 +2628,9 @@ export async function getManagedLinks(input?: {
     const pages = await prisma.page.findMany({
       where: input?.propertyId
         ? input.type === "incoming"
-          ? { NOT: { domainId: input.propertyId } }
-          : { domainId: input.propertyId }
-        : undefined,
+          ? { NOT: { domainId: input.propertyId }, status: { not: "paused" } }
+          : { domainId: input.propertyId, status: { not: "paused" } }
+        : { status: { not: "paused" } },
       orderBy: [
         { lastCrawled: "desc" },
         { discoveredOn: "desc" },

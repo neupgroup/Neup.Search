@@ -16,7 +16,7 @@ export type Page = {
   title: string
   siteUrl: string
   status: string
-  domainStatus?: "discovered" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed"
+  domainStatus?: "discovered" | "requesting" | "requested" | "paused" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed"
   statusCode: number | null
   lastIndexed: string | null
   createdAt: Date
@@ -387,11 +387,13 @@ export async function getBacklinks(pageUrl?: string): Promise<Backlink[]> {
         id: true,
         url: true,
         title: true,
+        status: true,
       },
     })
     const sourcePageByUrl = new Map(sourcePages.map((page) => [page.url, page]))
+    const pausedSourceUrls = new Set(sourcePages.filter((page) => page.status === "paused").map((page) => page.url))
 
-    return links.map((link) => ({
+    return links.filter((link) => !pausedSourceUrls.has(link.linkFrom)).map((link) => ({
       id: link.id,
       sourceUrl: link.linkFrom,
       sourceTitle: sourcePageByUrl.get(link.linkFrom)?.title || link.linkFrom,

@@ -8,7 +8,8 @@ import { Button } from "@neup/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@neup/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@neup/components/ui/table"
 import { notFound, redirect } from "next/navigation"
-import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, DeleteSiteButton, ResumeCrawlButton, LiveCrawlStatus } from "./client"
+import { ArrowLeft } from "lucide-react"
+import { RecrawlButton, CancelCrawlButton, UpdateSummaryButton, DeletePagesButton, DeleteSiteButton, ResumeCrawlButton, LiveCrawlStatus, PauseSiteButton, ResumePausedSiteButton } from "./client"
 
 function readPositiveInteger(value: string | string[] | undefined, fallback: number) {
   const rawValue = Array.isArray(value) ? value[0] : value
@@ -48,6 +49,9 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
 
   return (
     <div className="grid gap-6">
+      <Link href="/manage/sites" className="inline-flex w-fit items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> All sites
+      </Link>
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -68,7 +72,8 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
           <div className="flex flex-col gap-2 items-end shrink-0">
              <div className="flex gap-2">
                 <RecrawlButton siteId={site.id} siteUrl={site.url} status={site.status} />
-                <ResumeCrawlButton siteId={site.id} status={site.status} />
+                {site.status !== "paused" && <ResumeCrawlButton siteId={site.id} status={site.status} />}
+                {site.status === "paused" ? <ResumePausedSiteButton siteId={site.id} /> : !["unlisted", "deleting"].includes(site.status) ? <PauseSiteButton siteId={site.id} /> : null}
                 {site.status === "crawling" && (
                    <CancelCrawlButton siteId={site.id} />
                 )}
@@ -99,8 +104,8 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
 
       <Card>
         <CardHeader>
-          <CardTitle>Indexed Pages</CardTitle>
-          <CardDescription>A list of all pages indexed for this site.</CardDescription>
+          <CardTitle>Site pages</CardTitle>
+          <CardDescription>Pages discovered, crawled, and indexed for this site.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>

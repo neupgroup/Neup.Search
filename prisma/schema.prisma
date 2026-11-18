@@ -12,6 +12,7 @@ enum WorkflowStatus {
   discovered
   requesting
   requested
+  paused
   toCrawl
   crawling
   crawled

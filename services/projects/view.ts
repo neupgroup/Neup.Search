@@ -11,6 +11,7 @@ export function readDetails(details: unknown): DomainDetails {
 
 // Keep page result labels stable while the database status tracks flow progress.
 function readPageResultStatus(status: string, details: unknown): string {
+  if (status === "paused") return "paused"
   if (details && typeof details === "object" && !Array.isArray(details) && "crawlResultStatus" in details) {
     const resultStatus = details.crawlResultStatus
     if (typeof resultStatus === "string") return resultStatus

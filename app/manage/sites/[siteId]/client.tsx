@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react"
 import { useFormStatus } from "react-dom"
-import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, resumePendingCrawl, getSiteCrawlStatus, deleteSite } from "@/app/manage/sites/actions"
+import { crawlSite, cancelCrawl, summarizeSiteAction, deletePagesForSite, resumePendingCrawl, getSiteCrawlStatus, deleteSite, pauseSiteCrawl, resumePausedSiteCrawl } from "@/app/manage/sites/actions"
 import { Button } from "@neup/components/ui/button"
 import { Badge } from "@neup/components/ui/badge"
 import { Loader2 } from "lucide-react"
@@ -121,7 +121,7 @@ export function RecrawlButton({ siteId, siteUrl, status }: { siteId: string, sit
         <form action={crawlSite}>
             <input type="hidden" name="siteId" value={siteId} />
             <input type="hidden" name="siteUrl" value={siteUrl} />
-            <SubmitButton disabled={status === "crawling"}>
+            <SubmitButton disabled={status === "crawling" || status === "paused"}>
                 {status === "crawling" ? "Crawling..." : "Force Scrape"}
             </SubmitButton>
         </form>
@@ -132,9 +132,29 @@ export function ResumeCrawlButton({ siteId, status }: { siteId: string, status: 
     return (
         <form action={resumePendingCrawl}>
             <input type="hidden" name="siteId" value={siteId} />
-            <SubmitButton variant="outline" disabled={status === "crawling"}>
+            <SubmitButton variant="outline" disabled={status === "crawling" || status === "paused"}>
                 {status === "crawling" ? "Crawling..." : "Resume Crawling"}
             </SubmitButton>
+        </form>
+    )
+}
+
+// Pause all pages for this site and stop new crawl or analysis work.
+export function PauseSiteButton({ siteId }: { siteId: string }) {
+    return (
+        <form action={pauseSiteCrawl}>
+            <input type="hidden" name="siteId" value={siteId} />
+            <SubmitButton variant="outline">Pause Site</SubmitButton>
+        </form>
+    )
+}
+
+// Resume a paused site and put its pages back into the worker queue.
+export function ResumePausedSiteButton({ siteId }: { siteId: string }) {
+    return (
+        <form action={resumePausedSiteCrawl}>
+            <input type="hidden" name="siteId" value={siteId} />
+            <SubmitButton variant="outline">Resume Site</SubmitButton>
         </form>
     )
 }

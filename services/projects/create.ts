@@ -35,6 +35,7 @@ export async function createDomainForCrawl(input: { url: string; description?: s
     })
     if (!currentDomain) throw new Error("Domain not found after creation.")
     if (["unlisted", "deleting"].includes(currentDomain.status)) throw new Error("This site is not listed for crawling.")
+    if (currentDomain.status === "paused") return false
     if (currentDomain.status === "crawling" || (currentDomain.crawlLeaseUntil && currentDomain.crawlLeaseUntil > new Date())) return false
 
     await transaction.domain.update({

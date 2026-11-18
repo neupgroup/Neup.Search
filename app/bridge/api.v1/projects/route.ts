@@ -12,7 +12,7 @@ export const GET = withJsonErrors(async (request: NextRequest) => {
           OR: [
             { domain: { contains: query, mode: "insensitive" } },
             { name: { contains: query, mode: "insensitive" } },
-            ...(["discovered", "requesting", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed"].includes(query.toLowerCase()) ? [{ status: query.toLowerCase() as "discovered" | "requesting" | "requested" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" }] : []),
+            ...(["discovered", "requesting", "requested", "paused", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed"].includes(query.toLowerCase()) ? [{ status: query.toLowerCase() as "discovered" | "requesting" | "requested" | "paused" | "toCrawl" | "crawling" | "crawled" | "analyzing" | "analyzed" | "indexed" }] : []),
           ],
         }
       : undefined,
