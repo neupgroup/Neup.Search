@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
+import { writeNeupbotLog } from "@/lib/logica-logging"
 
 const pageWorkflowStatuses = ["discovered", "requesting", "requested", "toCrawl", "crawling", "crawled", "analyzing", "analyzed", "indexed", "unlisted", "deleting"] as const
 const siteWorkflowStatuses = [...pageWorkflowStatuses, "paused"] as const
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     if (!pageWorkflowStatuses.includes(input.status as typeof pageWorkflowStatuses[number])) return workerApiError("invalid_status", "status is not a supported page workflow status.")
     if (typeof input.claimedOn !== "string" || Number.isNaN(new Date(input.claimedOn).getTime())) return workerApiError("invalid_claim", "A valid claimedOn timestamp is required for page updates.")
     const claimedOn = new Date(input.claimedOn)
-    const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, status: true, crawledOn: true, analyzedOn: true } })
+    const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, status: true, crawledOn: true, analyzedOn: true, url: true, domain: { select: { domain: true } } } })
     if (!page) return workerApiError("page_not_found", "Page not found.", 404)
     const claimTimestamp = input.status === "analyzing" || page.status === "analyzing" ? page.analyzedOn : page.crawledOn
     if (claimTimestamp?.getTime() !== claimedOn.getTime()) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
@@ -38,6 +39,15 @@ export async function POST(request: NextRequest) {
       },
     })
     if (updated.count !== 1) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
+    if (["crawling", "crawled", "analyzing", "analyzed"].includes(input.status)) {
+      await writeNeupbotLog({
+        level: activity?.includes("(failed)") ? "ERROR" : "INFO",
+        event: input.status,
+        domain: page.domain.domain,
+        pageUrl: page.url,
+        details: activity ? { activity } : undefined,
+      })
+    }
     return workerApiSuccess({ pageId: input.pageId, status: input.status, updated: true })
   }
 

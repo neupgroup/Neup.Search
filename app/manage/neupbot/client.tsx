@@ -3,11 +3,12 @@
 import { useEffect, useRef, useState } from "react"
 import { useFormStatus } from "react-dom"
 import Link from "next/link"
-import { Activity, Check, Pause } from "lucide-react"
+import { Activity, Check, Pause, ScrollText } from "lucide-react"
 import { Badge } from "@neup/components/ui/badge"
 import { Card, CardContent } from "@neup/components/ui/card"
 import { Button } from "@neup/components/ui/button"
-import { getLiveNeupbotWorkers, getPauseAllCrawlsStatus, pauseAllCrawls } from "./actions"
+import { getLiveNeupbotWorkers, getNeupbotLogs, getPauseAllCrawlsStatus, pauseAllCrawls } from "./actions"
+import type { NeupbotLogEntry } from "@/lib/logica-logging"
 
 type WorkerActivity = Awaited<ReturnType<typeof getLiveNeupbotWorkers>>[number]
 
@@ -243,12 +244,17 @@ function NeupbotWorkerCard({ worker }: { worker: WorkerActivity }) {
 export function NeupbotLivePanel({
   initialWorkers,
   initialPausePendingSites,
+  initialLogs,
+  property,
 }: {
   initialWorkers: WorkerActivity[]
   initialPausePendingSites: number | null
+  initialLogs: NeupbotLogEntry[]
+  property: string
 }) {
   const [workers, setWorkers] = useState(initialWorkers)
   const [pausePendingSites, setPausePendingSites] = useState(initialPausePendingSites)
+  const [logs, setLogs] = useState(initialLogs)
   const activeJobs = workers.filter((worker) => worker.status === "Working" && worker.siteId && worker.currentUrl)
   const activeAnalyses = activeJobs.filter((worker) => getWorkerProgress(worker)?.label.startsWith("Analyzing Page"))
   const activeCrawls = activeJobs.length - activeAnalyses.length
@@ -281,14 +287,23 @@ export function NeupbotLivePanel({
       }
     }
 
+    const refreshLogs = async () => {
+      if (!property) return
+      const nextLogs = await getNeupbotLogs(property)
+      if (isMounted) setLogs(nextLogs)
+    }
+
     refreshCrawls()
+    refreshLogs()
     const interval = window.setInterval(refreshCrawls, refreshIntervalMs)
+    const logInterval = window.setInterval(refreshLogs, refreshIntervalMs)
 
     return () => {
       isMounted = false
       window.clearInterval(interval)
+      window.clearInterval(logInterval)
     }
-  }, [])
+  }, [property])
 
   return (
     <div className="space-y-4">
@@ -321,6 +336,28 @@ export function NeupbotLivePanel({
               <NeupbotWorkerCard key={worker.id} worker={worker} />
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <ScrollText className="h-4 w-4" />
+          <h2 className="text-lg font-semibold">Today&apos;s logs{property ? ` · ${property}` : ""}</h2>
+        </div>
+        {!property ? (
+          <Card className="border-dashed"><CardContent className="p-5 text-sm text-muted-foreground">Select a property to view its logs.</CardContent></Card>
+        ) : logs.length === 0 ? (
+          <Card className="border-dashed"><CardContent className="p-5 text-sm text-muted-foreground">No logs have been written for this property today.</CardContent></Card>
+        ) : (
+          <Card><CardContent className="max-h-[32rem] space-y-2 overflow-auto p-3">
+            {logs.map((entry, index) => (
+              <div key={`${entry.timestamp}-${index}`} className="border-b pb-2 last:border-0">
+                <p className="text-sm"><span className={entry.level === "ERROR" ? "font-semibold text-destructive" : "font-semibold"}>{entry.level}</span> · {entry.event} · {new Date(entry.timestamp).toLocaleTimeString()}</p>
+                {entry.pageUrl && <p className="truncate text-xs text-muted-foreground">{entry.pageUrl}</p>}
+                {entry.details !== undefined && <pre className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{typeof entry.details === "string" ? entry.details : JSON.stringify(entry.details, null, 2)}</pre>}
+              </div>
+            ))}
+          </CardContent></Card>
         )}
       </section>
 

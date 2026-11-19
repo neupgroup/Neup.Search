@@ -2,6 +2,7 @@ import { NextRequest } from "next/server"
 import { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
+import { writeNeupbotLog } from "@/lib/logica-logging"
 
 type SubmittedLink = { url: string; text?: string; rel?: string }
 
@@ -140,6 +141,14 @@ export async function POST(request: NextRequest) {
   await prisma.page.updateMany({
     where: { id: page.id, status: "crawled", crawledOn },
     data: { crawlLeaseUntil: null },
+  })
+
+  await writeNeupbotLog({
+    level: crawlResultStatus === "Error" ? "ERROR" : "INFO",
+    event: "crawled and saved",
+    domain: page.domain.domain,
+    pageUrl: page.url,
+    details: { statusCode, crawlResultStatus, discoveredPages },
   })
 
   return workerApiSuccess({ pageId: page.id, status: nextStatus, discoveredPages })

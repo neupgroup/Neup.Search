@@ -1,13 +1,15 @@
 import { Bot } from "lucide-react"
-import { getLiveNeupbotWorkers, getPauseAllCrawlsStatus } from "./actions"
+import { getLiveNeupbotWorkers, getNeupbotLogs, getPauseAllCrawlsStatus } from "./actions"
 import { NeupbotLivePanel } from "./client"
 
 export const dynamic = "force-dynamic"
 
-export default async function ManageNeupbotPage() {
-  const [workers, pauseStatus] = await Promise.all([
+export default async function ManageNeupbotPage({ searchParams }: { searchParams: Promise<{ property?: string }> }) {
+  const { property = "" } = await searchParams
+  const [workers, pauseStatus, logs] = await Promise.all([
     getLiveNeupbotWorkers(),
     getPauseAllCrawlsStatus(),
+    property ? getNeupbotLogs(property) : Promise.resolve([]),
   ])
 
   return (
@@ -22,7 +24,7 @@ export default async function ManageNeupbotPage() {
         </p>
       </div>
 
-      <NeupbotLivePanel initialWorkers={workers} initialPausePendingSites={pauseStatus.remainingSites} />
+      <NeupbotLivePanel initialWorkers={workers} initialPausePendingSites={pauseStatus.remainingSites} initialLogs={logs} property={property} />
     </div>
   )
 }

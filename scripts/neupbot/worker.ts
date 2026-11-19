@@ -2,6 +2,8 @@ import { worker, type WorkerInstance } from "@neup/worker"
 import { generatePageInsight } from "@/services/intelligence/page-insight"
 import { generateSiteBasics } from "@/services/intelligence/site-profile-generation"
 import { load } from "cheerio"
+import { writeNeupbotLog } from "@/lib/logica-logging"
+import { prisma } from "@/lib/prisma"
 
 type WorkerType = "crawler" | "analysis"
 type WorkerStatus = "Starting" | "Idle" | "Working" | "Stopped" | "Error"
@@ -48,11 +50,16 @@ async function callWorkerApi(path: string, payload: Record<string, unknown>, sig
   })
   const responseBody: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    const error = responseBody && typeof responseBody === "object" && "error" in responseBody ? responseBody.error : null
-    const description = error && typeof error === "object" && "description" in error && typeof error.description === "string"
-      ? error.description
+    const apiError = responseBody && typeof responseBody === "object" && "error" in responseBody ? responseBody.error : null
+    const description = apiError && typeof apiError === "object" && "description" in apiError && typeof apiError.description === "string"
+      ? apiError.description
       : `Worker API request failed with HTTP ${response.status}.`
-    throw new Error(description)
+    const error = new Error(description)
+    if (activePage?.siteId) {
+      const domain = await prisma.domain.findUnique({ where: { id: activePage.siteId }, select: { domain: true } }).catch(() => null)
+      await writeNeupbotLog({ level: "ERROR", event: `${path} failed`, domain: domain?.domain ?? activePage.siteId, pageUrl: activePage.url, details: { message: description } }).catch(() => undefined)
+    }
+    throw error
   }
   return responseBody
 }

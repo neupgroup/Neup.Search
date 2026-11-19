@@ -2300,7 +2300,7 @@ export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20)
     orderBy: { url: "asc" },
     skip: (resolvedPage - 1) * resolvedPageSize,
     take: resolvedPageSize,
-    include: { domain: { select: { domain: true, name: true } } },
+    include: { domain: { select: { domain: true, name: true, categories: true } } },
   })
 
   const pages = rows.map((page): ManagedPage => ({
@@ -2313,6 +2313,7 @@ export async function getPagesForDomain(siteId: string, page = 1, pageSize = 20)
     statusCode: page.statusCode,
     lastIndexed: page.lastCrawled ? page.lastCrawled.toLocaleDateString() : "Never",
     createdAt: page.discoveredOn ?? new Date(0),
+    category: page.category ?? page.domain.categories,
     content: page.content || undefined,
   }))
 

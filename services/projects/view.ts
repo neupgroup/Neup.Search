@@ -79,6 +79,69 @@ export async function getManagedDomainCrawlStatus(siteId: string) {
   }
 }
 
+// Load only the property fields shown in the manage dashboard header.
+export async function getPropertyDashboardProperty(propertyId: string): Promise<ManagedDomain | null> {
+  const domain = await prisma.domain.findUnique({
+    where: { id: propertyId },
+    select: { id: true, domain: true, name: true, status: true, lastCrawled: true, addedOn: true, details: true, categories: true },
+  })
+  return domain ? mapDomainToSite(domain) : null
+}
+
+// Load one overview count so dashboard metrics can stream independently.
+export async function getPropertyDashboardCount(propertyId: string, metric: "totalPages" | "indexedPages" | "links" | "crawlErrors"): Promise<number> {
+  if (metric === "totalPages") return prisma.page.count({ where: { domainId: propertyId } })
+  if (metric === "indexedPages") return prisma.page.count({ where: { domainId: propertyId, status: { in: ["analyzed", "indexed"] } } })
+  if (metric === "links") return prisma.resource.count({ where: { fromDomain: propertyId, type: "link" } })
+  return prisma.page.count({ where: { domainId: propertyId, OR: [{ statusCode: { gte: 300 } }, { details: { path: ["crawlResultStatus"], equals: "Error" } }, { details: { path: ["crawlResultStatus"], equals: "Skipped" } }, { details: { path: ["crawlResultStatus"], equals: "Redirect" } }] } })
+}
+
+// Count previewable content using only the page and asset fields needed to classify it.
+export async function getPropertyDashboardContentSampleCount(propertyId: string): Promise<number> {
+  const pages = await prisma.page.findMany({
+    where: { domainId: propertyId },
+    orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }],
+    take: 200,
+    select: { id: true, url: true },
+  })
+  if (pages.length === 0) return 0
+
+  const resources = await prisma.resource.findMany({
+    where: {
+      fromDomain: propertyId,
+      sourcePageId: { in: pages.map((page) => page.id) },
+      type: { in: ["image", "video", "audio", "iframe"] },
+    },
+    select: { sourcePageId: true, linkTo: true, type: true, anchorText: true },
+  })
+  const resourcesByPage = new Map<string, typeof resources>()
+  for (const resource of resources) {
+    if (!resource.sourcePageId) continue
+    const pageResources = resourcesByPage.get(resource.sourcePageId) ?? []
+    pageResources.push(resource)
+    resourcesByPage.set(resource.sourcePageId, pageResources)
+  }
+
+  const seenContentUrls = new Set<string>()
+  let contentSamples = 0
+  for (const page of pages) {
+    if (contentSamples >= 12) break
+    if (classifyContentUrl(page.url) && !seenContentUrls.has(page.url)) {
+      seenContentUrls.add(page.url)
+      contentSamples++
+    }
+    if (contentSamples >= 12) break
+    for (const asset of readContentAssets(resourcesByPage.get(page.id) ?? [], page.url)) {
+      const content = asset.kind && asset.fileType ? { kind: asset.kind, fileType: asset.fileType } : classifyContentUrl(asset.url)
+      if (!content || seenContentUrls.has(asset.url)) continue
+      seenContentUrls.add(asset.url)
+      contentSamples++
+      if (contentSamples >= 12) break
+    }
+  }
+  return contentSamples
+}
+
 // Load the project dashboard and its recent crawl, link, and content summaries.
 export async function getPropertyDashboard(propertyId: string): Promise<PropertyDashboard | null> {
   const domain = await prisma.domain.findUnique({ where: { id: propertyId }, include: { _count: { select: { pages: true } } } })

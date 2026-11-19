@@ -1,15 +1,20 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { logError } from "@/lib/logica-logging"
+import { logError, readNeupbotLogs, type NeupbotLogEntry } from "@/lib/logica-logging"
 import { prisma } from "@/lib/prisma"
 import { getLiveNeupbotWorkers as getWorkers } from "@/services/neupbot"
+
+// Return today's local worker log entries for the selected property.
+export async function getNeupbotLogs(domain: string): Promise<NeupbotLogEntry[]> {
+  return readNeupbotLogs(domain)
+}
 
 export async function getLiveNeupbotWorkers() {
   try {
     return await getWorkers()
   } catch (error) {
-    await logError(error, "getLiveNeupbotWorkers")
+    await logError(error, "getLiveNeupbotWorkers", "unknown-domain")
     return []
   }
 }
@@ -22,7 +27,7 @@ export async function getPauseAllCrawlsStatus() {
     })
     return { remainingSites }
   } catch (error) {
-    await logError(error, "getPauseAllCrawlsStatus")
+    await logError(error, "getPauseAllCrawlsStatus", "unknown-domain")
     return { remainingSites: null }
   }
 }
@@ -47,7 +52,7 @@ export async function pauseAllCrawls() {
     revalidatePath("/manage/pages")
     return { pausedSites: result.count, remainingSites }
   } catch (error) {
-    await logError(error, "pauseAllCrawls")
+    await logError(error, "pauseAllCrawls", "unknown-domain")
     throw new Error("Could not pause all crawls.")
   }
 }

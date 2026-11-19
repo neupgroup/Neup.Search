@@ -2,6 +2,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { authorizeWorkerRequest, workerApiError, workerApiSuccess } from "@/lib/worker-api"
 import { Prisma } from "@prisma/client"
+import { writeNeupbotLog } from "@/lib/logica-logging"
 
 // Save a completed page summary and category from an authenticated worker.
 export async function POST(request: NextRequest) {
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
   const category = typeof input.category === "string" ? input.category : null
 
   const claimedOn = new Date(input.claimedOn)
-  const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, domainId: true, status: true, analyzedOn: true } })
+  const page = await prisma.page.findUnique({ where: { id: input.pageId }, select: { details: true, domainId: true, status: true, analyzedOn: true, url: true, domain: { select: { domain: true } } } })
   if (!page) return workerApiError("page_not_found", "Page not found.", 404)
   if (page.status !== "analyzing" || page.analyzedOn?.getTime() !== claimedOn.getTime()) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
   const addedOn = new Date().toISOString()
@@ -39,5 +40,6 @@ export async function POST(request: NextRequest) {
   if (savedPage.count !== 1) return workerApiError("page_lease_lost", "The page claim is no longer current.", 409)
   await prisma.domain.updateMany({ where: { id: page.domainId }, data: { analyzedOn } })
   await prisma.domain.updateMany({ where: { id: page.domainId, status: { in: ["analyzing", "crawled", "analyzed", "indexed"] } }, data: { status: "analyzed" } })
+  await writeNeupbotLog({ level: "INFO", event: "analyzed and saved", domain: page.domain.domain, pageUrl: page.url, details: { category } })
   return workerApiSuccess({ pageId: input.pageId, updated: true })
 }

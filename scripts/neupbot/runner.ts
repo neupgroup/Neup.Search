@@ -10,11 +10,19 @@ let isStopping = false
 
 // Read a configured worker count and constrain it to a safe positive integer.
 function getWorkerCount(environmentKey: string): number {
-  const configuredValue = process.env[environmentKey]
-  if (configuredValue === undefined) return DEFAULT_WORKER_COUNT
-  if (!/^[1-9]\d*$/.test(configuredValue)) return DEFAULT_WORKER_COUNT
+  const configuredValue = process.env[environmentKey]?.trim()
+  if (!configuredValue) return DEFAULT_WORKER_COUNT
+  if (!/^\d+$/.test(configuredValue)) {
+    throw new Error(`[worker-runner] ${environmentKey} must be a positive whole number; received ${JSON.stringify(configuredValue)}.`)
+  }
   const count = Number(configuredValue)
-  return Number.isSafeInteger(count) ? Math.min(count, MAX_WORKERS_PER_TYPE) : DEFAULT_WORKER_COUNT
+  if (!Number.isSafeInteger(count) || count < 1) {
+    throw new Error(`[worker-runner] ${environmentKey} must be between 1 and ${MAX_WORKERS_PER_TYPE}; received ${JSON.stringify(configuredValue)}.`)
+  }
+  if (count > MAX_WORKERS_PER_TYPE) {
+    console.warn(`[worker-runner] ${environmentKey}=${count} exceeds the supported limit; using ${MAX_WORKERS_PER_TYPE}.`)
+  }
+  return Math.min(count, MAX_WORKERS_PER_TYPE)
 }
 
 // Start and supervise one crawler or analysis worker process.

@@ -4,7 +4,7 @@
 
 The runner starts independent crawler and analysis worker pools and restarts workers that exit. Crawler workers fetch and parse pages, then submit page content and discovered links to the save API. Saved HTML pages enter `reported-errors` for the analysis pool. Analysis workers fetch page context through the API, generate summaries and categories, save them through the API, and mark pages `completed-flow`. The two pools run independently so insight generation does not block page crawling.
 
-Set `NEUP_WORKER_CRAWLER_WORKERS` and `NEUP_WORKER_ANALYSIS_WORKERS` to configure each pool. Both default to one; counts above 32 are capped. The local `.env` uses five workers in each pool. The runner waits up to ten seconds for workers to stop cleanly before sending a forced termination signal.
+Set `NEUP_WORKER_CRAWLER_WORKERS` and `NEUP_WORKER_ANALYSIS_WORKERS` in the environment used to launch `npm run crawler:runner` to configure each pool. Both default to one when unset or blank. Counts must be positive whole numbers; counts above 32 are capped with a warning. The runner reads these values at startup, so restart it after changing them. The runner waits up to ten seconds for workers to stop cleanly before sending a forced termination signal.
 
 Worker processes use the authenticated application API and do not connect to PostgreSQL. Configure `NEUP_WORKER_SECRET` to a long random value in the application environment. Configure `NEUP_WORKER_API_URL` as the application origin for separately run worker processes; the worker adds `NEXT_PUBLIC_APP_BASEPATH` when calling the API. Keep the secret private.
 
