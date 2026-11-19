@@ -42,26 +42,23 @@ function getWorkerApiUrl(path: string): string {
 // Send an authenticated request to the application worker API.
 async function callWorkerApi(path: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   if (!apiSecret) throw new Error("NEUP_WORKER_SECRET must be configured for the standalone worker.")
-  const response = await fetch(getWorkerApiUrl(path), {
+  const requestUrl = getWorkerApiUrl(path)
+  const response = await fetch(requestUrl, {
     method: "POST",
     headers: { authorization: `Bearer ${apiSecret}`, "content-type": "application/json" },
     body: JSON.stringify(payload),
     signal,
   })
-  const responseBody: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    const apiError = responseBody && typeof responseBody === "object" && "error" in responseBody ? responseBody.error : null
-    const description = apiError && typeof apiError === "object" && "description" in apiError && typeof apiError.description === "string"
-      ? apiError.description
-      : `Worker API request failed with HTTP ${response.status}.`
-    const error = new Error(description)
+    const message = `Got ${response.status} at ${requestUrl}`
+    console.error(`[${workerType}-worker:${workerId}] ${message}`)
     if (activePage?.siteId) {
       const domain = await prisma.domain.findUnique({ where: { id: activePage.siteId }, select: { domain: true } }).catch(() => null)
-      await writeNeupbotLog({ level: "ERROR", event: `${path} failed`, domain: domain?.domain ?? activePage.siteId, pageUrl: activePage.url, details: { message: description } }).catch(() => undefined)
+      await writeNeupbotLog({ level: "ERROR", event: `${path} failed`, domain: domain?.domain ?? activePage.siteId, pageUrl: activePage.url, details: { message } }).catch(() => undefined)
     }
-    throw error
+    throw new Error(message)
   }
-  return responseBody
+  return response.json()
 }
 
 // Update this worker's status and current page through the API.
@@ -100,6 +97,7 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
   const heartbeat = setInterval(() => {
     void updateWorkerStatus("Working").catch((error) => console.error(`[crawler-worker:${workerId}] Heartbeat failed.`, error))
   }, HEARTBEAT_INTERVAL_MS)
+  let isBadGateway = false
 
   try {
     const response = await fetch(page.url, {
@@ -108,6 +106,12 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
       signal,
     })
     const finalUrl = response.url || page.url
+    if (response.status === 502) {
+      const message = `Crawling failed with status 502 at ${finalUrl}`
+      console.error(`[crawler-worker:${workerId}] ${message}`)
+      isBadGateway = true
+      throw new Error(message)
+    }
     const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? ""
     const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml"
     const responseText = await response.text()
@@ -146,9 +150,13 @@ async function crawlClaimedPage(page: Record<string, unknown>, signal: AbortSign
     }, signal)
     await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
   } catch (error) {
-    activity = error instanceof Error ? `Crawling Page (failed): ${error.message}` : "Crawling Page (failed)"
-    await callWorkerApi("api/worker/crawling-status", { pageId: page.id, claimedOn: page.claimedOn, status: "crawled", activity }, signal)
-    await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
+    activity = isBadGateway
+      ? "Crawling Page (failed)"
+      : error instanceof Error ? `Crawling Page (failed): ${error.message}` : "Crawling Page (failed)"
+    if (!isBadGateway) {
+      await callWorkerApi("api/worker/crawling-status", { pageId: page.id, claimedOn: page.claimedOn, status: "crawled", activity }, signal)
+      await callWorkerApi("api/worker/status", { action: "complete-if-idle", siteId: page.siteId }, signal)
+    }
     throw error
   } finally {
     clearInterval(heartbeat)
@@ -198,7 +206,7 @@ async function processAnalysisJob(signal: AbortSignal): Promise<boolean> {
         await callWorkerApi("api/worker/site-insights", { siteId: siteProfile.siteId, ...basics }, signal)
         siteCategory = basics.category
       } catch (error) {
-        console.error(`[analysis-worker:${workerId}] Site profile generation failed.`, error)
+        console.error(`[analysis-worker:${workerId}] Site profile generation failed.`)
       }
     }
 
@@ -257,11 +265,16 @@ async function runWorker(signal: AbortSignal): Promise<void> {
       try {
         await updateWorkerStatus("Error", signal)
       } catch (statusError) {
-        console.error(`[${workerType}-worker:${workerId}] Status update failed.`, statusError)
+        console.error(`[${workerType}-worker:${workerId}] Status update failed: ${getErrorMessage(statusError)}`)
       }
     }
     await waitForNextJob(signal, completedTask ? WORK_TIME_GAP_MS : POLL_INTERVAL_MS)
   }
+}
+
+// Read a short safe message from an error without serializing its response or stack.
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error"
 }
 
 // Request a clean shutdown through the shared worker lifecycle API.
@@ -273,12 +286,12 @@ process.once("SIGINT", stopWorker)
 process.once("SIGTERM", stopWorker)
 workerInstance = worker.new({ id: workerId, run: ({ signal }) => runWorker(signal) })
 void workerInstance.done
-  .catch((error: unknown) => console.error(`[${workerType}-worker:${workerId}] Worker stopped after an error.`, error))
+  .catch(() => console.error(`[${workerType}-worker:${workerId}] Worker stopped after an error.`))
   .finally(async () => {
     activity = "Worker stopped."
     try {
       await updateWorkerStatus("Stopped")
     } catch (error) {
-      console.error(`[${workerType}-worker:${workerId}] Shutdown status update failed.`, error)
+      console.error(`[${workerType}-worker:${workerId}] Shutdown status update failed: ${getErrorMessage(error)}`)
     }
   })

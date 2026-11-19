@@ -51,3 +51,5 @@ certificates
 @neup/*
 !@neup/worker/
 !@neup/worker/**
+logs
+logs/*
