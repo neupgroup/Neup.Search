@@ -1,8 +1,10 @@
+import { Suspense } from "react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeft, BadgeCheck, CalendarDays, ExternalLink, Globe2, ListTree, Map, Network } from "lucide-react"
 import { Badge } from "@neup/components/ui/badge"
 import { Card, CardContent } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { getPageById, getPageDiscoveryStatus, getPageSitemapReferences } from "../actions"
 import { CrawlerDataPanel } from "./crawler-data-panel"
 import { CrawlPageButton } from "./crawl-page-button"
@@ -74,6 +76,61 @@ function DiscoveryCard({ icon: Icon, title, description, cornerClass }: {
   )
 }
 
+// Load discovery sources after the page's core metadata is available.
+async function DiscoveryStatusSection({ page }: { page: NonNullable<Awaited<ReturnType<typeof getPageById>>> }) {
+  const [sitemapReferences, discoveryStatus] = await Promise.all([
+    getPageSitemapReferences(page),
+    getPageDiscoveryStatus(page.id),
+  ])
+  const discoveryCards = [
+    ...(discoveryStatus?.outsideSiteCount
+      ? [{ icon: Globe2, title: "External links", description: `${discoveryStatus.outsideSiteCount} pages from external sites link to this page.` }]
+      : []),
+    ...(discoveryStatus?.insideSiteCount
+      ? [{ icon: Network, title: "Linked via internal pages", description: `${discoveryStatus.insideSiteCount} pages link to this page.` }]
+      : []),
+    {
+      icon: Map,
+      title: "Sitemaps",
+      description: sitemapReferences.length === 0
+        ? "No sitemap references found."
+        : sitemapReferences.map((reference) => reference.sitemapUrl).join(", "),
+    },
+  ]
+
+  return (
+    <section className="space-y-4">
+      <header className="space-y-1">
+        <div className="flex items-center gap-2">
+          <Network className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-xl font-semibold tracking-tight">Discovery status</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">Where Neup Search found this page.</p>
+      </header>
+      <div>
+        {discoveryCards.map((card, index) => {
+          const cornerClass = index === 0
+            ? "rounded-t-lg rounded-b-none"
+            : index === discoveryCards.length - 1
+              ? "rounded-b-lg rounded-t-none"
+              : "rounded-none"
+          return <DiscoveryCard key={card.title} icon={card.icon} title={card.title} description={card.description} cornerClass={cornerClass} />
+        })}
+      </div>
+    </section>
+  )
+}
+
+// Keep the discovery section shape visible while link and sitemap lookups run.
+function DiscoveryStatusSkeleton() {
+  return (
+    <section className="space-y-4" aria-label="Loading discovery status" aria-busy="true">
+      <div className="space-y-2"><Skeleton className="h-6 w-40" /><Skeleton className="h-4 w-56" /></div>
+      <div className="space-y-2">{Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-16 w-full" />)}</div>
+    </section>
+  )
+}
+
 // Show the page overview, crawler inspection, and sitemap references.
 export default async function PageDetailPage({
   params,
@@ -92,30 +149,11 @@ export default async function PageDetailPage({
 
   if (!page) notFound()
 
-  const [sitemapReferences, discoveryStatus] = await Promise.all([
-    getPageSitemapReferences(page),
-    getPageDiscoveryStatus(page.id),
-  ])
   const displaySummary = page.summary || page.description || "No summary is available for this page yet."
   const addedDate = page.createdAt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
   const indexedDate = page.lastIndexed
     ? new Date(page.lastIndexed).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
     : "Not indexed yet"
-  const discoveryCards = [
-    ...(discoveryStatus?.outsideSiteCount
-      ? [{ icon: Globe2, title: "External links", description: `${discoveryStatus.outsideSiteCount} pages from external sites link to this page.` }]
-      : []),
-    ...(discoveryStatus?.insideSiteCount
-      ? [{ icon: Network, title: "Linked via internal pages", description: `${discoveryStatus.insideSiteCount} pages link to this page.` }]
-      : []),
-    {
-      icon: Map,
-      title: "Sitemaps",
-      description: sitemapReferences.length === 0
-        ? "No sitemap references found."
-        : sitemapReferences.map((reference) => reference.sitemapUrl).join(", "),
-    },
-  ]
 
   return (
     <div className="space-y-6 pb-6">
@@ -167,35 +205,9 @@ export default async function PageDetailPage({
       </div>
 
       <div className="pt-8">
-        <section className="space-y-4">
-        <header className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Network className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-xl font-semibold tracking-tight">Discovery status</h2>
-          </div>
-          <p className="text-sm text-muted-foreground">Where Neup Search found this page.</p>
-        </header>
-
-        <div>
-          {discoveryCards.map((card, index) => {
-            const cornerClass = index === 0
-              ? "rounded-t-lg rounded-b-none"
-              : index === discoveryCards.length - 1
-                ? "rounded-b-lg rounded-t-none"
-                : "rounded-none"
-
-            return (
-              <DiscoveryCard
-                key={card.title}
-                icon={card.icon}
-                title={card.title}
-                description={card.description}
-                cornerClass={cornerClass}
-              />
-            )
-          })}
-        </div>
-        </section>
+        <Suspense fallback={<DiscoveryStatusSkeleton />}>
+          <DiscoveryStatusSection page={page} />
+        </Suspense>
       </div>
     </div>
   )

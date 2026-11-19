@@ -1,5 +1,9 @@
 import { notFound } from "next/navigation"
+import { Suspense } from "react"
+import { Card, CardContent } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { ContentList } from "./content-list"
+import { ContentFilterBar } from "./content-filter-bar"
 import {
   classifyContentSlug,
   getContentItemsByFileTypeSlug,
@@ -87,7 +91,6 @@ export default async function ManageContentPage({
     notFound()
   }
 
-  const content = await getContentItemsByFileTypeSlug(slug, readPageParam(resolvedSearchParams.page), 15, search)
   const title = formatContentTitle(contentTarget.kind, contentTarget.fileType)
   const rawBasePath = extension
     ? `/manage/content?extension=${encodeURIComponent(extension)}`
@@ -99,25 +102,66 @@ export default async function ManageContentPage({
     ...tag,
     href: appendQueryParam(tag.href, "property", propertyId),
   }))
+  const page = readPageParam(resolvedSearchParams.page)
+  const description = contentTarget.fileType
+    ? `Indexed ${contentTarget.fileType.toUpperCase()} files found in crawled pages.`
+    : contentTarget.kind
+      ? `All indexed ${contentTarget.kind} files found in crawled pages.`
+      : "All indexed media files found in crawled pages."
 
+  return (
+    <div className="space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold leading-none tracking-tight">{title}</h1>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <ContentFilterBar tags={tags} />
+      <Suspense key={`${slug}:${page}:${search || ""}`} fallback={<ContentResultsSkeleton />}>
+        <ContentResults slug={slug} page={page} search={search} basePath={basePath} propertyId={propertyId} title={title} description={description} />
+      </Suspense>
+    </div>
+  )
+}
+
+// Render content cards and pagination when the filtered content query completes.
+async function ContentResults({ slug, page, search, basePath, propertyId, title, description }: {
+  slug: string
+  page: number
+  search?: string
+  basePath: string
+  propertyId?: string
+  title: string
+  description: string
+}) {
+  const content = await getContentItemsByFileTypeSlug(slug, page, 15, search)
   return (
     <ContentList
       title={title}
-      description={
-        contentTarget.fileType
-          ? `Indexed ${contentTarget.fileType.toUpperCase()} files found in crawled pages.`
-          : contentTarget.kind
-            ? `All indexed ${contentTarget.kind} files found in crawled pages.`
-            : "All indexed media files found in crawled pages."
-      }
+      description={description}
       items={content?.items || []}
       page={content?.page || 1}
       pageSize={content?.pageSize || 15}
       hasNextPage={content?.hasNextPage || false}
       basePath={basePath}
-      tags={tags}
       search={search}
       propertyId={propertyId}
+      showHeader={false}
     />
+  )
+}
+
+// Match the content grid while its filtered resource query is pending.
+function ContentResultsSkeleton() {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading content" aria-busy="true">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <Card key={index} className="overflow-hidden">
+          <CardContent className="space-y-4 p-4">
+            <Skeleton className="aspect-video w-full" />
+            <Skeleton className="h-4 w-full" />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   )
 }

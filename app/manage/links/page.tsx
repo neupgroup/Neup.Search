@@ -8,11 +8,13 @@ Manage route for browsing crawled links by type and property.
 
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { Suspense } from "react"
 import { ExternalLink, Link2 } from "lucide-react"
 
 import { Badge } from "@neup/components/ui/badge"
 import { Button } from "@neup/components/ui/button"
 import { Card, CardContent } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { LinksFilterBar } from "./links-filter-bar"
 import {
   getManagedLinks,
@@ -168,6 +170,61 @@ function LinksList({
 
 export const dynamic = "force-dynamic"
 
+// Load the selected links and pagination after the links page shell is visible.
+async function LinksResults({
+  propertyId,
+  type,
+  search,
+  page,
+}: {
+  propertyId?: string
+  type?: ManagedLinkType
+  search?: string
+  page: number
+}) {
+  const pagination = await getManagedLinks({ propertyId, type, page, pageSize: 20, search })
+  const previousPage = Math.max(1, pagination.page - 1)
+  const nextPage = Math.min(pagination.totalPages, pagination.page + 1)
+
+  return (
+    <>
+      <LinksList links={pagination.links} propertyId={propertyId} />
+      {pagination.totalCount > 0 ? (
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            Page {pagination.page} of {pagination.totalPages} | {pagination.totalCount.toLocaleString()} links
+          </div>
+          <div className="flex justify-end gap-2">
+            <Link href={buildLinksPath({ type, propertyId, search, page: previousPage })}>
+              <Button variant="outline" disabled={pagination.page <= 1}>Previous</Button>
+            </Link>
+            <Link href={buildLinksPath({ type, propertyId, search, page: nextPage })}>
+              <Button variant="outline" disabled={pagination.page >= pagination.totalPages}>Next</Button>
+            </Link>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+// Keep the list shape visible while its database query is pending.
+function LinksResultsSkeleton() {
+  return (
+    <div className="space-y-2" aria-label="Loading links" aria-busy="true">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <Card key={index} className="border-border/60">
+          <CardContent className="space-y-3 p-4">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
 export default async function ManageLinksPage({
   searchParams,
 }: {
@@ -183,17 +240,6 @@ export default async function ManageLinksPage({
   if (typeValue && (!type || !validLinkTypes.includes(type))) {
     notFound()
   }
-
-  const pagination = await getManagedLinks({
-    propertyId,
-    type,
-    page,
-    pageSize: 20,
-    search,
-  })
-
-  const previousPage = Math.max(1, pagination.page - 1)
-  const nextPage = Math.min(pagination.totalPages, pagination.page + 1)
 
   return (
     <div className="space-y-4">
@@ -219,23 +265,9 @@ export default async function ManageLinksPage({
         </div>
       </div>
 
-      <LinksList links={pagination.links} propertyId={propertyId} />
-
-      {pagination.totalCount > 0 ? (
-        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-muted-foreground">
-            Page {pagination.page} of {pagination.totalPages} | {pagination.totalCount.toLocaleString()} links
-          </div>
-          <div className="flex justify-end gap-2">
-            <Link href={buildLinksPath({ type, propertyId, search, page: previousPage })}>
-              <Button variant="outline" disabled={pagination.page <= 1}>Previous</Button>
-            </Link>
-            <Link href={buildLinksPath({ type, propertyId, search, page: nextPage })}>
-              <Button variant="outline" disabled={pagination.page >= pagination.totalPages}>Next</Button>
-            </Link>
-          </div>
-        </div>
-      ) : null}
+      <Suspense key={`${propertyId || "all"}:${type || "all"}:${search || ""}:${page}`} fallback={<LinksResultsSkeleton />}>
+        <LinksResults propertyId={propertyId} type={type} search={search} page={page} />
+      </Suspense>
     </div>
   )
 }

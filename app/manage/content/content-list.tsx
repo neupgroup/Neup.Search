@@ -71,6 +71,7 @@ export function ContentList({
   tags,
   search,
   propertyId,
+  showHeader = true,
 }: {
   title: string
   description: string
@@ -82,6 +83,7 @@ export function ContentList({
   tags?: Array<{ label: string; href: string }>
   search?: string
   propertyId?: string
+  showHeader?: boolean
 }) {
   const buildPageLink = (targetPage: number) => {
     const pageSeparator = basePath.includes("?") ? "&" : "?"
@@ -100,10 +102,12 @@ export function ContentList({
 
   return (
     <div className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold leading-none tracking-tight">{title}</h1>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
+      {showHeader ? (
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold leading-none tracking-tight">{title}</h1>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+      ) : null}
 
       {tags && tags.length > 0 && (
         <ContentFilterBar tags={tags} />

@@ -1,11 +1,12 @@
 
-
+import { Suspense } from "react"
 import Link from "next/link"
-import { getSiteById, getPagesForSite } from "@/app/manage/sites/actions"
+import { getSiteById, getPagesForSite, type Site } from "@/app/manage/sites/actions"
 import { getProxiedImageUrl } from "@/services/properties/imageProxy"
 import { Badge } from "@neup/components/ui/badge"
 import { Button } from "@neup/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@neup/components/ui/table"
 import { notFound, redirect } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
@@ -26,6 +27,77 @@ function buildPagesLink(siteId: string, propertyId: string, page: number, pageSi
   return `/manage/sites/${siteId}?${query.toString()}`
 }
 
+// Load the site's page table after its property summary is displayed.
+async function SitePagesSection({ siteId, propertyId, site, requestedPage, requestedPageSize }: {
+  siteId: string
+  propertyId?: string
+  site: Site
+  requestedPage: number
+  requestedPageSize: number
+}) {
+  const pagination = await getPagesForSite(siteId, requestedPage, requestedPageSize)
+  const { pages, page, pageSize, totalCount, totalPages } = pagination
+
+  if (requestedPage !== page || requestedPageSize !== pageSize) {
+    redirect(buildPagesLink(siteId, propertyId || site.id, page, pageSize))
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Site pages</CardTitle>
+        <CardDescription>Pages discovered, crawled, and indexed for this site.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Page URL</TableHead>
+              <TableHead>Category</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last Indexed</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pages.length === 0 ? (
+              <TableRow><TableCell colSpan={4} className="h-24 text-center">No pages have been indexed for this site yet.</TableCell></TableRow>
+            ) : pages.map((page) => (
+              <TableRow key={page.id}>
+                <TableCell className="break-all font-medium">
+                  <Link href={`/manage/pages/${page.id}?property=${encodeURIComponent(propertyId || site.id)}`} className="font-bold hover:underline">{page.title}</Link>
+                  <div className="text-xs text-muted-foreground">{page.url}</div>
+                </TableCell>
+                <TableCell>{page.category ? <Badge variant="outline">{page.category}</Badge> : <span className="text-sm text-muted-foreground">Uncategorized</span>}</TableCell>
+                <TableCell><Badge variant={page.status === "Indexed" ? "default" : "destructive"}>{page.status}</Badge></TableCell>
+                <TableCell>{page.lastIndexed}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+      <CardFooter>
+        <div className="flex w-full items-center justify-between gap-4">
+          <p className="text-sm text-muted-foreground">Page {page} of {totalPages} | {totalCount.toLocaleString()} pages | {pageSize} per page</p>
+          <div className="flex justify-end gap-2">
+            <Link href={buildPagesLink(siteId, propertyId || site.id, Math.max(1, page - 1), pageSize)}><Button variant="outline" disabled={page <= 1}>Previous</Button></Link>
+            <Link href={buildPagesLink(siteId, propertyId || site.id, Math.min(totalPages, page + 1), pageSize)}><Button variant="outline" disabled={page >= totalPages}>Next</Button></Link>
+          </div>
+        </div>
+      </CardFooter>
+    </Card>
+  )
+}
+
+// Keep the page-table layout visible while site pages are loading.
+function SitePagesSkeleton() {
+  return (
+    <Card aria-label="Loading site pages" aria-busy="true">
+      <CardHeader><Skeleton className="h-6 w-32" /><Skeleton className="h-4 w-72 max-w-full" /></CardHeader>
+      <CardContent className="space-y-3">{Array.from({ length: 8 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}</CardContent>
+    </Card>
+  )
+}
+
 export default async function SiteDetailPage({ params, searchParams }: { params: Promise<{ siteId: string }>, searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const resolvedParams = await params;
   const resolvedSearchParams = await searchParams;
@@ -39,14 +111,6 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
     notFound()
   }
   
-  const pagination = await getPagesForSite(resolvedParams.siteId, requestedPage, requestedPageSize)
-  const { pages, page, pageSize, totalCount, totalPages } = pagination
-
-  if (requestedPage !== page || requestedPageSize !== pageSize) {
-    redirect(buildPagesLink(resolvedParams.siteId, propertyId || site.id, page, pageSize))
-  }
-
-
   return (
     <div className="grid gap-6">
       <Link href="/manage/sites" className="inline-flex w-fit items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
@@ -100,65 +164,9 @@ export default async function SiteDetailPage({ params, searchParams }: { params:
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Site pages</CardTitle>
-          <CardDescription>Pages discovered, crawled, and indexed for this site.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Page URL</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Indexed</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pages.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center">
-                    No pages have been indexed for this site yet.
-                  </TableCell>
-                </TableRow>
-              )}
-              {pages.map((page) => (
-                <TableRow key={page.id}>
-                  <TableCell className="font-medium break-all">
-                     <Link href={`/manage/pages/${page.id}?property=${encodeURIComponent(propertyId || site.id)}`} className="font-bold hover:underline">{page.title}</Link>
-                    <div className="text-xs text-muted-foreground">{page.url}</div>
-                  </TableCell>
-                  <TableCell>
-                    {page.category ? <Badge variant="outline">{page.category}</Badge> : <span className="text-sm text-muted-foreground">Uncategorized</span>}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={page.status === 'Indexed' ? 'default' : 'destructive'}>
-                      {page.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{page.lastIndexed}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-         <CardFooter>
-            <div className="flex items-center justify-between gap-4 w-full">
-                <p className="text-sm text-muted-foreground">
-                    Page {page} of {totalPages} | {totalCount.toLocaleString()} pages | {pageSize} per page
-                </p>
-                <div className="flex justify-end gap-2">
-                <Link href={buildPagesLink(resolvedParams.siteId, propertyId || site.id, Math.max(1, page - 1), pageSize)}>
-                    <Button variant="outline" disabled={page <= 1}>Previous</Button>
-                </Link>
-                <Link href={buildPagesLink(resolvedParams.siteId, propertyId || site.id, Math.min(totalPages, page + 1), pageSize)}>
-                    <Button variant="outline" disabled={page >= totalPages}>Next</Button>
-                </Link>
-                </div>
-            </div>
-        </CardFooter>
-      </Card>
+      <Suspense key={`${resolvedParams.siteId}:${requestedPage}:${requestedPageSize}`} fallback={<SitePagesSkeleton />}>
+        <SitePagesSection siteId={resolvedParams.siteId} propertyId={propertyId} site={site} requestedPage={requestedPage} requestedPageSize={requestedPageSize} />
+      </Suspense>
     </div>
   )
 }

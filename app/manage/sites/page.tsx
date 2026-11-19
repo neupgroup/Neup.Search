@@ -4,6 +4,7 @@ import { ArrowDownWideNarrow, ArrowRight, Globe, Plus, Search } from "lucide-rea
 import { Badge } from "@neup/components/ui/badge"
 import { Button } from "@neup/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@neup/components/ui/table"
 import { SearchInput } from "@/components/search-input"
 import { getManagedSitesPage, type ManagedSiteStatusFilter } from "@/services/projects/list"
@@ -76,33 +77,17 @@ function buildSiteDetailHref(siteId: string): string {
   return `/manage/sites/${siteId}?${query.toString()}`
 }
 
-// Render the sortable-by-date sites table and status filters.
-export default async function ManageSitesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+// Render the sortable-by-date sites table and status filters after the page heading.
+async function SitesResults({ search, status, page, requestedPropertyId }: {
+  search?: string
+  status: ManagedSiteStatusFilter
+  page: number
+  requestedPropertyId?: string
 }) {
-  const params = await searchParams
-  const search = readQueryValue(params.q)?.trim() || undefined
-  const requestedStatus = readQueryValue(params.status)
-  const status = siteStatusFilters.some((filter) => filter.value === requestedStatus)
-    ? requestedStatus as ManagedSiteStatusFilter
-    : "all"
-  const pagination = await getManagedSitesPage({ search, status, page: readPageNumber(params.page), pageSize: 20 })
-  const propertyId = readQueryValue(params.property) || pagination.sites[0]?.id
-
+  const pagination = await getManagedSitesPage({ search, status, page, pageSize: 20 })
+  const propertyId = requestedPropertyId || pagination.sites[0]?.id
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Sites</h1>
-          <p className="text-sm text-muted-foreground">Track sites through indexing and manage their crawl status.</p>
-        </div>
-        <Link href="/manage/projects/add">
-          <Button><Plus className="mr-2 h-4 w-4" /> Add site</Button>
-        </Link>
-      </div>
-
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         {siteStatusFilters.filter((filter) => !["all", "other"].includes(filter.value)).map((filter) => (
           <Link key={filter.value} href={buildSitesHref(filter.value, search, 1, propertyId)}>
@@ -204,6 +189,50 @@ export default async function ManageSitesPage({
           </div>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+// Keep the status cards and sites table visible while their database query runs.
+function SitesResultsSkeleton() {
+  return (
+    <div className="space-y-6" aria-label="Loading sites" aria-busy="true">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{Array.from({ length: 5 }).map((_, index) => <Card key={index}><CardContent className="p-4"><Skeleton className="h-6 w-full" /></CardContent></Card>)}</div>
+      <Card>
+        <CardHeader><Skeleton className="h-6 w-32" /><Skeleton className="h-4 w-72 max-w-full" /></CardHeader>
+        <CardContent className="space-y-3">{Array.from({ length: 8 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}</CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// Render the Sites page shell before querying status totals and site rows.
+export default async function ManageSitesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+  const params = await searchParams
+  const search = readQueryValue(params.q)?.trim() || undefined
+  const requestedStatus = readQueryValue(params.status)
+  const status = siteStatusFilters.some((filter) => filter.value === requestedStatus)
+    ? requestedStatus as ManagedSiteStatusFilter
+    : "all"
+  const page = readPageNumber(params.page)
+  const propertyId = readQueryValue(params.property)
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight">Sites</h1>
+          <p className="text-sm text-muted-foreground">Track sites through indexing and manage their crawl status.</p>
+        </div>
+        <Link href="/manage/projects/add"><Button><Plus className="mr-2 h-4 w-4" /> Add site</Button></Link>
+      </div>
+      <Suspense key={`${search || ""}:${status}:${page}:${propertyId || ""}`} fallback={<SitesResultsSkeleton />}>
+        <SitesResults search={search} status={status} page={page} requestedPropertyId={propertyId} />
+      </Suspense>
     </div>
   )
 }

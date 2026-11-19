@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Activity, Check, Pause, ScrollText } from "lucide-react"
 import { Badge } from "@neup/components/ui/badge"
 import { Card, CardContent } from "@neup/components/ui/card"
+import { Skeleton } from "@neup/components/ui/skeleton"
 import { Button } from "@neup/components/ui/button"
 import { getLiveNeupbotWorkers, getNeupbotLogs, getPauseAllCrawlsStatus, pauseAllCrawls } from "./actions"
 import type { NeupbotLogEntry } from "@/lib/logica-logging"
@@ -249,12 +250,12 @@ export function NeupbotLivePanel({
 }: {
   initialWorkers: WorkerActivity[]
   initialPausePendingSites: number | null
-  initialLogs: NeupbotLogEntry[]
+  initialLogs: NeupbotLogEntry[] | null
   property: string
 }) {
   const [workers, setWorkers] = useState(initialWorkers)
   const [pausePendingSites, setPausePendingSites] = useState(initialPausePendingSites)
-  const [logs, setLogs] = useState(initialLogs)
+  const [logs, setLogs] = useState<NeupbotLogEntry[] | null>(initialLogs)
   const activeJobs = workers.filter((worker) => worker.status === "Working" && worker.siteId && worker.currentUrl)
   const activeAnalyses = activeJobs.filter((worker) => getWorkerProgress(worker)?.label.startsWith("Analyzing Page"))
   const activeCrawls = activeJobs.length - activeAnalyses.length
@@ -282,6 +283,8 @@ export function NeupbotLivePanel({
           setWorkers((currentWorkers) => haveWorkersChanged(currentWorkers, nextWorkers) ? nextWorkers : currentWorkers)
           setPausePendingSites(pauseStatus.remainingSites)
         }
+      } catch {
+        // Keep the last worker snapshot visible when a refresh request fails.
       } finally {
         isRefreshing = false
       }
@@ -289,8 +292,12 @@ export function NeupbotLivePanel({
 
     const refreshLogs = async () => {
       if (!property) return
-      const nextLogs = await getNeupbotLogs(property)
-      if (isMounted) setLogs(nextLogs)
+      try {
+        const nextLogs = await getNeupbotLogs(property)
+        if (isMounted) setLogs(nextLogs)
+      } catch {
+        if (isMounted) setLogs([])
+      }
     }
 
     refreshCrawls()
@@ -346,6 +353,10 @@ export function NeupbotLivePanel({
         </div>
         {!property ? (
           <Card className="border-dashed"><CardContent className="p-5 text-sm text-muted-foreground">Select a property to view its logs.</CardContent></Card>
+        ) : logs === null ? (
+          <Card><CardContent className="space-y-3 p-3" aria-label="Loading logs" aria-busy="true">
+            {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-12 w-full" />)}
+          </CardContent></Card>
         ) : logs.length === 0 ? (
           <Card className="border-dashed"><CardContent className="p-5 text-sm text-muted-foreground">No logs have been written for this property today.</CardContent></Card>
         ) : (

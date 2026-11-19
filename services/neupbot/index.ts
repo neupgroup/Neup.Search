@@ -2536,13 +2536,56 @@ export async function getManagedLinks(input?: {
         },
       },
     })
+    if (pages.length === 0) {
+      return { links: [], page: requestedPage, pageSize, totalCount: 0, totalPages: 1 }
+    }
+
+    const resources = await prisma.resource.findMany({
+      where: {
+        type: "link",
+        OR: [
+          { sourcePageId: { in: pages.map((page) => page.id) } },
+          { fromDomain: { in: [...new Set(pages.map((page) => page.domainId))] } },
+        ],
+      },
+      orderBy: { firstCrawlOn: "asc" },
+      select: {
+        id: true,
+        sourcePageId: true,
+        fromDomain: true,
+        linkFrom: true,
+        linkTo: true,
+        anchorText: true,
+        titleText: true,
+        rel: true,
+        firstCrawlOn: true,
+      },
+    })
+
+    const resourcesByPageId = new Map<string, typeof resources>()
+    const resourcesBySourceUrl = new Map<string, typeof resources>()
+    for (const resource of resources) {
+      if (resource.sourcePageId) {
+        const matchingPageResources = resourcesByPageId.get(resource.sourcePageId) ?? []
+        matchingPageResources.push(resource)
+        resourcesByPageId.set(resource.sourcePageId, matchingPageResources)
+      }
+
+      const sourceUrlKey = `${resource.fromDomain}:${resource.linkFrom}`
+      const matchingUrlResources = resourcesBySourceUrl.get(sourceUrlKey) ?? []
+      matchingUrlResources.push(resource)
+      resourcesBySourceUrl.set(sourceUrlKey, matchingUrlResources)
+    }
 
     const links: ManagedLinkItem[] = []
     const seen = new Set<string>()
 
     for (const page of pages) {
-      const resources = await prisma.resource.findMany({ where: { OR: [{ sourcePageId: page.id }, { fromDomain: page.domainId, linkFrom: page.url }], type: "link" }, orderBy: { firstCrawlOn: "asc" } })
-      for (const resource of resources) {
+      const pageResources = new Map<string, (typeof resources)[number]>()
+      for (const resource of resourcesByPageId.get(page.id) ?? []) pageResources.set(resource.id, resource)
+      for (const resource of resourcesBySourceUrl.get(`${page.domainId}:${page.url}`) ?? []) pageResources.set(resource.id, resource)
+
+      for (const resource of pageResources.values()) {
         const targetUrl = normalizeManagedLinkTarget(resource.linkTo, page.url)
         if (!targetUrl || isManageLinkPlaceholderValue(targetUrl)) continue
 
