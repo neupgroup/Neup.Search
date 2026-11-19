@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 import { z } from "zod"
+import { prisma } from "@/lib/prisma"
+import { readDetails } from "@/services/projects/view"
 import type { Page } from "../pages/actions"
 import { logError } from "@/lib/logica-logging"
 import {
@@ -103,7 +105,7 @@ export async function resumePendingCrawl(formData: FormData) {
 
   await resumePendingCrawler(siteId)
   revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/pages")
+  revalidatePath("/manage/discovery/pages")
 }
 
 // Pause the site and prevent its crawl and analysis jobs from running.
@@ -114,7 +116,7 @@ export async function pauseSiteCrawl(formData: FormData) {
   await pauseDomainCrawl(siteId)
   revalidatePath("/manage/sites")
   revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/pages")
+  revalidatePath("/manage/discovery/pages")
 }
 
 // Resume the site and queue any pages discovered while it was paused.
@@ -125,7 +127,7 @@ export async function resumePausedSiteCrawl(formData: FormData) {
   await resumePausedDomainCrawl(siteId)
   revalidatePath("/manage/sites")
   revalidatePath(`/manage/sites/${siteId}`)
-  revalidatePath("/manage/pages")
+  revalidatePath("/manage/discovery/pages")
 }
 
 export async function getSiteById(siteId: string): Promise<Site | null> {
@@ -187,11 +189,51 @@ export async function deleteSite(formData: FormData) {
     throw new Error("Could not delete site.")
   }
 
-  revalidatePath("/manage/pages")
+  revalidatePath("/manage/discovery/pages")
   revalidatePath("/manage/projects")
   redirect("/manage/projects")
 }
 
 export async function deleteLinksForPage() {
   return
+}
+
+// Save the selected site's category and homepage crawl preferences.
+export async function saveSiteEnhancements(formData: FormData) {
+  const siteId = String(formData.get("siteId") || "")
+  const categoryValue = String(formData.get("category") || "")
+  const homepageTitle = String(formData.get("homepageTitle") || "").trim()
+  const javascriptMode = String(formData.get("javascriptMode") || "")
+
+  const parsed = z.object({
+    siteId: z.string().min(1),
+    category: z.string().max(256),
+    homepageTitle: z.string().max(256),
+    javascriptMode: z.enum(["required", "not-required"]),
+  }).safeParse({ siteId, category: categoryValue, homepageTitle, javascriptMode })
+
+  if (!parsed.success) throw new Error("Invalid site enhancement settings.")
+
+  if (parsed.data.category && !await prisma.category.findFirst({ where: { type: "site", name: parsed.data.category }, select: { id: true } })) {
+    throw new Error("Choose an existing site category.")
+  }
+
+  const existing = await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } })
+  if (!existing) throw new Error("Site not found.")
+  const details = readDetails(existing.details)
+
+  await prisma.domain.update({
+    where: { id: siteId },
+    data: {
+      categories: parsed.data.category || null,
+      details: {
+        ...details,
+        homepageTitle: parsed.data.homepageTitle,
+        javascriptMode: parsed.data.javascriptMode,
+      },
+    },
+  })
+
+  revalidatePath("/manage/enhancements/site")
+  revalidatePath("/manage/discovery/pages")
 }

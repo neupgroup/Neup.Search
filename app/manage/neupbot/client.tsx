@@ -218,7 +218,7 @@ function NeupbotWorkerCard({ worker }: { worker: WorkerActivity }) {
               <Link
                 href={displayWorker.pageId && displayWorker.siteId
                   ? `/manage/pages/${displayWorker.pageId}?property=${encodeURIComponent(displayWorker.siteId)}`
-                  : "/manage/pages"}
+                  : "/manage/discovery/pages"}
                 title={displayWorker.currentUrl}
                 className="min-w-0 truncate text-right text-sm text-muted-foreground hover:underline"
               >

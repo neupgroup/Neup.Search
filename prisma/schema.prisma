@@ -45,6 +45,11 @@ enum CrawlerWorkerStatus {
   Error
 }
 
+enum CategoryType {
+  page
+  site
+}
+
 model Account {
   id           String    @id
   type         String
@@ -175,4 +180,18 @@ model Resource {
   @@index([linkFrom])
   @@index([linkTo])
   @@map("Resources")
+}
+
+model Category {
+  id       String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type     CategoryType
+  name     String
+  parentId String?      @db.Uuid
+
+  parent   Category?   @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[]  @relation("CategoryHierarchy")
+
+  @@index([type])
+  @@index([parentId])
+  @@map("categories")
 }

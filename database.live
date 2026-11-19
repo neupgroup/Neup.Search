@@ -81,3 +81,11 @@ Fields:
 > rel: string, nullable;
 > metadata: json, nullable;
 > firstCrawlOn: timestamp, default: now;
+
+Table: categories, Model: Category
+Fields:
+> id: uuid, default: gen_random_uuid();
+> type: enum(page, site);
+> name: string;
+> parentId: uuid, nullable;
+.. references categories.id;

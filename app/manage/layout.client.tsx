@@ -13,6 +13,8 @@ import {
   Link2,
   LineChart,
   Package,
+  Search,
+  Tags,
   Users,
 } from "lucide-react"
 
@@ -34,10 +36,41 @@ function ManageLayoutContent({ children }: { children: ReactNode }) {
   const sidebarLinks: SidebarLink[] = [
     { href: buildManageHref("/manage/projects"), label: "Projects", icon: Globe },
     { href: buildManageHref("/manage/sites"), label: "Sites", icon: Globe },
-    { href: selectedPropertyId ? buildManageHref(`/manage/sites/${selectedPropertyId}`) : "/manage/sites", label: "My Site", icon: Globe },
-    { href: buildManageHref("/manage"), label: "Dashboard", icon: Home },
+    ...(selectedPropertyId
+      ? [{ href: buildManageHref(`/manage/sites/${selectedPropertyId}`), label: "My Site", icon: Globe }]
+      : []),
+    { href: buildManageHref("/manage"), label: "Overview", icon: Home },
+    { href: buildManageHref("/manage/insights"), label: "Insights", icon: LineChart },
+    { href: buildManageHref("/manage/search"), label: "Search", icon: Search },
+    {
+      label: "Performance",
+      links: [
+        { href: buildManageHref("/manage/performance"), label: "Home", icon: Home },
+        { href: buildManageHref("/manage/performance/assist"), label: "Assist", icon: Bot },
+        { href: buildManageHref("/manage/performance/search"), label: "Search", icon: Search },
+        { href: buildManageHref("/manage/performance/discovery"), label: "Discovery", icon: Globe },
+      ],
+    },
+    {
+      label: "Discovery",
+      links: [
+        { href: buildManageHref("/manage/discovery"), label: "Home", icon: Globe },
+        { href: buildManageHref("/manage/discovery/pages"), label: "Pages", icon: FileText },
+        { href: buildManageHref("/manage/discovery/media"), label: "Media", icon: Files },
+        { href: buildManageHref("/manage/discovery/sitemaps"), label: "Sitemaps", icon: Globe },
+        { href: buildManageHref("/manage/discovery/binaries"), label: "Binaries", icon: Package },
+        { href: buildManageHref("/manage/discovery/removals"), label: "Removals", icon: AlertTriangle },
+      ],
+    },
+    {
+      label: "Enhancements",
+      links: [
+        { href: buildManageHref("/manage/enhancements/site"), label: "Site", icon: Globe },
+        { href: buildManageHref("/manage/enhancements/pages"), label: "Pages", icon: FileText },
+      ],
+    },
+    { href: buildManageHref("/manage/categories"), label: "Categories", icon: Tags },
     { href: buildManageHref("/manage/neupbot"), label: "NeupBot", icon: Bot },
-    { href: buildManageHref("/manage/pages"), label: "Indexed Pages", icon: FileText },
     { href: buildManageHref("/manage/links"), label: "Links", icon: Link2 },
     { href: buildManageHref("/manage/content"), label: "Content", icon: Files },
     { href: buildManageHref("/manage/errorrs"), label: "Crawl Errors", icon: AlertTriangle },

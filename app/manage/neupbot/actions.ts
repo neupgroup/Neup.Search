@@ -49,7 +49,7 @@ export async function pauseAllCrawls() {
 
     revalidatePath("/manage/neupbot")
     revalidatePath("/manage/sites")
-    revalidatePath("/manage/pages")
+    revalidatePath("/manage/discovery/pages")
     return { pausedSites: result.count, remainingSites }
   } catch (error) {
     await logError(error, "pauseAllCrawls", "unknown-domain")

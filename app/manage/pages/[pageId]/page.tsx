@@ -143,8 +143,8 @@ export default async function PageDetailPage({
   const propertyValue = query.property
   const propertyId = Array.isArray(propertyValue) ? propertyValue[0] : propertyValue
   const backToPagesUrl = propertyId
-    ? `/manage/pages?property=${encodeURIComponent(propertyId)}`
-    : "/manage/pages"
+    ? `/manage/discovery/pages?property=${encodeURIComponent(propertyId)}`
+    : "/manage/discovery/pages"
   const page = await getPageById(pageId)
 
   if (!page) notFound()

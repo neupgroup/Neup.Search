@@ -477,7 +477,7 @@ export async function crawlPageAction(_previousState: CrawlPageActionState, form
       : { success: false, error: "Could not crawl this page." }
   } finally {
     revalidatePath(`/manage/pages/${pageId}`)
-    revalidatePath("/manage/pages")
+    revalidatePath("/manage/discovery/pages")
   }
 
   return result

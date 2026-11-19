@@ -20,7 +20,7 @@ export type SiteProfileContext = {
 type SiteCategoryTree = Record<string, unknown>
 
 // Build allowed site categories from taxonomy branches, excluding page categories stored in leaf arrays.
-function getSiteCategoryOptions(tree: SiteCategoryTree): string[] {
+export function getSiteCategoryOptions(tree: SiteCategoryTree): string[] {
   return Object.entries(tree).flatMap(([root, value]) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [root]
     return [root, ...Object.entries(value).filter(([, child]) => child && typeof child === "object" && !Array.isArray(child)).map(([child]) => `${root}.${child}`)]

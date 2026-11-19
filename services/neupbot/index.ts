@@ -31,6 +31,8 @@ export type DomainDetails = {
   pagesCrawled?: number
   internalResourcesFound?: number
   externalResourcesFound?: number
+  homepageTitle?: string
+  javascriptMode?: "required" | "not-required"
 }
 
 export type ManagedDomain = {
@@ -1577,6 +1579,10 @@ async function crawlStoredPage({
   let savingContent = false
   const parsedCurrentUrl = new URL(pageUrl)
   const normalizedUrl = parsedCurrentUrl.origin + parsedCurrentUrl.pathname
+  const domainSettings = await prisma.domain.findUnique({ where: { id: siteId }, select: { details: true } })
+  const siteDetails = domainSettings?.details && typeof domainSettings.details === "object" && !Array.isArray(domainSettings.details)
+    ? domainSettings.details as DomainDetails
+    : {}
 
   if (crawledUrls.has(normalizedUrl) || disallow.some((regex) => regex.test(parsedCurrentUrl.pathname))) {
     await saveCrawledPage(pageId, {
@@ -1698,7 +1704,11 @@ async function crawlStoredPage({
     let pageHeaders = Object.fromEntries(response.headers.entries())
     let pageDocument = cheerio.load(html)
     const initialDocumentTitle = pageDocument("title").text().trim()
-    const shouldRenderWithJavaScript = assessment.score >= 50 || !initialDocumentTitle
+    const shouldRenderWithJavaScript = siteDetails.javascriptMode === "required"
+      ? true
+      : siteDetails.javascriptMode === "not-required"
+        ? false
+        : assessment.score >= 50 || !initialDocumentTitle
     let resolvedPageUrl = response.url || fetchedPageUrl
     let pageStatusCode = response.status
     let javascriptRendered = false
@@ -1743,7 +1753,10 @@ async function crawlStoredPage({
     }
 
     const markdown = extractMarkdownFromHtml(pageHtml, resolvedPageUrl)
-    const pageTitle = markdown.title || pageDocument("title").text() || pageDocument("h1").first().text()
+    const detectedPageTitle = markdown.title || pageDocument("title").text() || pageDocument("h1").first().text()
+    const pageTitle = isHomepagePageUrl(resolvedPageUrl) && siteDetails.homepageTitle?.trim()
+      ? siteDetails.homepageTitle.trim()
+      : detectedPageTitle
     const pageContent = markdown.markdown
     const data = buildPageData(pageHtml, pageHeaders, pageDocument)
 
@@ -2495,6 +2508,85 @@ function matchesManagedLinkSearch(link: ManagedLinkItem, search?: string) {
   ].some((value) => value.toLowerCase().includes(normalizedSearch))
 }
 
+// Split large Prisma `in` filters so SQLite stays below its bind-variable limit.
+function splitIntoBatches<T>(values: T[], batchSize: number): T[][] {
+  const batches: T[][] = []
+  for (let index = 0; index < values.length; index += batchSize) {
+    batches.push(values.slice(index, index + batchSize))
+  }
+  return batches
+}
+
+// Load source pages in bounded queries while retaining the existing source ID and URL matching.
+type ManagedLinkSourcePage = {
+  id: string
+  domainId: string
+  title: string | null
+  url: string
+  discoveredOn: Date | null
+  lastCrawled: Date | null
+  domain: { domain: string }
+}
+
+async function findManagedLinkSourcePages(resources: Array<{
+  sourcePageId: string | null
+  fromDomain: string
+  linkFrom: string
+}>): Promise<ManagedLinkSourcePage[]> {
+  const sourceDomainIds = [...new Set(resources.map((resource) => resource.fromDomain))]
+  const sourcePageIds = [...new Set(resources.flatMap((resource) => resource.sourcePageId ? [resource.sourcePageId] : []))]
+  const sourceUrls = [...new Set(resources.map((resource) => resource.linkFrom))]
+  const pagesById = new Map<string, ManagedLinkSourcePage>()
+
+  // Leave room for the domain filter and other query parameters in SQLite's 32767-variable limit.
+  const batchSize = 8_000
+  for (const domainIds of splitIntoBatches(sourceDomainIds, batchSize)) {
+    for (const pageIds of splitIntoBatches(sourcePageIds, batchSize)) {
+      const pages = await prisma.page.findMany({
+        where: {
+          domainId: { in: domainIds },
+          domain: { is: { status: { not: "paused" } } },
+          id: { in: pageIds },
+        },
+        orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }],
+        select: {
+          id: true,
+          domainId: true,
+          title: true,
+          url: true,
+          discoveredOn: true,
+          lastCrawled: true,
+          domain: { select: { domain: true } },
+        },
+      })
+      for (const page of pages) pagesById.set(page.id, page)
+    }
+
+    for (const urls of splitIntoBatches(sourceUrls, batchSize)) {
+      const pages = await prisma.page.findMany({
+        where: {
+          domainId: { in: domainIds },
+          domain: { is: { status: { not: "paused" } } },
+          url: { in: urls },
+        },
+        orderBy: [{ lastCrawled: "desc" }, { discoveredOn: "desc" }],
+        select: {
+          id: true,
+          domainId: true,
+          title: true,
+          url: true,
+          discoveredOn: true,
+          lastCrawled: true,
+          domain: { select: { domain: true } },
+        },
+      })
+      for (const page of pages) pagesById.set(page.id, page)
+    }
+  }
+
+  return [...pagesById.values()]
+}
+
 export async function getManagedLinks(input?: {
   propertyId?: string
   type?: ManagedLinkType
@@ -2507,47 +2599,28 @@ export async function getManagedLinks(input?: {
 
   try {
     const propertyDomain = input?.propertyId
-      ? await prisma.domain.findUnique({
-          where: { id: input.propertyId },
-          select: { domain: true },
+      ? await prisma.domain.findFirst({
+          where: { OR: [{ id: input.propertyId }, { domain: input.propertyId }] },
+          select: { id: true, domain: true },
         })
       : null
-    const pages = await prisma.page.findMany({
-      where: input?.propertyId
-        ? input.type === "incoming"
-          ? { NOT: { domainId: input.propertyId }, domain: { is: { status: { not: "paused" } } } }
-          : { domainId: input.propertyId, domain: { is: { status: { not: "paused" } } } }
-        : { domain: { is: { status: { not: "paused" } } } },
-      orderBy: [
-        { lastCrawled: "desc" },
-        { discoveredOn: "desc" },
-      ],
-      select: {
-        id: true,
-        domainId: true,
-        title: true,
-        url: true,
-        discoveredOn: true,
-        lastCrawled: true,
-        domain: {
-          select: {
-            domain: true,
-          },
-        },
-      },
-    })
-    if (pages.length === 0) {
+
+    if (input?.propertyId && !propertyDomain) {
       return { links: [], page: requestedPage, pageSize, totalCount: 0, totalPages: 1 }
     }
 
+    const resourceWhere: Prisma.ResourceWhereInput = {
+      type: "link",
+      ...(propertyDomain
+        ? input?.type === "incoming"
+          ? { toDomain: propertyDomain.id }
+          : input?.type
+            ? { fromDomain: propertyDomain.id }
+            : { OR: [{ fromDomain: propertyDomain.id }, { toDomain: propertyDomain.id }] }
+        : {}),
+    }
     const resources = await prisma.resource.findMany({
-      where: {
-        type: "link",
-        OR: [
-          { sourcePageId: { in: pages.map((page) => page.id) } },
-          { fromDomain: { in: [...new Set(pages.map((page) => page.domainId))] } },
-        ],
-      },
+      where: resourceWhere,
       orderBy: { firstCrawlOn: "asc" },
       select: {
         id: true,
@@ -2561,6 +2634,15 @@ export async function getManagedLinks(input?: {
         firstCrawlOn: true,
       },
     })
+
+    if (resources.length === 0) {
+      return { links: [], page: requestedPage, pageSize, totalCount: 0, totalPages: 1 }
+    }
+
+    const pages = await findManagedLinkSourcePages(resources)
+    if (pages.length === 0) {
+      return { links: [], page: requestedPage, pageSize, totalCount: 0, totalPages: 1 }
+    }
 
     const resourcesByPageId = new Map<string, typeof resources>()
     const resourcesBySourceUrl = new Map<string, typeof resources>()
